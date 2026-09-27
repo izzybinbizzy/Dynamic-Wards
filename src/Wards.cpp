@@ -121,6 +121,12 @@ namespace Plugin
 		std::array<const Art*, kRows> gRowArt{};  // what each row wears now, resolved once per apply
 		std::unordered_map<const RE::EffectSetting*, std::size_t> gTargetOf;  // effect -> gTargets index
 
+		// loaded, not merely present: LookupModByName also finds a plugin that is installed but not enabled
+		bool Loaded(RE::TESDataHandler* a_dh, std::string_view a_name)
+		{
+			return a_dh && (a_dh->LookupLoadedModByName(a_name) || a_dh->LookupLoadedLightModByName(a_name));
+		}
+
 		bool MeshExists(const std::string& a_rel)
 		{
 			RE::BSResourceNiBinaryStream s(std::string("meshes\\") + a_rel);
@@ -314,7 +320,7 @@ namespace Plugin
 		};
 		gEmpty = MakeArtObject(kEmptyModel);
 		gNoFlash = makeFlash(gEmpty);
-		gHas360 = dh && dh->LookupModByName(k360Plugin);
+		gHas360 = Loaded(dh, k360Plugin);
 		gLightPlacer = REX::W32::GetModuleHandleA("po3_LightPlacer.dll") != nullptr;
 		gLightsGlobal = MakeGlobal(kLightsGlobal);
 		gHandGlobal = MakeGlobal(kHandGlobal);
@@ -421,7 +427,7 @@ namespace Plugin
 		}
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> shields;
 		RE::EnchantmentItem*                                              ench = nullptr;
-		if (dh->LookupModByName(kCrusaderHub) && dh->LookupModByName(kKnights)) {
+		if (Loaded(dh, kCrusaderHub) && Loaded(dh, kKnights)) {
 			if ((ench = dh->LookupForm<RE::EnchantmentItem>(kCrusaderEnch, kKnights))) {
 				for (const auto id : kCrusaderShields) {
 					if (auto* armo = dh->LookupForm<RE::TESObjectARMO>(id, kLegacy)) {

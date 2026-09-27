@@ -124,7 +124,7 @@ namespace Plugin
 				data.radius = { a_spec.reach, a_spec.reach, a_spec.size };
 				light->SetLightAttenuation(a_spec.reach);
 				if (gIsl) {
-					// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the colour
+					// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color
 					auto* words = reinterpret_cast<std::uint32_t*>(&data);
 					words[0] |= kIslFlag;
 					words[1] = std::bit_cast<std::uint32_t>(

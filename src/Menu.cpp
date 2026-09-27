@@ -62,9 +62,10 @@ namespace Plugin
 					SetRowPick(i, kShown[shown]);
 					Changed();
 				}
+				// his call, 2026-09-26: on every row's list (after the loop it reached only the last one)
+				ImGuiMCP::SetItemTooltip("%s", "Vanilla leaves that ward exactly as the game or your other mods have it.");
 				ImGuiMCP::PopID();
 			}
-			ImGuiMCP::SetItemTooltip("%s", "Vanilla leaves that ward exactly as the game or your other mods have it.");
 
 			if (Has360Ward()) {
 				ImGuiMCP::Separator();
