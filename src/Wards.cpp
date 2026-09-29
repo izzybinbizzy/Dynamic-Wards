@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 
 #include "Plugin.h"
 
@@ -94,6 +94,7 @@ namespace Plugin
 			RE::TESObjectLIGH* ownLight;
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
+			std::string        plugin;  // the file that adds the effect: its line on the Compatibility page
 		};
 
 		struct Changes
@@ -291,11 +292,11 @@ namespace Plugin
 			return it == gLooks.end() || !it->second.hand || !it->second.dome ? nullptr : &it->second;
 		}
 
-		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is while
-		// "Color every ward found" is off
-		const Art* Worn(const Target& a_t, bool a_every)
+		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is
+		// unticked on the Compatibility page (one tick per mod, not one switch for all)
+		const Art* Worn(const Target& a_t, bool = true)
 		{
-			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !a_every)) {
+			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !ModOn(a_t.plugin))) {
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
@@ -318,6 +319,64 @@ namespace Plugin
 				map->insert({ RE::BSFixedString(a_id), g });
 			}
 			return RE::TESForm::LookupByEditorID<RE::TESGlobal>(a_id) == g ? g : nullptr;
+		}
+
+		// A ward held ready kept the hand art of the color picked BEFORE a menu change until another ward was equipped:
+		// the art sits on the magic effect and the game attaches it to the hand when the spell is equipped. Measured
+		// (devbench): Actor.UnequipSpell + EquipSpell on one hand changed that hand to the new color while the other kept
+		// the old; the caster's own Deselect/Select did nothing. So each hand holding a dressed ward is re-equipped through
+		// those two Papyrus natives, the equip after the unequip has returned.
+		struct AfterCall : RE::BSScript::IStackCallbackFunctor
+		{
+			std::function<void()> next;
+			explicit AfterCall(std::function<void()> a_next) : next(std::move(a_next)) {}
+			void operator()(RE::BSScript::Variable) override
+			{
+				if (next) {
+					next();
+				}
+			}
+			void SetObject(const RE::BSTSmartPointer<RE::BSScript::Object>&) override {}
+		};
+
+		bool CallOnPlayer(const char* a_fn, RE::SpellItem* a_spell, std::int32_t a_hand, std::function<void()> a_then)
+		{
+			auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			auto* policy = vm ? vm->GetObjectHandlePolicy() : nullptr;
+			if (!policy || !player) {
+				return false;
+			}
+			const auto handle = policy->GetHandleForObject(RE::FormType::ActorCharacter, player);
+			RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new AfterCall(std::move(a_then)) };
+			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
+		}
+
+		std::size_t RefreshHands()
+		{
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->Get3D()) {
+				return 0;
+			}
+			std::size_t n = 0;
+			for (const std::int32_t hand : { 0, 1 }) {  // Papyrus: 0 left, 1 right
+				auto* spell = skyrim_cast<RE::SpellItem*>(player->GetEquippedObject(hand == 0));
+				if (!spell) {
+					continue;
+				}
+				const bool ours = std::ranges::any_of(spell->effects, [](const RE::Effect* e) {
+					return e && e->baseEffect && gTargetOf.contains(e->baseEffect);
+				});
+				if (!ours) {
+					continue;
+				}
+				const bool sent = CallOnPlayer("UnequipSpell", spell, hand, [spell, hand]() {
+					CallOnPlayer("EquipSpell", spell, hand, {});
+				});
+				SKSE::log::info("hand refresh ({}): {} re-equipped {}", hand == 0 ? "left" : "right", spell->GetName(), sent ? "(sent)" : "(VM not ready)");
+				n += sent ? 1 : 0;
+			}
+			return n;
 		}
 	}
 
@@ -397,6 +456,18 @@ namespace Plugin
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
 
+	std::vector<std::pair<std::string, std::size_t>> FoundMods()
+	{
+		std::scoped_lock                   l{ gLock };
+		std::map<std::string, std::size_t> n;
+		for (const auto& t : gTargets) {
+			if (t.how == How::kFound) {
+				++n[t.plugin];
+			}
+		}
+		return { n.begin(), n.end() };
+	}
+
 	void FindWards()
 	{
 		auto* dh = RE::TESDataHandler::GetSingleton();
@@ -418,7 +489,7 @@ namespace Plugin
 			}
 			auto&      d = eff->data;
 			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-					Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {} };
+					Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
@@ -438,7 +509,10 @@ namespace Plugin
 				SKSE::log::info("[WARD] left alone: {} (casting art only, no dome, no Ward Power)", Where(eff));
 				continue;
 			} else {
-				// kept whatever "Color every ward found" says, so the switch works without a restart (ApplyAll reads it)
+				// kept whatever its Compatibility tick says, so the tick works without a restart (ApplyAll reads it)
+				if (const auto* file = eff->GetFile(0)) {
+					t.plugin = std::string(file->GetFilename());
+				}
 				t.row = RankRow(d.minimumSkill);
 				t.why = std::format("found by {}; minimum skill {} = {}", (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power",
 					d.minimumSkill, kTokens[t.row]);
@@ -514,6 +588,11 @@ namespace Plugin
 		// the Addon points each ward's light at the one for its (new) hand art; the light switch below then has the last word
 		if (c.art) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
+			// a ward already in the hand takes its new art now, not at the next equip - only for a change made in the menu (or
+			// devbench's setter); a load or a loading screen equips everything afresh anyway
+			if (a_why && (std::string_view(a_why) == "menu" || std::string_view(a_why) == "devbench")) {
+				RefreshHands();
+			}
 		}
 		for (auto& t : gTargets) {
 			// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
@@ -547,7 +626,7 @@ namespace Plugin
 		}
 		gDressed = dressed;
 		gLastApply = a_why ? a_why : "?";
-		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; every ward {}",
+		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; unlisted mods {}",
 			gLastApply, dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
 			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" : "360 (locked)", every ? "on" : "off");
 	}

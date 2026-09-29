@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 
 #include "Plugin.h"
 
@@ -22,6 +22,7 @@ namespace Plugin
 		std::string            gPerk;
 		bool                   gCrusader = true;
 		bool                   gEvery = true;
+		std::map<std::string, bool, std::less<>> gMods;  // [Compatibility] plugin=0/1, lowercased (Plugin::Lower); missing = gEvery
 
 		std::string Trim(std::string s)
 		{
@@ -92,6 +93,8 @@ namespace Plugin
 				} else if (key == "EveryWard") {
 					gEvery = v != 0;
 				}
+			} else if (section == "Compatibility") {
+				gMods[Lower(key)] = v != 0;
 			} else if (const auto row = RowIndex(key); row < kRows) {
 				if (section == "Colors") {
 					gColor[row] = std::clamp(v, 0, static_cast<int>(Pick::kPurple));
@@ -121,6 +124,10 @@ namespace Plugin
 			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0) << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {
 			out << kTokens[i] << "=" << gColor[i] << "\n";
+		}
+		out << "[Compatibility]\n";
+		for (const auto& [plugin, on] : gMods) {
+			out << plugin << "=" << (on ? 1 : 0) << "\n";
 		}
 	}
 
@@ -235,5 +242,21 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		gEvery = a_on;
+		for (auto& [plugin, on] : gMods) {
+			on = a_on;
+		}
+	}
+	bool ModOn(std::string_view a_plugin)
+	{
+		const auto       k = Lower(a_plugin);
+		std::scoped_lock l{ gLock };
+		const auto       it = gMods.find(k);
+		return it == gMods.end() ? gEvery : it->second;
+	}
+	void SetModOn(std::string_view a_plugin, bool a_on)
+	{
+		const auto       k = Lower(a_plugin);
+		std::scoped_lock l{ gLock };
+		gMods[k] = a_on;
 	}
 }

@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 
 #pragma once
 
@@ -93,8 +93,12 @@ namespace Plugin
 	void        SetUnlockPerk(std::string a_perk);
 	bool        CrusaderOn();
 	void        SetCrusaderOn(bool a_on);
-	bool        EveryWard();
-	void        SetEveryWard(bool a_on);
+	bool        EveryWard();                     // the default for a mod with no line of its own (the old one switch)
+	void        SetEveryWard(bool a_on);         // devbench `set=every`: every mod on the Compatibility page at once
+	// the Compatibility page: one tick per mod
+	bool        ModOn(std::string_view a_plugin);            // are the wards this plugin adds colored?
+	void        SetModOn(std::string_view a_plugin, bool a_on);
+	std::vector<std::pair<std::string, std::size_t>> FoundMods();  // Wards.cpp: every plugin with found wards, and how many
 
 	// DomeLights.cpp: the dome's colored light where Light Placer is not loaded (RE::Light)
 	enum class DomeMode : int

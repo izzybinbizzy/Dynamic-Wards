@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // The colored light on a ward's dome where Light Placer is not loaded (RE::Light setups). Light Placer lights the
 // dome mesh from our config; RE::Light cannot, because the dome is art on the actor, not an object it loads. So the

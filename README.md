@@ -7,3 +7,7 @@ memory - no plugin file. Settings are in SKSE Menu Framework's Mod Control Panel
 
 `src/DevBenchAPI.h` and `src/DevBenchAPI.cpp` are devbench's own interface files, MIT licensed by
 their author (see `src/DevBenchAPI.LICENSE.txt`) and copied unchanged. devbench is not required.
+
+`src/SKSEMenuFramework.h` is SKSE Menu Framework's own header by Thiago Kaique, copied unchanged from
+[SKSE-Menu-Framework-3-Example](https://github.com/QTR-Modding/SKSE-Menu-Framework-3-Example), MIT licensed
+(see `src/SKSEMenuFramework.LICENSE.txt`).

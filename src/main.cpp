@@ -4,9 +4,10 @@
 // This program is free software: you can redistribute it and/or modify it under the terms of the
 // GNU General Public License as published by the Free Software Foundation, either version 3 of the
 // License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY; see the
-// GNU General Public License in LICENSE.txt for details.
+// GNU General Public License in LICENSE for details.
 //
-// Dynamic Wards 2.0: every ward rank its own art, made in memory. No plugin file, no script registrations, nothing saved.
+// Dynamic Wards 2.0: every ward rank its own art, made in memory. No plugin file; one Papyrus native
+// (DynamicWards.FlashFor, for 360 Ward's rebuilt SphereWard script); settings live in DynamicWards.ini, nothing goes in the save.
 
 #include "Plugin.h"
 

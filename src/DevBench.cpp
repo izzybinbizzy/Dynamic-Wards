@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 
 #include "Plugin.h"
 
@@ -19,7 +19,7 @@ namespace Plugin
 			R"({"description":"Dynamic Wards 2.0 - every ward effect found, the row and art each one wears now and wore when it loaded, why it was dressed, and the settings (ward light, 360 unlock, Crusader shields). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})";
 
 		constexpr const char* kSetDescriptor =
-			R"({"description":"Dynamic Wards 2.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (0-4, 4 purple) | stages (3-5) | reversed (0/1) | color:<Row> (0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1, color every ward found) | perk:<0xID~Plugin> (the 360 unlock perk) | domeLights (0 auto, 1 on beside Light Placer - a test, 2 off; not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"}}}})";
+			R"({"description":"Dynamic Wards 2.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (0-4, 4 purple) | stages (3-5) | reversed (0/1) | color:<Row> (0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1, every mod on the Compatibility page) | mod:<Plugin.esp> (0/1, that mod's wards colored) | perk:<0xID~Plugin> (the 360 unlock perk) | domeLights (0 auto, 1 on beside Light Placer - a test, 2 off; not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"}}}})";
 
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
@@ -78,6 +78,8 @@ namespace Plugin
 				SetCrusaderOn(value != 0);
 			} else if (key == "every") {
 				SetEveryWard(value != 0);
+			} else if (key.starts_with("mod:")) {
+				SetModOn(key.substr(4), value != 0);  // one Compatibility-page tick, by plugin file name
 			} else if (key.starts_with("perk:")) {
 				SetUnlockPerk(key.substr(5));
 			} else if (key == "domeLights") {

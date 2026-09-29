@@ -1,6 +1,6 @@
 // Dynamic Wards - SKSE plugin
 // Copyright (C) 2026 izzydoingit
-// GPL-3.0-or-later; see LICENSE.txt and the notice at the top of main.cpp.
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -126,6 +126,29 @@ namespace Plugin
 				Changed();
 			}
 			ImGuiMCP::SetItemTooltip("%s", "Each ward's dome lights the area around you in its own color (Light Placer or RE::Light).");
+		}
+
+		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
+		// unticked, that mod's wards keep their own art. The Legacy shields live here too.
+		void __stdcall RenderCompatibility()
+		{
+			ImGuiMCP::TextColored(kNote, "%s", "Wards from other mods");
+			const auto mods = FoundMods();
+			if (mods.empty()) {
+				ImGuiMCP::TextDisabled("%s", "No mod in your load order adds wards of its own.");
+			}
+			for (const auto& [plugin, count] : mods) {
+				ImGuiMCP::PushID(plugin.c_str());
+				bool        on = ModOn(plugin);
+				std::string label = std::format("{} ({} ward{})", plugin.empty() ? std::string("Made in memory") : plugin, count, count == 1 ? "" : "s");
+				if (ImGuiMCP::Checkbox(label.c_str(), &on)) {
+					SetModOn(plugin, on);
+					Changed();
+				}
+				ImGuiMCP::SetItemTooltip("%s", "On: this mod's wards take the color of their rank. Off: they keep the mod's own look.");
+				ImGuiMCP::PopID();
+			}
+			ImGuiMCP::TextDisabled("%zu ward effect(s) found, %zu colored", FoundCount(), DressedCount());
 
 			if (CrusaderAvailable()) {
 				ImGuiMCP::Separator();
@@ -138,15 +161,6 @@ namespace Plugin
 					"The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					"also take that ward's strength instead of Spellbreaker's.");
 			}
-
-			ImGuiMCP::Separator();
-			bool every = EveryWard();
-			if (ImGuiMCP::Checkbox("Color every ward found", &every)) {
-				SetEveryWard(every);
-				Changed();
-			}
-			ImGuiMCP::SetItemTooltip("%s", "Wards from any mod get the color of their rank. Off: only the wards Dynamic Wards lists by name.");
-			ImGuiMCP::TextDisabled("%zu ward effect(s) found, %zu colored", FoundCount(), DressedCount());
 		}
 	}
 
@@ -158,6 +172,7 @@ namespace Plugin
 		}
 		SKSEMenuFramework::SetSection("Dynamic Wards");
 		SKSEMenuFramework::AddSectionItem("Settings", RenderSettings);
+		SKSEMenuFramework::AddSectionItem("Compatibility", RenderCompatibility);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
 }
