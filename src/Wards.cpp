@@ -120,6 +120,7 @@ namespace Plugin
 		std::string             gFlashTemplate = "none";
 		std::array<const Art*, kRows> gRowArt{};  // what each row wears now, resolved once per apply
 		std::unordered_map<const RE::EffectSetting*, std::size_t> gTargetOf;  // effect -> gTargets index
+		std::unordered_set<const RE::BGSArtObject*> gOurs;  // every art object made here: a slot holding one was dressed by us
 
 		// loaded, not merely present: LookupModByName also finds a plugin that is installed but not enabled
 		bool Loaded(RE::TESDataHandler* a_dh, std::string_view a_name)
@@ -138,6 +139,7 @@ namespace Plugin
 			auto* art = NewForm<RE::BGSArtObject>();
 			if (art) {
 				art->SetModel(a_model.c_str());
+				gOurs.insert(art);
 			}
 			return art;
 		}
@@ -173,9 +175,11 @@ namespace Plugin
 				auto* perk = ResolveForm(UnlockPerk());
 				return perk && perk->Is(RE::FormType::Perk) && player->HasPerk(perk->As<RE::BGSPerk>());
 			}
+			// the skill level itself, as the game's own perk requirements read it: a skill raised or lowered by a modifier (a
+			// mod's fortify-skill effect, modav) does not lock or unlock the dome
 			constexpr float kSkill[] = { 0.0f, 50.0f, 75.0f, 100.0f };
 			const auto      i = static_cast<std::size_t>(rule);
-			return i >= std::size(kSkill) || player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kRestoration) >= kSkill[i];
+			return i >= std::size(kSkill) || player->AsActorValueOwner()->GetBaseActorValue(RE::ActorValue::kRestoration) >= kSkill[i];
 		}
 
 		template <class T>
@@ -183,6 +187,15 @@ namespace Plugin
 		{
 			if (a_slot != a_want) {
 				a_slot = a_want;
+				++a_changed;
+			}
+		}
+
+		// a ward we do not dress gets its own art back only where we put ours: art another mod set after load stays
+		void Restore(RE::BGSArtObject*& a_slot, RE::BGSArtObject* a_own, std::size_t& a_changed)
+		{
+			if (a_slot != a_own && gOurs.contains(a_slot)) {
+				a_slot = a_own;
 				++a_changed;
 			}
 		}
@@ -275,7 +288,17 @@ namespace Plugin
 				return nullptr;
 			}
 			const auto it = gLooks.find(std::format("{}|{}", kTokens[a_row], look));
-			return it == gLooks.end() || !it->second.hand ? nullptr : &it->second;
+			return it == gLooks.end() || !it->second.hand || !it->second.dome ? nullptr : &it->second;
+		}
+
+		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is while
+		// "Color every ward found" is off
+		const Art* Worn(const Target& a_t, bool a_every)
+		{
+			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !a_every)) {
+				return nullptr;
+			}
+			return gRowArt[a_t.row];
 		}
 
 		RE::TESGlobal* MakeGlobal(const char* a_id)
@@ -387,7 +410,6 @@ namespace Plugin
 			}
 		}
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
-		const bool          every = EveryWard();
 		std::vector<Target> found;
 		std::size_t         skipped = 0;
 		for (auto* eff : dh->GetFormArray<RE::EffectSetting>()) {
@@ -396,7 +418,7 @@ namespace Plugin
 			}
 			auto&      d = eff->data;
 			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-					Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light };
+					Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {} };
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
@@ -415,10 +437,8 @@ namespace Plugin
 				++skipped;
 				SKSE::log::info("[WARD] left alone: {} (casting art only, no dome, no Ward Power)", Where(eff));
 				continue;
-			} else if (!every) {
-				++skipped;
-				continue;
 			} else {
+				// kept whatever "Color every ward found" says, so the switch works without a restart (ApplyAll reads it)
 				t.row = RankRow(d.minimumSkill);
 				t.why = std::format("found by {}; minimum skill {} = {}", (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power",
 					d.minimumSkill, kTokens[t.row]);
@@ -459,6 +479,7 @@ namespace Plugin
 		}
 		const bool  light = WardLightOn();
 		const bool  use360 = gHas360 && Dome360();
+		const bool  every = EveryWard();
 		Changes     c;
 		std::size_t dressed = 0;
 		for (auto& t : gTargets) {
@@ -470,11 +491,11 @@ namespace Plugin
 				}
 				continue;
 			}
-			const Art* a = gRowArt[t.row];
+			const Art* a = Worn(t, every);
 			if (!a) {
-				Put(d.castingArt, t.ownCast, c.art);
-				Put(d.hitEffectArt, t.ownHit, c.art);
-				Put(d.enchantEffectArt, t.ownEnch, c.art);
+				Restore(d.castingArt, t.ownCast, c.art);
+				Restore(d.hitEffectArt, t.ownHit, c.art);
+				Restore(d.enchantEffectArt, t.ownEnch, c.art);
 				continue;
 			}
 			RE::BGSArtObject* dome = (use360 && gUnlocked && a->dome360) ? a->dome360 : a->dome;
@@ -505,7 +526,7 @@ namespace Plugin
 				ApplyLight(t, false, false, c.light);
 				continue;
 			}
-			const bool vanilla = !gRowArt[t.row];
+			const bool vanilla = !Worn(t, every);
 			ApplyLight(t, (light && !gLightPlacer) || vanilla, !vanilla, c.light);
 		}
 		for (auto& [armo, own] : gShields) {
@@ -526,9 +547,9 @@ namespace Plugin
 		}
 		gDressed = dressed;
 		gLastApply = a_why ? a_why : "?";
-		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}", gLastApply,
-			dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
-			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" : "360 (locked)");
+		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; every ward {}",
+			gLastApply, dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
+			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" : "360 (locked)", every ? "on" : "off");
 	}
 
 	void CheckUnlock(const char* a_why)
@@ -585,14 +606,11 @@ namespace Plugin
 		}
 		std::scoped_lock l{ gLock };
 		const auto       it = gTargetOf.find(a_effect);
-		if (it == gTargetOf.end() || gTargets[it->second].how == How::kSilent) {
-			return nullptr;
-		}
-		const Art* a = gRowArt[gTargets[it->second].row];
+		const Art*       a = it == gTargetOf.end() ? nullptr : Worn(gTargets[it->second], EveryWard());
 		if (!a) {
 			return nullptr;  // 360 Ward's own flash plays
 		}
-		return (Dome360() && gUnlocked && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
+		return (gHas360 && Dome360() && gUnlocked && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
 	}
 
 	bool PreviewRow(std::size_t a_row, float a_seconds)
@@ -614,7 +632,9 @@ namespace Plugin
 			for (auto* perk : dh->GetFormArray<RE::BGSPerk>()) {
 				const char* n = perk ? perk->GetFullName() : nullptr;
 				if (n && *n && Contains(Lower(n), "ward")) {
-					out.emplace_back(FormText(perk), n);
+					if (auto id = FormText(perk); !id.empty()) {  // a perk made at run time has no plugin to name it by
+						out.emplace_back(std::move(id), n);
+					}
 				}
 			}
 		}
@@ -626,16 +646,17 @@ namespace Plugin
 		std::scoped_lock l{ gLock };
 		auto             lightId = [](const RE::TESObjectLIGH* a_l) { return a_l ? std::format("{:08X}", a_l->GetFormID()) : std::string(); };
 		std::string      wards;
+		const bool       every = EveryWard();
 		for (const auto& t : gTargets) {
 			const auto& d = t.effect->data;
 			const char* name = t.effect->GetFullName();
 			wards += std::format(
 				R"({}{{"effect":"{}","name":"{}","row":"{}","how":"{}","why":"{}","castingArt":"{}","hitEffectArt":"{}","enchantEffectArt":"{}",)"
-				R"("ownCastingArt":"{}","ownHitEffectArt":"{}","light":"{}","ownLight":"{}","takenLight":"{}"}})",
+				R"("ownCastingArt":"{}","ownHitEffectArt":"{}","light":"{}","ownLight":"{}","takenLight":"{}","dressed":{}}})",
 				wards.empty() ? "" : ",", JsonEscape(Where(t.effect)), JsonEscape(name ? name : ""), t.row < kRows ? kTokens[t.row] : "silent",
 				t.how == How::kTable ? "table" : t.how == How::kFound ? "found" : "silent", JsonEscape(t.why), JsonEscape(ModelOf(d.castingArt)),
 				JsonEscape(ModelOf(d.hitEffectArt)), JsonEscape(ModelOf(d.enchantEffectArt)), JsonEscape(ModelOf(t.ownCast)),
-				JsonEscape(ModelOf(t.ownHit)), lightId(d.light), lightId(t.ownLight), lightId(t.takenLight));
+				JsonEscape(ModelOf(t.ownHit)), lightId(d.light), lightId(t.ownLight), lightId(t.takenLight), Worn(t, every) != nullptr);
 		}
 		std::string rows;
 		for (std::size_t i = 0; i < kRows; ++i) {

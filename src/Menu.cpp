@@ -89,7 +89,7 @@ namespace Plugin
 					if (UnlockRule() == Unlock::kPerk) {
 						static std::vector<std::pair<std::string, std::string>> perks = WardPerks();
 						const auto  cur = UnlockPerk();
-						std::string preview = "(pick a perk)";
+						std::string preview = cur.empty() ? std::string("(pick a perk)") : cur;  // a perk set in the file, not in this list
 						for (const auto& [id, name] : perks) {
 							if (id == cur) {
 								preview = name;
@@ -143,9 +143,9 @@ namespace Plugin
 			bool every = EveryWard();
 			if (ImGuiMCP::Checkbox("Color every ward found", &every)) {
 				SetEveryWard(every);
-				SaveSettings();
+				Changed();
 			}
-			ImGuiMCP::SetItemTooltip("%s", "Wards from any mod get the color of their rank. Takes effect after a restart.");
+			ImGuiMCP::SetItemTooltip("%s", "Wards from any mod get the color of their rank. Off: only the wards Dynamic Wards lists by name.");
 			ImGuiMCP::TextDisabled("%zu ward effect(s) found, %zu colored", FoundCount(), DressedCount());
 		}
 	}

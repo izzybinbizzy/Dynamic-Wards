@@ -96,7 +96,8 @@ namespace Plugin
 		RE::NiPointLight* CloneMaster()
 		{
 			if (!gMaster) {
-				auto* fresh = RE::NiPointLight::Create();
+				// held so it is freed once the master is cloned from it (a bare pointer leaked it)
+				const RE::NiPointer<RE::NiPointLight> fresh(RE::NiPointLight::Create());
 				auto* clone = fresh ? netimmerse_cast<RE::NiPointLight*>(fresh->Clone()) : nullptr;
 				if (!clone) {
 					return nullptr;

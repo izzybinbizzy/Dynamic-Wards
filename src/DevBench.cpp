@@ -19,7 +19,7 @@ namespace Plugin
 			R"({"description":"Dynamic Wards 2.0 - every ward effect found, the row and art each one wears now and wore when it loaded, why it was dressed, and the settings (ward light, 360 unlock, Crusader shields). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})";
 
 		constexpr const char* kSetDescriptor =
-			R"({"description":"Dynamic Wards 2.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (0-4, 4 purple) | stages (3-5) | reversed (0/1) | color:<Row> (0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | domeLights (0 auto, 1 on beside Light Placer - a test, 2 off; not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"}}}})";
+			R"({"description":"Dynamic Wards 2.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (0-4, 4 purple) | stages (3-5) | reversed (0/1) | color:<Row> (0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1, color every ward found) | perk:<0xID~Plugin> (the 360 unlock perk) | domeLights (0 auto, 1 on beside Light Placer - a test, 2 off; not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"}}}})";
 
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
@@ -57,7 +57,8 @@ namespace Plugin
 		{
 			const std::string_view args{ a_args ? a_args : "" };
 			const auto             key = JsonField(args, "set");
-			const int              value = std::atoi(JsonField(args, "value").c_str());
+			const double           number = std::strtod(JsonField(args, "value").c_str(), nullptr);
+			const int              value = static_cast<int>(number);
 			bool                   ok = true;
 			if (key == "wardLight") {
 				SetWardLightOn(value != 0);
@@ -75,6 +76,10 @@ namespace Plugin
 				SetUnlockRule(static_cast<Unlock>(std::clamp(value, 0, 4)));
 			} else if (key == "crusader") {
 				SetCrusaderOn(value != 0);
+			} else if (key == "every") {
+				SetEveryWard(value != 0);
+			} else if (key.starts_with("perk:")) {
+				SetUnlockPerk(key.substr(5));
 			} else if (key == "domeLights") {
 				SetDomeMode(static_cast<DomeMode>(std::clamp(value, 0, 2)));  // a test switch, never saved
 				if (a_write) {
@@ -85,7 +90,7 @@ namespace Plugin
 				ok = false;
 				for (std::size_t i = 0; i < kRows; ++i) {
 					if (kTokens[i] == std::string_view(key).substr(8)) {
-						Later([i, value]() { PreviewRow(i, static_cast<float>(value)); });
+						Later([i, number]() { PreviewRow(i, static_cast<float>(number)); });
 						ok = true;
 					}
 				}

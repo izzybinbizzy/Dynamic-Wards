@@ -134,7 +134,7 @@ namespace Plugin
 	RE::TESForm* ResolveForm(std::string_view a_text)
 	{
 		const auto tilde = a_text.find('~');
-		if (tilde == std::string_view::npos || tilde < 3) {
+		if (tilde == std::string_view::npos || tilde == 0) {
 			return nullptr;
 		}
 		std::uint32_t local = 0;
@@ -142,8 +142,9 @@ namespace Plugin
 		if (hex.starts_with("0x") || hex.starts_with("0X")) {
 			hex.remove_prefix(2);
 		}
-		if (std::from_chars(hex.data(), hex.data() + hex.size(), local, 16).ec != std::errc{}) {
-			return nullptr;
+		const auto* end = hex.data() + hex.size();
+		if (const auto [stop, ec] = std::from_chars(hex.data(), end, local, 16); ec != std::errc{} || stop != end) {
+			return nullptr;  // all of it a number: "0x1G~X.esp" is no form
 		}
 		auto* dh = RE::TESDataHandler::GetSingleton();
 		return dh ? dh->LookupForm(local, a_text.substr(tilde + 1)) : nullptr;
