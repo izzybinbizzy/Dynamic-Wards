@@ -10,6 +10,7 @@
 // (DynamicWards.FlashFor, for 360 Ward's rebuilt SphereWard script); settings live in DynamicWards.ini, nothing goes in the save.
 
 #include "Plugin.h"
+#include "Translation.h"
 
 using namespace Plugin;
 
@@ -54,6 +55,7 @@ namespace
 				FindWards();
 				ApplyAll("data loaded");
 				StartDomeLights();
+				SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
 				RegisterMenu();
 				if (auto* ui = RE::UI::GetSingleton()) {
 					ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuWatch::Get());
