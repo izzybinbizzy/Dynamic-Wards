@@ -27,6 +27,9 @@ namespace Plugin
 		constexpr float       kSatFloor = 0.25f;  // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
 		constexpr float       kHueHold = 0.50f;   // wardgen HUE_HOLD: green and blue keep at least this much hue
 		constexpr float       kSpriteSat = 0.75f; // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
+		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
+		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
+		constexpr float       kHandCore = 1.0f;
 
 		struct Source
 		{
@@ -42,6 +45,7 @@ namespace Plugin
 			std::string                       stem;
 			RE::NiPointer<RE::NiSourceTexture> tex;
 			Color                             applied = 0xFFFFFFFF;
+			bool                              hand = false;  // named by the hand art (wardinhandfx): tinted to its core
 		};
 
 		struct Block
@@ -138,7 +142,7 @@ namespace Plugin
 		}
 
 		// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's
-		std::vector<std::uint8_t> Retint(const Source& a_s, Color a_c)
+		std::vector<std::uint8_t> Retint(const Source& a_s, Color a_c, float a_floor)
 		{
 			const float m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
 			const float tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
@@ -155,6 +159,7 @@ namespace Plugin
 					if (hold) {
 						k = (std::max)(k, kHueHold);
 					}
+					k = (std::max)(k, a_floor);
 					cb = 1.0f + k * (tb - 1.0f);
 					cg = 1.0f + k * (tg - 1.0f);
 					cr = 1.0f + k * (tr - 1.0f);
@@ -177,7 +182,7 @@ namespace Plugin
 				return false;
 			}
 			// the mip chain, box-filtered down to 1x1
-			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c) };
+			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, a_p.hand ? kHandCore : 0.0f) };
 			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
 			while (sizes.back().first > 1 || sizes.back().second > 1) {
 				const auto [pw, ph] = sizes.back();
@@ -257,7 +262,7 @@ namespace Plugin
 		void LoadRow(Row& a_row)
 		{
 			a_row.loaded = true;
-			std::set<std::string> paths;
+			std::set<std::string> paths, handPaths;
 			for (const auto& model : a_row.models) {
 				Master m{ model, nullptr, {}, 0 };
 				RE::BSModelDB::DBTraits::ArgsType args{};
@@ -281,6 +286,9 @@ namespace Plugin
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
 					if (b.palette && mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str()) {
 						paths.insert(mat->greyscaleTexturePath.c_str());
+						if (Lower(model).find("wardinhandfx") != std::string::npos) {
+							handPaths.insert(mat->greyscaleTexturePath.c_str());
+						}
 					}
 					// the colour controllers come off the cached model once: a clone of it has none
 					std::vector<RE::NiTimeController*> colour;
@@ -302,6 +310,7 @@ namespace Plugin
 			}
 			for (const auto& path : paths) {
 				Palette p{ path, {}, nullptr };
+				p.hand = handPaths.contains(path);
 				const auto name = std::filesystem::path(path).filename().string();
 				// "<stem><look code, 4><row digit>.dds": the stem names the neutral source the DLL recolors from
 				p.stem = name.size() > 9 ? name.substr(0, name.size() - 9) : name;

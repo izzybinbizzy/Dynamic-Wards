@@ -105,6 +105,10 @@ namespace Plugin
 	void        SetUnlockPerk(std::string a_perk);
 	bool        CrusaderOn();
 	void        SetCrusaderOn(bool a_on);
+	bool        KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
+	void        SetKeepStrangeRunes(bool a_on);
+	bool        StrangeRunesLoaded();
+	void        WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
 	bool        EveryWard();
 	void        SetEveryWard(bool a_on);
 	bool        ModOn(std::string_view a_plugin);

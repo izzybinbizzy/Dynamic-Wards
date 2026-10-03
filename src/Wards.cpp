@@ -252,9 +252,16 @@ namespace Plugin
 
 		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is
 		// unticked on the Compatibility page (one tick per mod, not one switch for all)
+		// Strange Runes restyles every ward spell's effect that carries the MagicWard keyword from its scripts (its MCM's
+		// ward look, set again at each load); with KeepStrangeRunes those are its, and we leave them (2026-10-03, his pick)
+		bool RunesOwn(const Target& a_t)
+		{
+			return StrangeRunesLoaded() && KeepStrangeRunes() && a_t.effect->HasKeywordString("MagicWard");
+		}
+
 		const Art* Worn(const Target& a_t)
 		{
-			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !ModOn(a_t.plugin))) {
+			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !ModOn(a_t.plugin)) || RunesOwn(a_t)) {
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
@@ -478,6 +485,49 @@ namespace Plugin
 		SKSE::log::info("wards: {} found ({} from the 1.0 table), {} left alone; Legacy Crusader shields {}", gTargets.size(),
 			std::ranges::count_if(gTargets, [](const Target& a) { return a.how == How::kTable; }), gSkipped,
 			gShields.empty() ? "not in this load order" : std::format("{} found", gShields.size()));
+	}
+
+	bool StrangeRunesLoaded()
+	{
+		static const bool loaded = [] {
+			auto* dh = RE::TESDataHandler::GetSingleton();
+			return dh && Loaded(dh, "StrangeRunes.esp");
+		}();
+		return loaded;
+	}
+
+	// another mod's script can swap a dressed ward's art after we dressed it (Strange Runes does at every load and on its
+	// MCM): checked every 2 s on the main thread, and a swapped ward is dressed again. Wards left to another mod (Worn null)
+	// are never touched here, so two mods never fight over one.
+	void WatchArt()
+	{
+		std::thread([]() {
+			for (;;) {
+				std::this_thread::sleep_for(std::chrono::seconds(2));
+				Later([]() {
+					std::size_t swapped = 0;
+					{
+						std::scoped_lock l{ gLock };
+						const bool use360 = gHas360 && Dome360();
+						for (const auto& t : gTargets) {
+							const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
+							if (!a) {
+								continue;
+							}
+							const auto* dome = (use360 && gUnlocked && a->dome360) ? a->dome360 : a->dome;
+							const bool  table = t.how == How::kTable;
+							if (((table || t.castWard) && t.effect->data.castingArt != a->hand) || ((table || t.hitWard) && t.effect->data.hitEffectArt != dome)) {
+								++swapped;
+							}
+						}
+					}
+					if (swapped) {
+						SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
+						ApplyAll("art swapped by another mod");
+					}
+				});
+			}
+		}).detach();  // never joined: a join from a DLL's static destructor at exit can hang on the loader lock
 	}
 
 	void ApplyAll(const char* a_why)

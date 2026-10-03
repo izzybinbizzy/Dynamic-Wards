@@ -57,6 +57,7 @@ namespace
 				FindWards();
 				ApplyAll("data loaded");
 				StartDomeLights();
+				WatchArt();
 				SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
 				RegisterMenu();
 				if (auto* ui = RE::UI::GetSingleton()) {

@@ -33,6 +33,7 @@ namespace Plugin
 		std::string            gPerk;
 		bool                   gCrusader = true;
 		bool                   gEvery = true;
+		bool                   gKeepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
 		std::map<std::string, bool, std::less<>> gMods;  // [Compatibility] plugin=0/1, lowercased; missing = gEvery
 
 		std::string Trim(std::string s)
@@ -163,6 +164,8 @@ namespace Plugin
 					gCrusader = v != 0;
 				} else if (key == "EveryWard") {
 					gEvery = v != 0;
+				} else if (key == "KeepStrangeRunesWards") {
+					gKeepRunes = v != 0;
 				}
 			} else if (section == "Compatibility") {
 				gMods[Lower(key)] = v != 0;
@@ -198,7 +201,8 @@ namespace Plugin
 			<< "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
 			<< "\nOpacity=" << gOpacity << "\nHudSwatch=" << (gHud ? 1 : 0) << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
 			<< "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
-			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0) << "\n[Colors]\n";
+			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
+			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0) << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const auto& r = gRows[i];
 			out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") : HexColor(r.color))
@@ -349,6 +353,16 @@ namespace Plugin
 		for (auto& [plugin, on] : gMods) {
 			on = a_on;
 		}
+	}
+	bool KeepStrangeRunes()
+	{
+		std::scoped_lock l{ gLock };
+		return gKeepRunes;
+	}
+	void SetKeepStrangeRunes(bool a_on)
+	{
+		std::scoped_lock l{ gLock };
+		gKeepRunes = a_on;
 	}
 	bool ModOn(std::string_view a_plugin)
 	{

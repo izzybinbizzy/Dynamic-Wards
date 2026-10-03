@@ -272,6 +272,17 @@ namespace Plugin
 				PopID();
 			}
 			TextColored(kMuted, T("%zu ward effect(s) found, %zu colored"), FoundCount(), DressedCount());
+			if (StrangeRunesLoaded()) {
+				Separator();
+				bool keep = KeepStrangeRunes();
+				if (Checkbox(T("Keep Strange Runes' ward look"), &keep)) {
+					SetKeepStrangeRunes(keep);
+					Changed();
+				}
+				SetItemTooltip("%s",
+					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
+					"Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
+			}
 			if (CrusaderAvailable()) {
 				Separator();
 				bool cru = CrusaderOn();
