@@ -209,7 +209,7 @@ namespace Plugin
 			Header(kIconEye, T("Opacity"));
 			int opacity = Opacity();
 			SetNextItemWidth(260.0f);
-			SliderInt(T("Ward opacity"), &opacity, 10, 100, "%d%%");
+			SliderInt(T("Ward opacity"), &opacity, kOpacityMin, 100, "%d%%");
 			if (opacity != Opacity()) {
 				SetOpacity(opacity);
 			}

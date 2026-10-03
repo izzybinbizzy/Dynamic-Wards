@@ -88,7 +88,8 @@ namespace Plugin
 	void        SetLadderStages(int a_stages);
 	bool        LadderReversed();
 	void        SetLadderReversed(bool a_on);
-	int         Opacity();  // 10-100, percent: the ward art AND its lights
+	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
+	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights
 	void        SetOpacity(int a_percent);
 	bool        HudSwatch();  // the small on-screen swatch of the ward in your hands
 	void        SetHudSwatch(bool a_on);

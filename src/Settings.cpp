@@ -150,7 +150,7 @@ namespace Plugin
 				} else if (key == "LadderReversed") {
 					gReversed = v != 0;
 				} else if (key == "Opacity") {
-					gOpacity = std::clamp(v, 10, 100);
+					gOpacity = std::clamp(v, kOpacityMin, 100);
 				} else if (key == "HudSwatch") {
 					gHud = v != 0;
 				} else if (key == "Dome") {
@@ -265,7 +265,7 @@ namespace Plugin
 	void SetOpacity(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gOpacity = std::clamp(a_percent, 10, 100);
+		gOpacity = std::clamp(a_percent, kOpacityMin, 100);
 	}
 	bool HudSwatch()
 	{
