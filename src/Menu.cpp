@@ -13,6 +13,7 @@
 
 #include "SKSEMenuFramework.h"
 #include "Translation.h"
+#include "MenuStyle.h"
 
 namespace Plugin
 {
@@ -23,19 +24,14 @@ namespace Plugin
 		using Translation::Fill;
 #define TR_MARK(x) x  // a line Translation.json carries, though it is not written inside T( ) here
 
-		// the house look: a deep violet accent on the menu's own dark
-		const ImVec4 kAccent{ 0.62f, 0.45f, 1.0f, 1.0f };
-		const ImVec4 kAccentDim{ 0.36f, 0.24f, 0.62f, 1.0f };
-		const ImVec4 kNote{ 1.0f, 0.85f, 0.4f, 1.0f };
-		const ImVec4 kMuted{ 0.62f, 0.62f, 0.68f, 1.0f };
+		using MenuStyle::Header;
+		using MenuStyle::kMuted;
+		namespace Icon = MenuStyle::Icon;
 
 		constexpr const char* kRowLabel[] = { TR_MARK("Lesser ward"), TR_MARK("Steadfast ward"), TR_MARK("Greater ward"),
 			TR_MARK("Expert ward"), TR_MARK("Master ward"), TR_MARK("Spellbreaker"), TR_MARK("Shield of the Crusader"),
 			TR_MARK("Visage of Reman"), TR_MARK("Vampire ward") };
 		static_assert(std::size(kRowLabel) == kRows);
-
-		// Font Awesome 6 (solid)
-		constexpr unsigned kIconPalette = 0xF53F, kIconShield = 0xF3ED, kIconBulb = 0xF0EB, kIconPuzzle = 0xF12E, kIconEye = 0xF06E;
 
 		SKSEMenuFramework::Model::HudElement* gHud = nullptr;
 
@@ -61,62 +57,25 @@ namespace Plugin
 			return IM_COL32((a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, a_alpha);
 		}
 
-		void Header(unsigned a_icon, const char* a_text)
-		{
-			FontAwesome::PushSolid();
-			TextColored(kAccent, "%s", FontAwesome::UnicodeToUtf8(a_icon).c_str());
-			FontAwesome::Pop();
-			SameLine();
-			TextColored(kAccent, "%s", a_text);
-			Separator();
-		}
-
-		// the full spectrum as a bar: click or drag picks the hue at full color; the edit lands when the mouse is let go
-		bool SpectrumBar(const char* a_id, Color& a_color)
-		{
-			const auto pos = GetCursorScreenPos();
-			const auto avail = GetContentRegionAvail();
-			const float w = (std::max)(120.0f, avail.x), h = 18.0f;
-			auto*       dl = GetWindowDrawList();
-			constexpr Color kStops[] = { 0xFF0000, 0xFFFF00, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFF00FF, 0xFF0000 };
-			for (int i = 0; i < 6; ++i) {
-				const float x0 = pos.x + w * i / 6.0f, x1 = pos.x + w * (i + 1) / 6.0f;
-				ImDrawListManager::AddRectFilledMultiColor(dl, ImVec2(x0, pos.y), ImVec2(x1, pos.y + h), U32(kStops[i]), U32(kStops[i + 1]),
-					U32(kStops[i + 1]), U32(kStops[i]));
-			}
-			ImDrawListManager::AddRect(dl, pos, ImVec2(pos.x + w, pos.y + h), U32(0x000000, 160), 3.0f, 0, 1.0f);
-			InvisibleButton(a_id, ImVec2(w, h));
-			if (IsItemActive()) {
-				const float t = std::clamp((GetMousePos().x - pos.x) / w, 0.0f, 0.9999f);
-				float       r = 0, g = 0, b = 0;
-				ColorConvertHSVtoRGB(t, 1.0f, 1.0f, &r, &g, &b);
-				const float rgb[3] = { r, g, b };
-				a_color = FromFloats(rgb);
-			}
-			return IsItemDeactivated();
-		}
-
-		// one row of color: a picker (applies when let go) and the quick picks
+		// one row of color (MenuStyle::ColorRow with the presets as quick picks); true when an edit is finished
 		bool ColorChooser(const char* a_id, Color& a_color)
 		{
-			PushID(a_id);
-			bool  done = false;
-			float rgb[3] = { ((a_color >> 16) & 0xFF) / 255.0f, ((a_color >> 8) & 0xFF) / 255.0f, (a_color & 0xFF) / 255.0f };
-			SetNextItemWidth(220.0f);
-			if (ColorEdit3("##pick", rgb, ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_NoAlpha)) {
-				a_color = FromFloats(rgb);
-			}
-			done |= IsItemDeactivatedAfterEdit();
-			for (const auto& p : kPresets) {
-				SameLine();
-				if (ColorButton(T(p.name), Vec(p.color), ImGuiColorEditFlags_NoAlpha, ImVec2(20.0f, 20.0f))) {
-					a_color = p.color;
-					done = true;
+			static const auto quick = [] {
+				std::vector<MenuStyle::Swatch> q;
+				for (const auto& p : kPresets) {
+					const auto v = Vec(p.color);
+					q.push_back({ p.name, { v.x, v.y, v.z } });
 				}
-				SetItemTooltip("%s", T(p.name));
+				return q;
+			}();
+			std::vector<MenuStyle::Swatch> named(quick);
+			for (auto& q : named) {
+				q.name = T(q.name);
 			}
-			done |= SpectrumBar("##spectrum", a_color);
-			PopID();
+			const auto v = Vec(a_color);
+			float      rgb[3] = { v.x, v.y, v.z };
+			const bool done = MenuStyle::ColorRow(a_id, rgb, named);
+			a_color = FromFloats(rgb);
 			return done;
 		}
 
@@ -136,13 +95,9 @@ namespace Plugin
 
 		void __stdcall RenderSettings()
 		{
-			PushStyleColor(ImGuiCol_CheckMark, kAccent);
-			PushStyleColor(ImGuiCol_SliderGrab, kAccent);
-			PushStyleColor(ImGuiCol_SliderGrabActive, kAccentDim);
-			PushStyleColor(ImGuiCol_Header, kAccentDim);
-			PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+			MenuStyle::Page page;
 
-			Header(kIconPalette, T("Colors"));
+			Header(Icon::kPalette, T("Colors"));
 			static Color ladder = LadderColor();
 			static bool  editingLadder = false;
 			if (!editingLadder) {
@@ -205,8 +160,7 @@ namespace Plugin
 				}
 			}
 
-			Spacing();
-			Header(kIconEye, T("Opacity"));
+			Header(Icon::kEye, T("Opacity"));
 			int opacity = Opacity();
 			SetNextItemWidth(260.0f);
 			SliderInt(T("Ward opacity"), &opacity, kOpacityMin, 100, "%d%%");
@@ -219,8 +173,7 @@ namespace Plugin
 			SetItemTooltip("%s", T("How see-through the ward is. Its light dims with it."));
 
 			if (Has360Ward()) {
-				Spacing();
-				Header(kIconShield, T("Dome"));
+				Header(Icon::kShield, T("Dome"));
 				int         dome = Dome360() ? 0 : 1;
 				const char* domes[] = { T("360 dome"), T("Normal dome") };
 				SetNextItemWidth(160.0f);
@@ -261,12 +214,11 @@ namespace Plugin
 							TextDisabled("%s", T("No perk in your load order has ward in its name."));
 						}
 					}
-					TextColored(Unlocked360() ? kAccent : kMuted, "%s", Unlocked360() ? T("Unlocked") : T("Locked"));
+					TextColored(Unlocked360() ? MenuStyle::gTheme.accent : kMuted, "%s", Unlocked360() ? T("Unlocked") : T("Locked"));
 				}
 			}
 
-			Spacing();
-			Header(kIconBulb, T("Lights"));
+			Header(Icon::kBulb, T("Lights"));
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
 			TextColored(kMuted, T("Lighting picked in the installer: %s"), lighting[static_cast<int>(LightingPick())]);
 			if (LightingPick() == Lighting::kShaders && Effects11()) {
@@ -295,16 +247,14 @@ namespace Plugin
 			}
 			SetItemTooltip("%s", T("A small swatch in the corner of the screen with the color of the ward in your hands."));
 
-			PopStyleVar();
-			PopStyleColor(4);
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
 		// unticked, that mod's wards keep their own art. The Legacy shields live here too.
 		void __stdcall RenderCompatibility()
 		{
-			PushStyleColor(ImGuiCol_CheckMark, kAccent);
-			Header(kIconPuzzle, T("Wards from other mods"));
+			MenuStyle::Page page;
+			Header(Icon::kPuzzle, T("Wards from other mods"));
 			const auto mods = FoundMods();
 			if (mods.empty()) {
 				TextDisabled("%s", T("No mod in your load order adds wards of its own."));
@@ -333,7 +283,6 @@ namespace Plugin
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					"also take that ward's strength instead of Spellbreaker's."));
 			}
-			PopStyleColor();
 		}
 
 		// the HUD swatch: the color of the ward in either hand, bottom left, while one is equipped
@@ -367,7 +316,7 @@ namespace Plugin
 			auto*       io = GetIO();
 			auto*       dl = GetForegroundDrawList();
 			const float x = 24.0f, y = io ? io->DisplaySize.y - 215.0f : 600.0f;  // above the vanilla bars and the active-effect icons
-			ImDrawListManager::AddRectFilled(dl, ImVec2(x - 4, y - 4), ImVec2(x + 196, y + 30), IM_COL32(10, 8, 18, 150), 6.0f, 0);
+			MenuStyle::HudPlate(dl, ImVec2(x - 4, y - 4), ImVec2(x + 196, y + 30));
 			ImDrawListManager::AddRectFilled(dl, ImVec2(x, y), ImVec2(x + 26, y + 26), U32(*color, static_cast<int>(255 * Opacity() / 100)), 5.0f, 0);
 			ImDrawListManager::AddRect(dl, ImVec2(x, y), ImVec2(x + 26, y + 26), IM_COL32(255, 255, 255, 120), 5.0f, 0, 1.0f);
 			ImDrawListManager::AddText(dl, ImVec2(x + 34, y + 5), IM_COL32(235, 230, 255, 230), T(kRowLabel[row]));
