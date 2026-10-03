@@ -6,7 +6,7 @@
 // License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY; see the
 // GNU General Public License in LICENSE for details.
 //
-// Dynamic Wards 2.0: every ward rank its own art, made in memory. No plugin file; one Papyrus native
+// Dynamic Wards 3.0: one neutral set of ward meshes per rank, colored in memory (any color, any opacity). No plugin file; one Papyrus native
 // (DynamicWards.FlashFor, for 360 Ward's rebuilt SphereWard script); settings live in DynamicWards.ini, nothing goes in the save.
 
 #include "Plugin.h"
@@ -51,6 +51,8 @@ namespace
 			{
 				const auto started = std::chrono::steady_clock::now();
 				LoadSettings();
+				ReadLighting();
+				MakeHandLights();
 				MakeArt();
 				FindWards();
 				ApplyAll("data loaded");
@@ -175,7 +177,7 @@ namespace Plugin
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
-	SKSE::log::info("Dynamic Wards 2.0 - every rank of ward its own art, in memory, with no plugin of its own");
+	SKSE::log::info("Dynamic Wards 3.0 - any color for any ward: one set of meshes, colored in memory; no plugin of its own");
 	SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 	if (auto* papyrus = SKSE::GetPapyrusInterface()) {
 		papyrus->Register(RegisterPapyrus);

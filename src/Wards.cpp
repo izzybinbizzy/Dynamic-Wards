@@ -103,7 +103,7 @@ namespace Plugin
 		};
 
 		std::mutex              gLock;
-		std::map<std::string, Art, std::less<>> gLooks;  // "Row|Look"
+		std::array<Art, kRows>  gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
 		RE::TESGlobal*          gLightsGlobal = nullptr;
 		RE::TESGlobal*          gHandGlobal = nullptr;
 		RE::TESGlobal*          gPresentGlobal = nullptr;
@@ -235,66 +235,24 @@ namespace Plugin
 			}
 			return nullptr;
 		}
-		// the look a ladder stop wears: white, the ladder's color, or "<Ladder> <percent>" between them (wardgen stop_look)
-		std::string StopLook(std::string_view a_ladder, int a_percent)
-		{
-			if (a_percent <= 0) {
-				return "White";
-			}
-			return a_percent >= 100 ? std::string(a_ladder) : std::format("{} {}", a_ladder, a_percent);
-		}
-
-		template <std::size_t N>
-		int StopOf(const std::array<int, N>& a_stops, std::size_t a_rank, bool a_reversed)
-		{
-			const auto pos = (std::min)(a_rank, N - 1);  // ranks past the ladder hold its last stop
-			return a_stops[a_reversed ? N - 1 - pos : pos];
-		}
-
-		int StopPercent(std::size_t a_rank)
-		{
-			const bool rev = LadderReversed();
-			switch (LadderStages()) {
-			case 5:
-				return StopOf(kStages5, a_rank, rev);
-			case 4:
-				return StopOf(kStages4, a_rank, rev);
-			default:
-				return StopOf(kStages3, a_rank, rev);
-			}
-		}
-
-		std::string LookFor(std::size_t a_row)
-		{
-			const auto pick = RowPick(a_row);
-			if (pick == Pick::kVanilla) {
-				return {};
-			}
-			if (pick == Pick::kPurple) {
-				return "Purple";
-			}
-			if (pick != Pick::kDefault) {
-				return std::string(kColorNames[static_cast<int>(pick) - 1]);
-			}
-			if (a_row >= kRanks) {
-				return std::string(kRowDefault[a_row]);
-			}
-			return StopLook(kLadderNames[Ladder()], StopPercent(a_row));
-		}
-
+		// what a row wears now: its neutral art (Colors.cpp colors it), or nothing for a Vanilla row
 		const Art* ArtFor(std::size_t a_row)
 		{
-			const auto look = LookFor(a_row);
-			if (look.empty()) {
+			if (a_row >= kRows || !RowColor(a_row)) {
 				return nullptr;
 			}
-			const auto it = gLooks.find(std::format("{}|{}", kTokens[a_row], look));
-			return it == gLooks.end() || !it->second.hand || !it->second.dome ? nullptr : &it->second;
+			const auto& a = gArt[a_row];
+			return a.hand && a.dome ? &a : nullptr;
+		}
+
+		std::string ModelName(std::string_view a_kind, std::size_t a_row)
+		{
+			return std::format("{}{} - {}.nif", kLookDir, a_kind, kTokens[a_row]);
 		}
 
 		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is
 		// unticked on the Compatibility page (one tick per mod, not one switch for all)
-		const Art* Worn(const Target& a_t, bool = true)
+		const Art* Worn(const Target& a_t)
 		{
 			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !ModOn(a_t.plugin))) {
 				return nullptr;
@@ -407,51 +365,29 @@ namespace Plugin
 		gLightsGlobal = MakeGlobal(kLightsGlobal);
 		gHandGlobal = MakeGlobal(kHandGlobal);
 		gPresentGlobal = MakeGlobal(kPresentGlobal);
-		std::vector<std::string> looks(std::begin(kColorNames), std::end(kColorNames));
-		looks.emplace_back("Purple");
-		std::set<int> between;  // every stop a ladder can land on between white and its color
-		for (const int p : kStages3) {
-			between.insert(p);
-		}
-		for (const int p : kStages4) {
-			between.insert(p);
-		}
-		for (const int p : kStages5) {
-			between.insert(p);
-		}
-		for (const auto& ladder : kLadderNames) {
-			for (const int p : between) {
-				if (p > 0 && p < 100) {
-					looks.push_back(StopLook(ladder, p));
-				}
-			}
-		}
 		std::size_t made = 0, missing = 0;
 		for (std::size_t row = 0; row < kRows; ++row) {
-			const auto token = kTokens[row];
-			for (const auto& look : looks) {
-				if (row >= kRanks && look.find(' ') != std::string::npos) {
-					continue;  // a rankless row has no ladder, so no stops between
-				}
-				const auto name = std::format("{} {}.nif", token, look);
-				const auto hand = std::format("{}wardinhandfx - {}", kLookDir, name);
-				const auto dome = std::format("{}wardbodyfx - {}", kLookDir, name);
-				if (!MeshExists(hand) || !MeshExists(dome)) {
-					++missing;
-					continue;
-				}
-				Art a{ MakeArtObject(hand), MakeArtObject(dome) };
-				if (const auto d360 = std::format("{}wardbodyfx 360 - {}", kLookDir, name); MeshExists(d360)) {
-					a.dome360 = MakeArtObject(d360);
-				}
-				if (const auto hit = std::format("{}wardshieldhitfx - {}", kLookDir, name); MeshExists(hit)) {
-					a.flash = makeFlash(MakeArtObject(hit));
-				}
-				gLooks.emplace(std::format("{}|{}", token, look), a);
-				++made;
+			const auto hand = ModelName("wardinhandfx", row);
+			const auto dome = ModelName("wardbodyfx", row);
+			if (!MeshExists(hand) || !MeshExists(dome)) {
+				++missing;
+				continue;
 			}
+			Art                      a{ MakeArtObject(hand), MakeArtObject(dome) };
+			std::vector<std::string> models{ hand, dome };
+			if (const auto d360 = ModelName("wardbodyfx 360", row); MeshExists(d360)) {
+				a.dome360 = MakeArtObject(d360);
+				models.push_back(d360);
+			}
+			if (const auto hit = ModelName("wardshieldhitfx", row); MeshExists(hit)) {
+				a.flash = makeFlash(MakeArtObject(hit));
+				models.push_back(hit);
+			}
+			gArt[row] = a;
+			RegisterRowModels(row, std::move(models));
+			++made;
 		}
-		SKSE::log::info("art: {} look(s) made, {} missing; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made, missing,
+		SKSE::log::info("art: {} row(s) made, {} missing; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made, missing,
 			gFlashTemplate, gHas360 ? "loaded" : "not loaded", gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
@@ -565,7 +501,7 @@ namespace Plugin
 				}
 				continue;
 			}
-			const Art* a = Worn(t, every);
+			const Art* a = Worn(t);
 			if (!a) {
 				Restore(d.castingArt, t.ownCast, c.art);
 				Restore(d.hitEffectArt, t.ownHit, c.art);
@@ -585,15 +521,18 @@ namespace Plugin
 			}
 			++dressed;
 		}
-		// the Addon points each ward's light at the one for its (new) hand art; the light switch below then has the last word
+		// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
+		const bool recolored = ApplyColors();
 		if (c.art) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
-			// a ward already in the hand takes its new art now, not at the next equip - only for a change made in the menu (or
-			// devbench's setter); a load or a loading screen equips everything afresh anyway
-			if (a_why && (std::string_view(a_why) == "menu" || std::string_view(a_why) == "devbench")) {
-				RefreshHands();
-			}
 		}
+		// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
+		// (or devbench's setter); a load or a loading screen equips everything afresh anyway
+		if ((c.art || recolored) && a_why && (std::string_view(a_why) == "menu" || std::string_view(a_why) == "devbench")) {
+			RefreshHands();
+		}
+		const bool ownHand = OwnLights();
+		const bool meshLights = MeshLights();
 		for (auto& t : gTargets) {
 			// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
 			// too big beside his other casting art. The silent row fires with EVERY vanilla ward and kept the game's white
@@ -601,12 +540,33 @@ namespace Plugin
 			// too - our config lights the hand in the ward's color, behind the Ward casting light switch (kHandGlobal).
 			// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
 			// decides it. A Vanilla row only gets back a light the switch took.
-			if (t.how == How::kSilent) {
-				ApplyLight(t, false, false, c.light);
-				continue;
+			// 2.3, the installer's lighting pick (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
+			// no light framework loaded) a colored ward casts with the game's ward light in its own color; on the ENB pick
+			// the light is in the mesh, so the game's goes as it does under Light Placer.
+			auto&       slot = t.effect->data.light;
+			auto* const before = slot;
+			if (IsOurHandLight(slot)) {
+				slot = nullptr;  // ours is never "the light the ward had"
 			}
-			const bool vanilla = !Worn(t, every);
-			ApplyLight(t, (light && !gLightPlacer) || vanilla, !vanilla, c.light);
+			std::size_t quiet = 0;
+			if (t.how == How::kSilent) {
+				ApplyLight(t, false, false, quiet);
+			} else {
+				const Art* a = Worn(t);
+				auto*      mine = (a && ownHand && (t.how == How::kTable || t.castWard)) ? HandLightFor(t.row) : nullptr;
+				if (mine) {
+					if (slot) {
+						t.takenLight = slot;  // back when the row turns Vanilla
+					}
+					slot = light ? mine : nullptr;
+				} else {
+					// a dressed ward on ENB lights itself (the light is in the mesh); a Vanilla row keeps the game's
+					ApplyLight(t, (light && !ownHand && !meshLights) || !a, a != nullptr, quiet);
+				}
+			}
+			if (slot != before) {
+				++c.light;
+			}
 		}
 		for (auto& [armo, own] : gShields) {
 			auto* want = (CrusaderOn() && gCrusaderEnch) ? gCrusaderEnch : own;
@@ -685,7 +645,7 @@ namespace Plugin
 		}
 		std::scoped_lock l{ gLock };
 		const auto       it = gTargetOf.find(a_effect);
-		const Art*       a = it == gTargetOf.end() ? nullptr : Worn(gTargets[it->second], EveryWard());
+		const Art*       a = it == gTargetOf.end() ? nullptr : Worn(gTargets[it->second]);
 		if (!a) {
 			return nullptr;  // 360 Ward's own flash plays
 		}
@@ -702,6 +662,26 @@ namespace Plugin
 		}
 		auto* dome = (gHas360 && Dome360() && gUnlocked && a->dome360) ? a->dome360 : a->dome;
 		return player->ApplyArtObject(dome, a_seconds) != nullptr;
+	}
+
+	std::size_t RowOfModel(std::string_view a_model)
+	{
+		const auto key = ModelKey(a_model);
+		if (!Contains(key, "dynamic wards\\")) {
+			return kRows;
+		}
+		const auto dash = key.rfind(" - ");
+		const auto dot = key.rfind(".nif");
+		if (dash == std::string::npos || dot == std::string::npos || dot < dash) {
+			return kRows;
+		}
+		const auto token = key.substr(dash + 3, dot - dash - 3);
+		for (std::size_t i = 0; i < kRows; ++i) {
+			if (Lower(kTokens[i]) == token) {
+				return i;
+			}
+		}
+		return kRows;
 	}
 
 	std::vector<std::pair<std::string, std::string>> WardPerks()
@@ -725,7 +705,6 @@ namespace Plugin
 		std::scoped_lock l{ gLock };
 		auto             lightId = [](const RE::TESObjectLIGH* a_l) { return a_l ? std::format("{:08X}", a_l->GetFormID()) : std::string(); };
 		std::string      wards;
-		const bool       every = EveryWard();
 		for (const auto& t : gTargets) {
 			const auto& d = t.effect->data;
 			const char* name = t.effect->GetFullName();
@@ -735,12 +714,13 @@ namespace Plugin
 				wards.empty() ? "" : ",", JsonEscape(Where(t.effect)), JsonEscape(name ? name : ""), t.row < kRows ? kTokens[t.row] : "silent",
 				t.how == How::kTable ? "table" : t.how == How::kFound ? "found" : "silent", JsonEscape(t.why), JsonEscape(ModelOf(d.castingArt)),
 				JsonEscape(ModelOf(d.hitEffectArt)), JsonEscape(ModelOf(d.enchantEffectArt)), JsonEscape(ModelOf(t.ownCast)),
-				JsonEscape(ModelOf(t.ownHit)), lightId(d.light), lightId(t.ownLight), lightId(t.takenLight), Worn(t, every) != nullptr);
+				JsonEscape(ModelOf(t.ownHit)), lightId(d.light), lightId(t.ownLight), lightId(t.takenLight), Worn(t) != nullptr);
 		}
 		std::string rows;
 		for (std::size_t i = 0; i < kRows; ++i) {
-			rows += std::format(R"({}"{}":{{"pick":{},"look":"{}","installed":{}}})", rows.empty() ? "" : ",", kTokens[i],
-				static_cast<int>(RowPick(i)), JsonEscape(LookFor(i)), ArtFor(i) != nullptr);
+			const auto col = RowColor(i);
+			rows += std::format(R"({}"{}":{{"mode":{},"color":"{}","installed":{}}})", rows.empty() ? "" : ",", kTokens[i],
+				static_cast<int>(RowModeOf(i)), col ? HexColor(*col) : std::string("vanilla"), gArt[i].hand != nullptr);
 		}
 		std::string shields;
 		for (const auto& [armo, own] : gShields) {
@@ -751,8 +731,9 @@ namespace Plugin
 			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360":{},)"
 			R"("unlocked360":{},"unlockRule":{},"unlockPerk":"{}","ladder":"{}","wardLight":{},"coloredLights":{},"lightsGlobal":{},)"
 			R"("lightPlacer":{},"everyWard":{},"crusader":{},"rows":{{{}}},"shields":[{}],"wards":[{}]}})",
-			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), gLooks.size(), JsonEscape(gFlashTemplate), gHas360, Dome360(),
-			gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()), kLadderNames[Ladder()], WardLightOn(), ColoredLightsOn(),
+			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), std::ranges::count_if(gArt, [](const Art& a) { return a.hand != nullptr; }),
+			JsonEscape(gFlashTemplate), gHas360, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
+			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
 			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), rows,
 			shields, wards);
 	}

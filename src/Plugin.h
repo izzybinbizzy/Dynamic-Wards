@@ -15,36 +15,38 @@ namespace Plugin
 		return factory ? factory->Create() : nullptr;
 	}
 
-	// a row: five ranks, three worn shield wards, the vampire ward
+	// a row: five ranks, three worn shield wards, the vampire ward - one set of neutral meshes each (3.0)
 	inline constexpr std::string_view kTokens[] = { "Novice", "Apprentice", "Adept", "Expert", "Master", "Spellbreaker",
 		"Crusader", "Reman", "Vampire" };
-	inline constexpr std::size_t      kRows = std::size(kTokens);
-	inline constexpr std::size_t      kRanks = 5;
+	inline constexpr std::size_t kRows = std::size(kTokens);
+	inline constexpr std::size_t kRanks = 5;
 
-	// the ladders run white to this color; the colors a row may pick (wardgen LADDERS2 / PICK_COLORS2)
-	inline constexpr std::string_view kLadderNames[] = { "Blue", "Red", "Gold", "Green", "Purple" };
-	inline constexpr std::size_t      kLadders = std::size(kLadderNames);
-	inline constexpr std::string_view kColorNames[] = { "Blue", "Red", "Gold", "Green", "White" };  // Pick 1-5; Purple is Pick 7
+	// colors are 0xRRGGBB; the ladder runs from white to one color
+	using Color = std::uint32_t;
+	inline constexpr Color kWhite = 0xFFFFFF;
+	struct Preset
+	{
+		const char* name;
+		Color       color;
+	};
+	// the five colors of 2.x, as quick picks (and how a 2.x settings file's numbers read)
+	inline constexpr Preset kPresets[] = { { "Blue", 0x2468FF }, { "Red", 0xFF3648 }, { "Gold", 0xFFBE5A }, { "Green", 0x2DC846 },
+		{ "Purple", 0x9646FF }, { "White", kWhite } };
+	// what a rankless row wears on its default
+	inline constexpr Color kRowDefault[] = { 0, 0, 0, 0, 0, 0xFFBE5A, kWhite, kWhite, 0xFF3648 };
 
-	// a ladder's stops, in percent of the way from white to its color (wardgen STAGES2 - the same numbers)
+	// a ladder's stops, in percent of the way from white to its color
 	inline constexpr std::array<int, 3> kStages3{ 0, 55, 100 };
 	inline constexpr std::array<int, 4> kStages4{ 0, 33, 67, 100 };
 	inline constexpr std::array<int, 5> kStages5{ 0, 25, 50, 75, 100 };
 	inline constexpr int                kMinStages = 3;
 	inline constexpr int                kMaxStages = 5;
-	// what a rankless row wears on its default (wardgen shield colors)
-	inline constexpr std::string_view kRowDefault[] = { "", "", "", "", "", "Gold", "White", "White", "Red" };
 
-	enum class Pick : int
+	enum class RowMode : int
 	{
 		kDefault = 0,  // a rank follows the ladder; a rankless row wears its own default
-		kBlue,
-		kRed,
-		kGold,
-		kGreen,
-		kWhite,
-		kVanilla,
-		kPurple,  // after Vanilla, so a saved 6 still means Vanilla
+		kCustom = 1,   // a color of its own
+		kVanilla = 2,  // the game's own (or another mod's) art
 	};
 
 	enum class Unlock : int
@@ -56,31 +58,40 @@ namespace Plugin
 		kPerk = 4,
 	};
 
-	void        MakeArt();                       // data load: every installed look's art, in memory
+	// Wards.cpp: which effects are wards, and what each wears
+	void        MakeArt();                       // data load: each row's neutral art, in memory
 	void        FindWards();                     // data load: every ward, by the 1.0 table and by what it is
 	void        ApplyAll(const char* a_why);     // every dressed ward to what the settings ask for (main thread)
 	void        CheckUnlock(const char* a_why);  // re-reads the player's skill or perk; re-applies when it changed
-	bool        Has360Ward();                    // 360 Ward.esp is loaded, so the 360 dome and its flash can be used
+	bool        Has360Ward();
 	bool        LightPlacerLoaded();
 	bool        Unlocked360();
-	bool        CrusaderAvailable();             // Legacy, its Creation Club hub and Knights of the Nine are all loaded
+	bool        CrusaderAvailable();
 	std::size_t DressedCount();
 	std::size_t FoundCount();
 	std::string WardsReport();
 	RE::BGSReferenceEffect* FlashFor(RE::EffectSetting* a_effect);
 	bool        PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player
-	std::vector<std::pair<std::string, std::string>> WardPerks();  // (0xID~Plugin, name) - perks whose name says ward
+	std::size_t RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
+	std::vector<std::pair<std::string, std::string>> WardPerks();
+	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
+	// Settings.cpp: DynamicWards.ini, written by the menu
 	void        LoadSettings();
 	void        SaveSettings();
-	Pick        RowPick(std::size_t a_row);
-	void        SetRowPick(std::size_t a_row, Pick a_pick);
-	int         Ladder();
-	void        SetLadder(int a_ladder);
-	int         LadderStages();  // 3-5
+	RowMode     RowModeOf(std::size_t a_row);
+	Color       RowCustom(std::size_t a_row);
+	void        SetRow(std::size_t a_row, RowMode a_mode, Color a_color);
+	Color       LadderColor();
+	void        SetLadderColor(Color a_color);
+	int         LadderStages();
 	void        SetLadderStages(int a_stages);
-	bool        LadderReversed();  // the ladder's color at Lesser, white at the top
+	bool        LadderReversed();
 	void        SetLadderReversed(bool a_on);
+	int         Opacity();  // 10-100, percent: the ward art AND its lights
+	void        SetOpacity(int a_percent);
+	bool        HudSwatch();  // the small on-screen swatch of the ward in your hands
+	void        SetHudSwatch(bool a_on);
 	bool        Dome360();
 	void        SetDome360(bool a_on);
 	bool        WardLightOn();
@@ -93,18 +104,46 @@ namespace Plugin
 	void        SetUnlockPerk(std::string a_perk);
 	bool        CrusaderOn();
 	void        SetCrusaderOn(bool a_on);
-	bool        EveryWard();                     // the default for a mod with no line of its own (the old one switch)
-	void        SetEveryWard(bool a_on);         // devbench `set=every`: every mod on the Compatibility page at once
-	// the Compatibility page: one tick per mod
-	bool        ModOn(std::string_view a_plugin);            // are the wards this plugin adds colored?
+	bool        EveryWard();
+	void        SetEveryWard(bool a_on);
+	bool        ModOn(std::string_view a_plugin);
 	void        SetModOn(std::string_view a_plugin, bool a_on);
-	std::vector<std::pair<std::string, std::size_t>> FoundMods();  // Wards.cpp: every plugin with found wards, and how many
+	std::optional<Color> RowColor(std::size_t a_row);  // what the row wears now; nothing = Vanilla
+	int         StopPercent(std::size_t a_rank);       // where a rank sits on the ladder, 0 white - 100 the color
 
-	// DomeLights.cpp: the dome's colored light where Light Placer is not loaded (RE::Light)
+	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
+	// cached model every copy is cloned from
+	void        RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
+	bool        ApplyColors();                                                            // main thread; true when a row changed
+	std::string ColorsReport();
+
+	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
+	enum class Lighting : int
+	{
+		kShaders = 0,  // Community Shaders (with or without Effects 11) or none: this plugin makes the lights
+		kEnb = 1,      // an ENB light inside each ward mesh
+		kVanilla = 2,  // this plugin makes the lights, in the game's own lighting
+	};
+	void               ReadLighting();  // data load, before MakeArt
+	Lighting           LightingPick();
+	void               SetLightingPick(Lighting a_pick);  // devbench only, never saved
+	bool               MeshLights();                      // ENB: the light is in the mesh, the game's ward light goes
+	bool               OwnLights();                       // this plugin makes the hand and dome lights
+	bool               Effects11();                       // Community Shaders' Effects 11 is installed
+	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
+	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
+	void               ColorHandLights();                 // after a color change: each row's light in its color
+	RE::TESObjectLIGH* HandLightFor(std::size_t a_row);
+	bool               IsOurHandLight(const RE::TESObjectLIGH* a_light);
+	std::string        LightingReport();
+	std::string        ModelKey(std::string_view a_model);  // lower case, back slashes, under the meshes folder
+	RE::NiColor        LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
+
+	// DomeLights.cpp: the colored light on each dome, and (Effects 11 only) the first-person hand light
 	enum class DomeMode : int
 	{
-		kAuto = 0,  // with RE::Light and no Light Placer
-		kOn = 1,    // devbench only: hang them whatever is loaded (a test beside Light Placer)
+		kAuto = 0,
+		kOn = 1,  // devbench only
 		kOff = 2,
 	};
 	void        StartDomeLights();  // data load, after MakeArt
@@ -121,5 +160,8 @@ namespace Plugin
 	std::string  JsonEscape(std::string_view a_text);
 	RE::TESForm* ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
 	std::string  FormText(const RE::TESForm* a_form);
-	void         Later(std::function<void()> a_job);    // onto the game's main thread (the menu draws off it)
+	std::string  HexColor(Color a_color);               // "2468FF"
+	std::optional<Color> ParseColor(std::string_view a_text);
+	Color        Mix(Color a_from, Color a_to, int a_percent);
+	void         Later(std::function<void()> a_job);  // onto the game's main thread (the menu draws off it)
 }

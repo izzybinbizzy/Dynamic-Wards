@@ -1,0 +1,454 @@
+// Dynamic Wards - SKSE plugin
+// Copyright (C) 2026 izzydoingit
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
+//
+// 3.0: ONE neutral set of meshes per row, and the color made here, in memory.
+//
+// A ward keeps its color in three places, and each is reached once per color change, never per frame:
+//   1. its PALETTES (the greyscale-to-palette blocks). Each row's meshes name palette files of their own, so the texture
+//      object behind a palette is that row's alone: its pixels are rebuilt from the neutral source in the ward's color (the
+//      same curve the 2.x build baked - wardgen.pal_retint) and swapped in on the graphics card. Every live ward of the row
+//      changes at once.
+//   2. the GLOW of its other blocks (their emissive), on the cached MODEL every ward is cloned from (BSModelDB): a block
+//      whose emissive is a color takes the ward's hue at its own brightness (wardgen.retint); a palette block's emissive is a
+//      coordinate into its palette and keeps its number. The ENB light sprite takes the ward's color at full saturation.
+//   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp).
+// The dome's colour controllers would write the neutral color back every frame (probe 2, 2026-10-02: clearing kActive
+// does not stop the sequence that drives them), so they are taken off the cached model once; every clone made after
+// that has none.
+
+#include "Plugin.h"
+
+namespace Plugin
+{
+	namespace
+	{
+		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
+		constexpr float       kSatFloor = 0.25f;  // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
+		constexpr float       kHueHold = 0.50f;   // wardgen HUE_HOLD: green and blue keep at least this much hue
+		constexpr float       kSpriteSat = 0.75f; // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
+
+		struct Source
+		{
+			int                       w = 0, h = 0;
+			std::vector<std::uint8_t> bgra;  // mip 0 only
+			float                     sref = 0.0f;
+			bool                      ok = false;
+		};
+
+		struct Palette
+		{
+			std::string                       path;  // as the material names it
+			std::string                       stem;
+			RE::NiPointer<RE::NiSourceTexture> tex;
+			Color                             applied = 0xFFFFFFFF;
+		};
+
+		struct Block
+		{
+			RE::NiPointer<RE::BSEffectShaderProperty> prop;
+			RE::NiColorA                              base;  // as the neutral mesh has it
+			bool                                      palette = false;
+			bool                                      sprite = false;
+		};
+
+		struct Master
+		{
+			std::string                 model;
+			RE::NiPointer<RE::NiNode>   root;
+			std::vector<Block>          blocks;
+			std::size_t                 controllersOff = 0;
+		};
+
+		struct Row
+		{
+			std::vector<std::string> models;
+			std::vector<Master>      masters;
+			std::vector<Palette>     palettes;
+			bool                     loaded = false;
+			Color                    applied = 0xFFFFFFFF;
+			int                      appliedOpacity = -1;
+		};
+
+		struct Grave
+		{
+			REX::W32::ID3D11Resource*           tex;
+			REX::W32::ID3D11ShaderResourceView* srv;
+			std::chrono::steady_clock::time_point at;
+		};
+
+		std::mutex                     gLock;
+		std::array<Row, kRows>         gRows;
+		std::map<std::string, Source>  gSources;
+		std::vector<Grave>             gGrave;
+		std::size_t                    gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0;
+		std::string                    gLastProblem = "none";
+
+		float Sat(float a_b, float a_g, float a_r)
+		{
+			const float m = (std::max)({ a_b, a_g, a_r });
+			return m <= 0.0f ? 0.0f : (m - (std::min)({ a_b, a_g, a_r })) / m;
+		}
+
+		bool HoldsHue(Color a_c)
+		{
+			const int r = (a_c >> 16) & 0xFF, g = (a_c >> 8) & 0xFF, b = a_c & 0xFF;
+			if ((std::max)({ r, g, b }) - (std::min)({ r, g, b }) <= 8) {
+				return false;  // white: no hue to hold
+			}
+			return (std::max)(g, b) > r;
+		}
+
+		Source& LoadSource(const std::string& a_stem)
+		{
+			auto& s = gSources[Lower(a_stem)];
+			if (s.ok || s.w < 0) {
+				return s;
+			}
+			std::ifstream in(std::string(kPaletteDir) + a_stem + ".dds", std::ios::binary);
+			std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			if (raw.size() < 128 || std::memcmp(raw.data(), "DDS ", 4) != 0) {
+				s.w = -1;
+				gLastProblem = std::format("palette source {} is missing or not a DDS", a_stem);
+				return s;
+			}
+			std::uint32_t h = 0, w = 0, bits = 0;
+			std::memcpy(&h, raw.data() + 12, 4);
+			std::memcpy(&w, raw.data() + 16, 4);
+			std::memcpy(&bits, raw.data() + 88, 4);
+			if (bits != 32 || raw.size() < 128 + static_cast<std::size_t>(w) * h * 4) {
+				s.w = -1;
+				gLastProblem = std::format("palette source {} is not uncompressed 32-bit", a_stem);
+				return s;
+			}
+			s.w = static_cast<int>(w);
+			s.h = static_cast<int>(h);
+			s.bgra.assign(raw.begin() + 128, raw.begin() + 128 + static_cast<std::ptrdiff_t>(w) * h * 4);
+			std::vector<float> sats;
+			for (std::size_t i = 0; i + 3 < s.bgra.size(); i += 4) {
+				const auto b = s.bgra[i], g = s.bgra[i + 1], r = s.bgra[i + 2];
+				if ((std::max)({ b, g, r }) >= 32) {
+					sats.push_back(Sat(b, g, r));
+				}
+			}
+			std::ranges::sort(sats);
+			s.sref = sats.empty() ? 0.0f : sats[static_cast<std::size_t>(sats.size() * 0.95)];
+			s.ok = true;
+			return s;
+		}
+
+		// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's
+		std::vector<std::uint8_t> Retint(const Source& a_s, Color a_c)
+		{
+			const float m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
+			const float tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
+			const bool  curve = a_s.sref >= kSatFloor;
+			const float tsat = Sat(static_cast<float>(a_c & 0xFF), static_cast<float>((a_c >> 8) & 0xFF), static_cast<float>((a_c >> 16) & 0xFF));
+			const bool  hold = HoldsHue(a_c);
+			std::vector<std::uint8_t> out(a_s.bgra.size());
+			for (std::size_t i = 0; i + 3 < a_s.bgra.size(); i += 4) {
+				const float b = a_s.bgra[i], g = a_s.bgra[i + 1], r = a_s.bgra[i + 2];
+				const float v = (std::max)({ b, g, r });
+				float       cb = tb, cg = tg, cr = tr;
+				if (curve) {
+					float k = tsat <= 0.0f ? 1.0f : (std::min)(1.0f, Sat(b, g, r) / tsat);
+					if (hold) {
+						k = (std::max)(k, kHueHold);
+					}
+					cb = 1.0f + k * (tb - 1.0f);
+					cg = 1.0f + k * (tg - 1.0f);
+					cr = 1.0f + k * (tr - 1.0f);
+				}
+				out[i] = static_cast<std::uint8_t>(std::clamp(std::lround(cb * v), 0L, 255L));
+				out[i + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(cg * v), 0L, 255L));
+				out[i + 2] = static_cast<std::uint8_t>(std::clamp(std::lround(cr * v), 0L, 255L));
+				out[i + 3] = a_s.bgra[i + 3];
+			}
+			return out;
+		}
+
+		// the palette's texture on the graphics card, swapped for one in the ward's color (old objects released later)
+		bool Swap(Palette& a_p, const Source& a_s, Color a_c)
+		{
+			auto* rt = a_p.tex ? a_p.tex->rendererTexture : nullptr;
+			auto* dev = RE::BSGraphics::Renderer::GetDevice();
+			if (!rt || !dev) {
+				gLastProblem = std::format("{}: {}", a_p.path, rt ? "no graphics device" : "the texture is not loaded yet");
+				return false;
+			}
+			// the mip chain, box-filtered down to 1x1
+			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c) };
+			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
+			while (sizes.back().first > 1 || sizes.back().second > 1) {
+				const auto [pw, ph] = sizes.back();
+				const int  w = (std::max)(1, pw / 2), h = (std::max)(1, ph / 2);
+				const auto& prev = mips.back();
+				std::vector<std::uint8_t> next(static_cast<std::size_t>(w) * h * 4);
+				for (int y = 0; y < h; ++y) {
+					for (int x = 0; x < w; ++x) {
+						for (int c = 0; c < 4; ++c) {
+							int sum = 0, n = 0;
+							for (int dy = 0; dy < 2; ++dy) {
+								for (int dx = 0; dx < 2; ++dx) {
+									const int sx = (std::min)(pw - 1, x * 2 + dx), sy = (std::min)(ph - 1, y * 2 + dy);
+									sum += prev[(static_cast<std::size_t>(sy) * pw + sx) * 4 + c];
+									++n;
+								}
+							}
+							next[(static_cast<std::size_t>(y) * w + x) * 4 + c] = static_cast<std::uint8_t>(sum / n);
+						}
+					}
+				}
+				mips.push_back(std::move(next));
+				sizes.emplace_back(w, h);
+			}
+			std::vector<REX::W32::D3D11_SUBRESOURCE_DATA> init(mips.size());
+			for (std::size_t i = 0; i < mips.size(); ++i) {
+				init[i].sysMem = mips[i].data();
+				init[i].sysMemPitch = static_cast<std::uint32_t>(sizes[i].first) * 4;
+				init[i].sysMemSlicePitch = 0;
+			}
+			REX::W32::D3D11_TEXTURE2D_DESC d{};
+			d.width = static_cast<std::uint32_t>(a_s.w);
+			d.height = static_cast<std::uint32_t>(a_s.h);
+			d.mipLevels = static_cast<std::uint32_t>(mips.size());
+			d.arraySize = 1;
+			d.format = REX::W32::DXGI_FORMAT_B8G8R8A8_UNORM;
+			d.sampleDesc.count = 1;
+			d.sampleDesc.quality = 0;
+			d.usage = REX::W32::D3D11_USAGE_IMMUTABLE;
+			d.bindFlags = REX::W32::D3D11_BIND_SHADER_RESOURCE;
+			REX::W32::ID3D11Texture2D* tex = nullptr;
+			if (dev->CreateTexture2D(&d, init.data(), &tex) < 0 || !tex) {
+				gLastProblem = std::format("{}: the graphics card refused the texture", a_p.path);
+				return false;
+			}
+			REX::W32::ID3D11ShaderResourceView* srv = nullptr;
+			if (dev->CreateShaderResourceView(tex, nullptr, &srv) < 0 || !srv) {
+				tex->Release();
+				gLastProblem = std::format("{}: the graphics card refused the view", a_p.path);
+				return false;
+			}
+			gGrave.push_back({ rt->texture, rt->resourceView, std::chrono::steady_clock::now() });
+			rt->texture = tex;
+			rt->resourceView = srv;
+			rt->mips = static_cast<std::uint8_t>(mips.size());
+			return true;
+		}
+
+		// the textures replaced a few seconds ago: nothing draws with them any more
+		void Bury()
+		{
+			const auto now = std::chrono::steady_clock::now();
+			std::erase_if(gGrave, [&](const Grave& a_g) {
+				if (now - a_g.at < std::chrono::seconds(5)) {
+					return false;
+				}
+				if (a_g.srv) {
+					a_g.srv->Release();
+				}
+				if (a_g.tex) {
+					a_g.tex->Release();
+				}
+				return true;
+			});
+		}
+
+		void LoadRow(Row& a_row)
+		{
+			a_row.loaded = true;
+			std::set<std::string> paths;
+			for (const auto& model : a_row.models) {
+				Master m{ model, nullptr, {}, 0 };
+				RE::BSModelDB::DBTraits::ArgsType args{};
+				if (RE::BSModelDB::Demand(model.c_str(), m.root, args) != RE::BSResource::ErrorCode::kNone || !m.root) {
+					++gMissing;
+					continue;  // a model this install does not carry (the 360 dome without 360 Ward's meshes, say)
+				}
+				RE::BSVisit::TraverseScenegraphGeometries(m.root.get(), [&](RE::BSGeometry* a_geometry) {
+					auto* raw = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+					auto* prop = raw ? netimmerse_cast<RE::BSEffectShaderProperty*>(raw) : nullptr;
+					auto* mat = prop ? static_cast<RE::BSEffectShaderMaterial*>(prop->GetMaterial()) : nullptr;
+					if (!mat) {
+						return RE::BSVisit::BSVisitControl::kContinue;
+					}
+					// a palette block both says so AND names a palette: the ENB build's hand wisps keep the flag with no palette
+					// (Particle Patch's fix, so ENB does not make each wisp a light) and their color is still their emissive
+					const bool named = mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str();
+					Block b{ RE::NiPointer<RE::BSEffectShaderProperty>(prop), mat->baseColor,
+						named && prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
+					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
+					b.sprite = src.find("dwardglowenb") != std::string::npos;
+					if (b.palette && mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str()) {
+						paths.insert(mat->greyscaleTexturePath.c_str());
+					}
+					// the colour controllers come off the cached model once: a clone of it has none
+					std::vector<RE::NiTimeController*> colour;
+					for (auto* c = prop->GetControllers(); c; c = c->GetNext()) {
+						const auto* rtti = c->GetRTTI();
+						if (rtti && rtti->name && std::string_view(rtti->name).find("ColorController") != std::string_view::npos) {
+							colour.push_back(c);
+						}
+					}
+					for (auto* c : colour) {
+						c->IncRefCount();  // a sequence may still name it
+						prop->RemoveController(c);
+						++m.controllersOff;
+					}
+					m.blocks.push_back(std::move(b));
+					return RE::BSVisit::BSVisitControl::kContinue;
+				});
+				a_row.masters.push_back(std::move(m));
+			}
+			for (const auto& path : paths) {
+				Palette p{ path, {}, nullptr };
+				const auto name = std::filesystem::path(path).filename().string();
+				// "<stem><look code, 4><row digit>.dds": the stem names the neutral source the DLL recolors from
+				p.stem = name.size() > 9 ? name.substr(0, name.size() - 9) : name;
+				RE::NiPointer<RE::NiTexture> t;
+				RE::BSShaderManager::GetTexture(path.c_str(), true, t, false);
+				p.tex.reset(t ? netimmerse_cast<RE::NiSourceTexture*>(t.get()) : nullptr);
+				a_row.palettes.push_back(std::move(p));
+			}
+		}
+
+		void PaintRow(Row& a_row, Color a_c, int a_opacity)
+		{
+			const float alpha = a_opacity / 100.0f;
+			for (auto& p : a_row.palettes) {
+				if (p.applied == a_c) {
+					continue;
+				}
+				auto& s = LoadSource(p.stem);
+				if (!s.ok) {
+					++gSwapFails;
+					continue;
+				}
+				if (Swap(p, s, a_c)) {
+					p.applied = a_c;
+					++gSwaps;
+				} else {
+					++gSwapFails;
+				}
+			}
+			const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
+			const float m = (std::max)({ r, g, b, 0.001f });
+			// the sprite: the hue at least kSpriteSat saturated, full value - a pale light reads white and washes the ward out
+			float sh = 0, ss = 0, sv = 0;
+			{
+				const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), dd = mx - mn;
+				sv = mx;
+				ss = mx <= 0 ? 0 : dd / mx;
+				if (dd > 0) {
+					sh = mx == r ? std::fmod((g - b) / dd, 6.0f) : mx == g ? (b - r) / dd + 2.0f : (r - g) / dd + 4.0f;
+					sh = sh < 0 ? sh + 6.0f : sh;
+				}
+			}
+			ss = ss > 0.02f ? (std::max)(ss, kSpriteSat) : 0.0f;
+			auto hsv = [&](float a_h, float a_s) {
+				const float c = a_s, x = c * (1 - std::fabs(std::fmod(a_h, 2.0f) - 1)), mm = 1 - c;
+				float       rr = 0, gg = 0, bb = 0;
+				switch (static_cast<int>(a_h) % 6) {
+				case 0: rr = c, gg = x; break;
+				case 1: rr = x, gg = c; break;
+				case 2: gg = c, bb = x; break;
+				case 3: gg = x, bb = c; break;
+				case 4: rr = x, bb = c; break;
+				default: rr = c, bb = x; break;
+				}
+				return RE::NiColor{ rr + mm, gg + mm, bb + mm };
+			};
+			const auto sprite = hsv(sh, ss);
+			for (auto& master : a_row.masters) {
+				for (auto& blk : master.blocks) {
+					auto* mat = static_cast<RE::BSEffectShaderMaterial*>(blk.prop->GetMaterial());
+					if (!mat) {
+						continue;
+					}
+					auto* fresh = static_cast<RE::BSEffectShaderMaterial*>(mat->Create());
+					if (!fresh) {
+						continue;
+					}
+					fresh->CopyMembers(mat);
+					const float bright = (std::max)({ blk.base.red, blk.base.green, blk.base.blue });
+					if (blk.sprite) {
+						fresh->baseColor.red = sprite.red * alpha;
+						fresh->baseColor.green = sprite.green * alpha;
+						fresh->baseColor.blue = sprite.blue * alpha;
+					} else if (!blk.palette && bright > 0.0001f) {
+						fresh->baseColor.red = r / m * bright;
+						fresh->baseColor.green = g / m * bright;
+						fresh->baseColor.blue = b / m * bright;
+					}
+					fresh->baseColor.alpha = blk.base.alpha * (blk.sprite ? 1.0f : alpha);
+					blk.prop->SetMaterial(fresh, true);
+					if (blk.prop->GetMaterial() != fresh) {
+						fresh->~BSEffectShaderMaterial();
+						RE::free(fresh);
+					}
+					++gEdits;
+				}
+			}
+			a_row.applied = a_c;
+			a_row.appliedOpacity = a_opacity;
+		}
+	}
+
+	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models)
+	{
+		std::scoped_lock l{ gLock };
+		if (a_row < kRows) {
+			gRows[a_row].models = std::move(a_models);
+		}
+	}
+
+	bool ApplyColors()
+	{
+		const int opacity = Opacity();
+		bool      changed = false;
+		std::scoped_lock l{ gLock };
+		Bury();
+		for (std::size_t i = 0; i < kRows; ++i) {
+			auto&      row = gRows[i];
+			const auto c = RowColor(i);
+			if (!c || row.models.empty()) {
+				continue;  // a Vanilla row wears no art of ours
+			}
+			if (!row.loaded) {
+				LoadRow(row);
+			}
+			if (row.applied != *c || row.appliedOpacity != opacity || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
+				PaintRow(row, *c, opacity);
+				changed = true;
+			}
+		}
+		ColorHandLights();
+		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set{}", gSwaps, gSwapFails, gEdits,
+			gSwapFails ? " - " + gLastProblem : "");
+		return changed;
+	}
+
+	std::string ColorsReport()
+	{
+		std::scoped_lock l{ gLock };
+		std::string      rows;
+		for (std::size_t i = 0; i < kRows; ++i) {
+			const auto& r = gRows[i];
+			std::size_t blocks = 0, off = 0;
+			for (const auto& m : r.masters) {
+				blocks += m.blocks.size();
+				off += m.controllersOff;
+			}
+			std::string pals;
+			for (const auto& p : r.palettes) {
+				pals += std::format(R"({}{{"path":"{}","stem":"{}","loaded":{},"applied":"{}"}})", pals.empty() ? "" : ",", JsonEscape(p.path),
+					JsonEscape(p.stem), p.tex && p.tex->rendererTexture, p.applied == 0xFFFFFFFF ? std::string() : HexColor(p.applied));
+			}
+			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"colourControllersOff":{},"applied":"{}","palettes":[{}]}})",
+				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, off,
+				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
+		}
+		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"missingModels":{},"lastProblem":"{}","rows":{{{}}}}})", gSwaps, gSwapFails, gEdits,
+			gMissing, JsonEscape(gLastProblem), rows);
+	}
+}

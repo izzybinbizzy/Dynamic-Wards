@@ -1,7 +1,7 @@
 -- Dynamic Wards - SKSE plugin. GPL-3.0-or-later, see LICENSE.txt.
 set_xmakever("3.0.0")
 set_project("DynamicWards")
-set_version("2.0.0")
+set_version("3.0.0")
 set_license("GPL-3.0-or-later")
 set_arch("x64")
 set_languages("c++23")
@@ -24,7 +24,7 @@ target("DynamicWards", function()
     add_rules("commonlibsse-ng.plugin", {
         name = "DynamicWards",
         author = "izzydoingit",
-        description = "Dynamic Wards - gives every rank of ward its own art, in memory, with no plugin of its own",
+        description = "Dynamic Wards - any color for any ward, one set of meshes colored in memory, no plugin of its own",
     })
     add_files("src/*.cpp")
     add_headerfiles("src/*.h")

@@ -16,18 +16,17 @@ namespace Plugin
 		constexpr unsigned int kNeedsBuild = 10500;
 
 		constexpr const char* kDescriptor =
-			R"({"description":"Dynamic Wards 2.0 - every ward effect found, the row and art each one wears now and wore when it loaded, why it was dressed, and the settings (ward light, 360 unlock, Crusader shields). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})";
+			R"({"description":"Dynamic Wards 3.0 - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, and the settings. Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})";
 
 		constexpr const char* kSetDescriptor =
-			R"({"description":"Dynamic Wards 2.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (0-4, 4 purple) | stages (3-5) | reversed (0/1) | color:<Row> (0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1, every mod on the Compatibility page) | mod:<Plugin.esp> (0/1, that mod's wards colored) | perk:<0xID~Plugin> (the 360 unlock perk) | domeLights (0 auto, 1 on beside Light Placer - a test, 2 off; not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"}}}})";
-
+			R"({"description":"Dynamic Wards 3.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (10-100) | hud (0/1) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})";
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
 			if (a_write) {
 				// DevBench listener thread: both reports only read, each under its own lock, taken one after the other
 				auto report = WardsReport();
 				report.pop_back();
-				report += R"(,"domeLights":)" + DomeLightsReport() + "}";
+				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + "}";
 				a_write(a_sink, report.c_str());
 			}
 		}
@@ -65,7 +64,15 @@ namespace Plugin
 			} else if (key == "lights") {
 				SetColoredLightsOn(value != 0);
 			} else if (key == "ladder") {
-				SetLadder(value);
+				const auto c = ParseColor(JsonField(args, "color"));
+				ok = c.has_value();
+				if (c) {
+					SetLadderColor(*c);
+				}
+			} else if (key == "opacity") {
+				SetOpacity(value);
+			} else if (key == "hud") {
+				SetHudSwatch(value != 0);
 			} else if (key == "stages") {
 				SetLadderStages(value);
 			} else if (key == "reversed") {
@@ -82,6 +89,13 @@ namespace Plugin
 				SetModOn(key.substr(4), value != 0);  // one Compatibility-page tick, by plugin file name
 			} else if (key.starts_with("perk:")) {
 				SetUnlockPerk(key.substr(5));
+			} else if (key == "lighting") {
+				SetLightingPick(static_cast<Lighting>(std::clamp(value, 0, 2)));  // a test switch, never saved
+				Later([]() { ApplyAll("devbench"); });
+				if (a_write) {
+					a_write(a_sink, R"({"queued":true})");
+				}
+				return;
 			} else if (key == "domeLights") {
 				SetDomeMode(static_cast<DomeMode>(std::clamp(value, 0, 2)));  // a test switch, never saved
 				if (a_write) {
@@ -100,15 +114,23 @@ namespace Plugin
 					a_write(a_sink, ok ? R"({"queued":true})" : R"({"queued":false,"error":"unknown row"})");
 				}
 				return;
-			} else if (key.starts_with("color:")) {
+			} else if (key.starts_with("row:")) {
 				ok = false;
+				const auto want = Lower(JsonField(args, "color"));
 				for (std::size_t i = 0; i < kRows; ++i) {
-					if (kTokens[i] == std::string_view(key).substr(6)) {
-						SetRowPick(i, static_cast<Pick>(std::clamp(value, 0, static_cast<int>(Pick::kPurple))));
-						ok = true;
+					if (kTokens[i] == std::string_view(key).substr(4)) {
+						if (want == "vanilla") {
+							SetRow(i, RowMode::kVanilla, RowCustom(i));
+							ok = true;
+						} else if (want == "default") {
+							SetRow(i, RowMode::kDefault, RowCustom(i));
+							ok = true;
+						} else if (const auto c = ParseColor(want)) {
+							SetRow(i, RowMode::kCustom, *c);
+							ok = true;
+						}
 					}
-				}
-			} else {
+				}			} else {
 				ok = false;
 			}
 			if (ok) {
