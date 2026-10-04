@@ -25,7 +25,7 @@ namespace Plugin
 		int                    gStages = kMinStages;
 		bool                   gReversed = false;
 		int                    gOpacity = 100;
-		bool                   gHud = false;
+		int                    gTransparency = 0;
 		int                    gDome = 0;
 		bool                   gLight = true;
 		bool                   gColoredLights = true;
@@ -152,8 +152,8 @@ namespace Plugin
 					gReversed = v != 0;
 				} else if (key == "Opacity") {
 					gOpacity = std::clamp(v, kOpacityMin, 100);
-				} else if (key == "HudSwatch") {
-					gHud = v != 0;
+				} else if (key == "Transparency") {
+					gTransparency = std::clamp(v, 0, kTransparencyMax);
 				} else if (key == "Dome") {
 					gDome = std::clamp(v, 0, 1);
 				} else if (key == "Unlock360") {
@@ -182,9 +182,9 @@ namespace Plugin
 				}
 			}
 		}
-		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
+		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 						"Crusader shields {}, every ward {} ({} line(s) read{})",
-			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
+			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
 			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", read,
 			old ? "; a 2.x file, carried over" : "");
 	}
@@ -199,7 +199,7 @@ namespace Plugin
 		}
 		out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
 			<< "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
-			<< "\nOpacity=" << gOpacity << "\nHudSwatch=" << (gHud ? 1 : 0) << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
+			<< "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
 			<< "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
 			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
 			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0) << "\n[Colors]\n";
@@ -271,15 +271,15 @@ namespace Plugin
 		std::scoped_lock l{ gLock };
 		gOpacity = std::clamp(a_percent, kOpacityMin, 100);
 	}
-	bool HudSwatch()
+	int Transparency()
 	{
 		std::scoped_lock l{ gLock };
-		return gHud;
+		return gTransparency;
 	}
-	void SetHudSwatch(bool a_on)
+	void SetTransparency(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gHud = a_on;
+		gTransparency = std::clamp(a_percent, 0, kTransparencyMax);
 	}
 	bool Dome360()
 	{

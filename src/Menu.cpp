@@ -3,9 +3,8 @@
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // The SKSE Menu Framework pages (3.0): the ladder and every ward in any color - a drawn spectrum bar, color pickers,
-// quick picks, live swatches of each rank - the opacity slider, the dome, the lights, the compatibility page, and an
-// optional small swatch on the HUD showing the ward in your hands. A color is applied when the pick is let go (a drag
-// does not rebuild palettes every frame).
+// quick picks, live swatches of each rank - the opacity slider, the dome, the lights and the compatibility page. A color
+// is applied when the pick is let go (a drag does not rebuild palettes every frame). The HUD swatch is gone (his call 2026-10-03).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -33,8 +32,6 @@ namespace Plugin
 			TR_MARK("Visage of Reman"), TR_MARK("Vampire ward") };
 		static_assert(std::size(kRowLabel) == kRows);
 
-		SKSEMenuFramework::Model::HudElement* gHud = nullptr;
-
 		void Changed()
 		{
 			SaveSettings();
@@ -50,11 +47,6 @@ namespace Plugin
 		{
 			auto ch = [](float v) { return static_cast<Color>(std::clamp(std::lround(v * 255.0f), 0L, 255L)); };
 			return ch(a_rgb[0]) << 16 | ch(a_rgb[1]) << 8 | ch(a_rgb[2]);
-		}
-
-		ImU32 U32(Color a_c, int a_alpha = 255)
-		{
-			return IM_COL32((a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, a_alpha);
 		}
 
 		// one row of color (MenuStyle::ColorRow with the presets as quick picks); true when an edit is finished
@@ -170,7 +162,17 @@ namespace Plugin
 			if (IsItemDeactivatedAfterEdit()) {
 				Changed();
 			}
-			SetItemTooltip("%s", T("How see-through the ward is. Its light dims with it."));
+			SetItemTooltip("%s", T("How strong the whole ward is: its color, glow and light fade together."));
+			int transparency = Transparency();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Dome transparency"), &transparency, 0, kTransparencyMax, "%d%%");
+			if (transparency != Transparency()) {
+				SetTransparency(transparency);
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
 
 			if (Has360Ward()) {
 				Header(Icon::kShield, T("Dome"));
@@ -216,6 +218,9 @@ namespace Plugin
 					}
 					TextColored(Unlocked360() ? MenuStyle::gTheme.accent : kMuted, "%s", Unlocked360() ? T("Unlocked") : T("Locked"));
 				}
+			} else if (Missing360Patch()) {
+				Header(Icon::kShield, T("Dome"));
+				TextColored(kMuted, "%s", T("The 360 dome needs 360 Ward Universal Patch SKSE as well as 360 Ward."));
 			}
 
 			Header(Icon::kBulb, T("Lights"));
@@ -226,6 +231,7 @@ namespace Plugin
 			}
 			if (MeshLights()) {
 				TextColored(kMuted, "%s", T("ENB lights are part of the ward meshes; they take the ward's color and dim with its opacity."));
+				TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
 			} else {
 				bool light = WardLightOn();
 				if (Checkbox(T("Ward casting light"), &light)) {
@@ -240,13 +246,6 @@ namespace Plugin
 				}
 				SetItemTooltip("%s", T("Each ward's dome lights the area around you in its own color."));
 			}
-			bool hud = HudSwatch();
-			if (Checkbox(T("Show the ward color on the HUD"), &hud)) {
-				SetHudSwatch(hud);
-				SaveSettings();
-			}
-			SetItemTooltip("%s", T("A small swatch in the corner of the screen with the color of the ward in your hands."));
-
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
@@ -295,43 +294,6 @@ namespace Plugin
 					"also take that ward's strength instead of Spellbreaker's."));
 			}
 		}
-
-		// the HUD swatch: the color of the ward in either hand, bottom left, while one is equipped
-		void __stdcall RenderHud()
-		{
-			if (!HudSwatch()) {
-				return;
-			}
-			auto* player = RE::PlayerCharacter::GetSingleton();
-			if (!player) {
-				return;
-			}
-			std::optional<Color> color;
-			std::size_t          row = kRows;
-			for (const bool left : { false, true }) {
-				auto* spell = skyrim_cast<RE::SpellItem*>(player->GetEquippedObject(left));
-				if (!spell) {
-					continue;
-				}
-				for (auto* e : spell->effects) {
-					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-					if (const auto r = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; r < kRows) {
-						row = r;
-						color = RowColor(r);
-					}
-				}
-			}
-			if (!color) {
-				return;
-			}
-			auto*       io = GetIO();
-			auto*       dl = GetForegroundDrawList();
-			const float x = 24.0f, y = io ? io->DisplaySize.y - 215.0f : 600.0f;  // above the vanilla bars and the active-effect icons
-			MenuStyle::HudPlate(dl, ImVec2(x - 4, y - 4), ImVec2(x + 196, y + 30));
-			ImDrawListManager::AddRectFilled(dl, ImVec2(x, y), ImVec2(x + 26, y + 26), U32(*color, static_cast<int>(255 * Opacity() / 100)), 5.0f, 0);
-			ImDrawListManager::AddRect(dl, ImVec2(x, y), ImVec2(x + 26, y + 26), IM_COL32(255, 255, 255, 120), 5.0f, 0, 1.0f);
-			ImDrawListManager::AddText(dl, ImVec2(x + 34, y + 5), IM_COL32(235, 230, 255, 230), T(kRowLabel[row]));
-		}
 	}
 
 	void RegisterMenu()
@@ -343,7 +305,6 @@ namespace Plugin
 		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
 		SKSEMenuFramework::AddSectionItem(T("Settings"), RenderSettings);
 		SKSEMenuFramework::AddSectionItem(T("Compatibility"), RenderCompatibility);
-		gHud = SKSEMenuFramework::AddHudElement(RenderHud);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
 }

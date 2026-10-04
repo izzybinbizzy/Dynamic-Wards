@@ -59,6 +59,7 @@ namespace Plugin
 		constexpr std::uint32_t kCrusaderEnch = 0x000822;
 
 		constexpr const char*   k360Plugin = "360 Ward.esp";
+		constexpr const char*   k360Patch = "360WardUniversalPatchSKSE.dll";  // 360 Ward Universal Patch SKSE: the 360 dome needs both
 		constexpr std::uint32_t k360Flash = 0x000803;  // WardShieldHit
 
 		constexpr const char*   kLookDir = "magic\\Dynamic Wards\\";
@@ -112,7 +113,8 @@ namespace Plugin
 		RE::BGSReferenceEffect* gNoFlash = nullptr;
 		std::vector<Target>     gTargets;
 		std::size_t             gSkipped = 0;
-		bool                    gHas360 = false;
+		bool                    gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch: the only way the 360 dome is used
+		bool                    gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
 		bool                    gUnlocked = true;
 		std::size_t             gDressed = 0;
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> gShields;
@@ -367,7 +369,8 @@ namespace Plugin
 		};
 		gEmpty = MakeArtObject(kEmptyModel);
 		gNoFlash = makeFlash(gEmpty);
-		gHas360 = Loaded(dh, k360Plugin);
+		gHas360Plugin = Loaded(dh, k360Plugin);
+		gHas360 = gHas360Plugin && REX::W32::GetModuleHandleA(k360Patch) != nullptr;
 		gLightPlacer = REX::W32::GetModuleHandleA("po3_LightPlacer.dll") != nullptr;
 		gLightsGlobal = MakeGlobal(kLightsGlobal);
 		gHandGlobal = MakeGlobal(kHandGlobal);
@@ -395,7 +398,7 @@ namespace Plugin
 			++made;
 		}
 		SKSE::log::info("art: {} row(s) made, {} missing; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made, missing,
-			gFlashTemplate, gHas360 ? "loaded" : "not loaded", gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
+			gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" : "not loaded", gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
 
@@ -656,6 +659,12 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return gHas360;
+	}
+
+	bool Missing360Patch()
+	{
+		std::scoped_lock l{ gLock };
+		return gHas360Plugin && !gHas360;
 	}
 
 	bool LightPlacerLoaded()

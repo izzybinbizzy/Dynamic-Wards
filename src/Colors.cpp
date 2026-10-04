@@ -13,6 +13,9 @@
 //      whose emissive is a color takes the ward's hue at its own brightness (wardgen.retint); a palette block's emissive is a
 //      coordinate into its palette and keeps its number. The ENB light sprite takes the ward's color at full saturation.
 //   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp).
+//   4. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
+//      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
+//      tested on ENB, Vanilla and Community Shaders: `Temp\DW orb + transparency test\round 2*`).
 // The dome's colour controllers would write the neutral color back every frame (probe 2, 2026-10-02: clearing kActive
 // does not stop the sequence that drives them), so they are taken off the cached model once; every clone made after
 // that has none.
@@ -54,6 +57,9 @@ namespace Plugin
 			RE::NiColorA                              base;  // as the neutral mesh has it
 			bool                                      palette = false;
 			bool                                      sprite = false;
+			bool                                      fill = false;     // a dome's fill: thinned by the transparency slider
+			bool                                      startFaces = false;  // the start angle is the one facing you
+			float                                     facing = 0.0f;    // the fill's own opacity facing you
 		};
 
 		struct Master
@@ -72,6 +78,7 @@ namespace Plugin
 			bool                     loaded = false;
 			Color                    applied = 0xFFFFFFFF;
 			int                      appliedOpacity = -1;
+			int                      appliedTransparency = -1;
 		};
 
 		struct Grave
@@ -284,6 +291,14 @@ namespace Plugin
 						named && prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
 					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
+					// a dome's fill: falloff on, and more opaque facing you (the larger cos angle) than at the rim
+					if (prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
+						Lower(model).find("wardbodyfx") != std::string::npos) {
+						b.startFaces = mat->falloffStartAngle >= mat->falloffStopAngle;
+						b.facing = b.startFaces ? mat->falloffStartOpacity : mat->falloffStopOpacity;
+						const float rim = b.startFaces ? mat->falloffStopOpacity : mat->falloffStartOpacity;
+						b.fill = b.facing > rim;
+					}
 					if (b.palette && mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str()) {
 						paths.insert(mat->greyscaleTexturePath.c_str());
 						if (Lower(model).find("wardinhandfx") != std::string::npos) {
@@ -321,9 +336,10 @@ namespace Plugin
 			}
 		}
 
-		void PaintRow(Row& a_row, Color a_c, int a_opacity)
+		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency)
 		{
 			const float alpha = a_opacity / 100.0f;
+			const float clear = 1.0f - a_transparency / 100.0f;
 			for (auto& p : a_row.palettes) {
 				if (p.applied == a_c) {
 					continue;
@@ -390,6 +406,9 @@ namespace Plugin
 						fresh->baseColor.blue = b / m * bright;
 					}
 					fresh->baseColor.alpha = blk.base.alpha * (blk.sprite ? 1.0f : alpha);
+					if (blk.fill) {
+						(blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = blk.facing * clear;
+					}
 					blk.prop->SetMaterial(fresh, true);
 					if (blk.prop->GetMaterial() != fresh) {
 						fresh->~BSEffectShaderMaterial();
@@ -400,6 +419,7 @@ namespace Plugin
 			}
 			a_row.applied = a_c;
 			a_row.appliedOpacity = a_opacity;
+			a_row.appliedTransparency = a_transparency;
 		}
 	}
 
@@ -414,6 +434,7 @@ namespace Plugin
 	bool ApplyColors()
 	{
 		const int opacity = Opacity();
+		const int transparency = Transparency();
 		bool      changed = false;
 		std::scoped_lock l{ gLock };
 		Bury();
@@ -426,8 +447,9 @@ namespace Plugin
 			if (!row.loaded) {
 				LoadRow(row);
 			}
-			if (row.applied != *c || row.appliedOpacity != opacity || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
-				PaintRow(row, *c, opacity);
+			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency ||
+				std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
+				PaintRow(row, *c, opacity, transparency);
 				changed = true;
 			}
 		}
@@ -443,18 +465,19 @@ namespace Plugin
 		std::string      rows;
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const auto& r = gRows[i];
-			std::size_t blocks = 0, off = 0;
+			std::size_t blocks = 0, off = 0, fills = 0;
 			for (const auto& m : r.masters) {
 				blocks += m.blocks.size();
 				off += m.controllersOff;
+				fills += std::ranges::count_if(m.blocks, [](const Block& a_b) { return a_b.fill; });
 			}
 			std::string pals;
 			for (const auto& p : r.palettes) {
 				pals += std::format(R"({}{{"path":"{}","stem":"{}","loaded":{},"applied":"{}"}})", pals.empty() ? "" : ",", JsonEscape(p.path),
 					JsonEscape(p.stem), p.tex && p.tex->rendererTexture, p.applied == 0xFFFFFFFF ? std::string() : HexColor(p.applied));
 			}
-			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"colourControllersOff":{},"applied":"{}","palettes":[{}]}})",
-				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, off,
+			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"fills":{},"colourControllersOff":{},"applied":"{}","palettes":[{}]}})",
+				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
 				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
 		}
 		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"missingModels":{},"lastProblem":"{}","rows":{{{}}}}})", gSwaps, gSwapFails, gEdits,

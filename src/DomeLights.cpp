@@ -2,9 +2,9 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The colored light on a ward's dome (every pick but ENB, 3.0), and - only where Community Shaders' Effects 11 is installed
-// - a light on the FIRST-PERSON hand while a ward is cast: the game's casting light and Light Placer's hang on the
-// third-person body, which first person does not draw. Never on a plain ENB (his call, 2026-10-02).
+// The colored light on a ward's dome (every pick but ENB, 3.0), and - on ENB, or where Community Shaders' Effects 11 is
+// installed - a light on the FIRST-PERSON hand while a ward is cast: the game's casting light, Light Placer's and the ENB
+// mesh light hang on the third-person body, which first person does not draw. ENB too since 2026-10-03 (his call).
 // Each light takes its row's color and the opacity slider every tick, so a change in the menu reaches a ward already up.
 // Where it sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
 //
@@ -62,6 +62,7 @@ namespace Plugin
 		RE::NiPointer<RE::NiPointLight>       gMaster;
 		std::atomic<DomeMode>                 gMode{ DomeMode::kAuto };
 		std::atomic_bool                      gQueued{ false };
+		RE::NiColor                           gLastAmbient{};
 
 		bool Wanted()
 		{
@@ -127,6 +128,7 @@ namespace Plugin
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
 				data.fade = a_plainFade * dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
+				gLastAmbient = data.ambient;
 			} else {
 				data.diffuse = LightColor(a_color, isl);
 				data.fade = a_fade * dim;
@@ -243,7 +245,7 @@ namespace Plugin
 			return kRows;
 		}
 
-		// Effects 11 only: a light on each first-person hand that is casting one of our wards
+		// ENB or Effects 11: a light on each first-person hand that is casting one of our wards
 		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
 		{
 			auto*      player = RE::PlayerCharacter::GetSingleton();
@@ -339,7 +341,7 @@ namespace Plugin
 					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, lit.spec->plainRadius, lit.spec->plain);
 				}
 			}
-			TickHands(scene, Effects11() && LightingPick() == Lighting::kShaders && WardLightOn());
+			TickHands(scene, HandLight1st() && (MeshLights() || WardLightOn()));
 		}
 	}
 
@@ -351,7 +353,7 @@ namespace Plugin
 		}
 		SKSE::log::info("dome lights: {} dome model(s) in {}; {}; first-person hand light {}", gSpecs.size(), kPath,
 			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" : "off",
-			Effects11() && LightingPick() == Lighting::kShaders ? "on (Effects 11)" : "off");
+			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" : "on (Effects 11)");
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock
 		std::thread([]() {
 			for (;;) {
@@ -359,7 +361,7 @@ namespace Plugin
 				bool active = false;
 				{
 					std::scoped_lock l{ gLock };
-					active = Wanted() || !gLit.empty() || gHands[0].light || gHands[1].light || Effects11();
+					active = Wanted() || !gLit.empty() || gHands[0].light || gHands[1].light || HandLight1st();
 				}
 				if (active && !gQueued.exchange(true)) {
 					Later(Tick);
@@ -376,7 +378,8 @@ namespace Plugin
 	std::string DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
-		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"hand1stMade":{}}})", gSpecs.size(),
-			static_cast<int>(gMode.load()), Wanted(), gLit.size(), gHands[0].light != nullptr, gHands[1].light != nullptr, gHandsMade);
+		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"hand1stMade":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
+			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), gHands[0].light != nullptr, gHands[1].light != nullptr, gHandsMade,
+			gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue);
 	}
 }

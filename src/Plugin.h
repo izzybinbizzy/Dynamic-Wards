@@ -63,7 +63,8 @@ namespace Plugin
 	void        FindWards();                     // data load: every ward, by the 1.0 table and by what it is
 	void        ApplyAll(const char* a_why);     // every dressed ward to what the settings ask for (main thread)
 	void        CheckUnlock(const char* a_why);  // re-reads the player's skill or perk; re-applies when it changed
-	bool        Has360Ward();
+	bool        Has360Ward();       // 360 Ward.esp loaded and 360 Ward Universal Patch SKSE present
+	bool        Missing360Patch();  // 360 Ward.esp loaded, its Universal Patch not
 	bool        LightPlacerLoaded();
 	bool        Unlocked360();
 	bool        CrusaderAvailable();
@@ -91,8 +92,9 @@ namespace Plugin
 	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
 	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights
 	void        SetOpacity(int a_percent);
-	bool        HudSwatch();  // the small on-screen swatch of the ward in your hands
-	void        SetHudSwatch(bool a_on);
+	inline constexpr int kTransparencyMax = 90;  // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
+	int         Transparency();  // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
+	void        SetTransparency(int a_percent);
 	bool        Dome360();
 	void        SetDome360(bool a_on);
 	bool        WardLightOn();
@@ -135,6 +137,7 @@ namespace Plugin
 	bool               MeshLights();                      // ENB: the light is in the mesh, the game's ward light goes
 	bool               OwnLights();                       // this plugin makes the hand and dome lights
 	bool               Effects11();                       // Community Shaders' Effects 11 is installed
+	bool               HandLight1st();                    // the first-person hand light: ENB, or Community Shaders with Effects 11
 	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
 	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
 	void               ColorHandLights();                 // after a color change: each row's light in its color
@@ -144,7 +147,7 @@ namespace Plugin
 	std::string        ModelKey(std::string_view a_model);  // lower case, back slashes, under the meshes folder
 	RE::NiColor        LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
 
-	// DomeLights.cpp: the colored light on each dome, and (Effects 11 only) the first-person hand light
+	// DomeLights.cpp: the colored light on each dome, and (ENB, or Effects 11) the first-person hand light
 	enum class DomeMode : int
 	{
 		kAuto = 0,

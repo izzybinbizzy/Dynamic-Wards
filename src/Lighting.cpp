@@ -9,6 +9,7 @@
 //                       With Effects 11 installed it also lights the first-person hand (DomeLights.cpp) - Light Placer's light
 //                       hangs on the third-person body, which first person does not draw.
 //   ENB                 the light is an ENB particle light inside each ward mesh, colored by Colors.cpp; the game's light goes.
+//                       First person also gets this plugin's hand light (DomeLights.cpp; his call 2026-10-03).
 //   Vanilla             as Community Shaders, in the game's own lighting.
 //
 // The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs. No file reads
@@ -147,6 +148,12 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return gE11;
+	}
+
+	bool HandLight1st()
+	{
+		std::scoped_lock l{ gLock };
+		return gPick.load() == Lighting::kEnb || (gE11 && gPick.load() == Lighting::kShaders);
 	}
 
 	bool InverseSquare()
