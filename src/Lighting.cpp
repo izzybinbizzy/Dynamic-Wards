@@ -109,7 +109,7 @@ namespace Plugin
 
 	void ColorHandLights()
 	{
-		const float      dim = Opacity() / 100.0f;
+		const float      dim = LightDim();  // opacity x brightness
 		std::scoped_lock l{ gLock };
 		for (std::size_t i = 0; i < kRows; ++i) {
 			auto* h = gHand[i];
@@ -120,7 +120,7 @@ namespace Plugin
 			h->data.color.red = static_cast<std::uint8_t>((*c >> 16) & 0xFF);
 			h->data.color.green = static_cast<std::uint8_t>((*c >> 8) & 0xFF);
 			h->data.color.blue = static_cast<std::uint8_t>(*c & 0xFF);
-			h->fade = gGame->fade * dim;  // his call 2026-10-02: "light should dim with opacity"
+			h->fade = gGame->fade * dim;  // his calls: "light should dim with opacity" (2026-10-02), the brightness slider (2026-10-03)
 		}
 	}
 

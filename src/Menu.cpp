@@ -163,6 +163,16 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s", T("How strong the whole ward is: its color, glow and light fade together."));
+			int brightness = Brightness();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Ward brightness"), &brightness, kBrightnessMin, kBrightnessMax, "%d%%");
+			if (brightness != Brightness()) {
+				SetBrightness(brightness);
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("How bright every ward is: its glow and its light together. Turn it up if your lighting makes wards look dim."));
 			int transparency = Transparency();
 			SetNextItemWidth(260.0f);
 			SliderInt(T("Dome transparency"), &transparency, 0, kTransparencyMax, "%d%%");

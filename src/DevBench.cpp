@@ -19,7 +19,7 @@ namespace Plugin
 			R"({"description":"Dynamic Wards 3.0 - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, and the settings. Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})";
 
 		constexpr const char* kSetDescriptor =
-			R"({"description":"Dynamic Wards 3.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})";
+			R"({"description":"Dynamic Wards 3.0 - change one menu setting the way the menu does (saved, then applied on the main thread). args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, glow and lights; 100 = as built) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})";
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write)
 		{
 			if (a_write) {
@@ -73,6 +73,8 @@ namespace Plugin
 				SetOpacity(value);
 			} else if (key == "transparency") {
 				SetTransparency(value);
+			} else if (key == "brightness") {
+				SetBrightness(value);
 			} else if (key == "stages") {
 				SetLadderStages(value);
 			} else if (key == "reversed") {

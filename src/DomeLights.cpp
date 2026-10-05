@@ -122,7 +122,7 @@ namespace Plugin
 		void Dress(RE::NiPointLight* a_light, Color a_color, float a_fade, float a_reach, float a_size, float a_plainFade, float a_plainRadius, bool a_plain)
 		{
 			const bool  isl = InverseSquare();
-			const float dim = Opacity() / 100.0f;
+			const float dim = LightDim();  // opacity x brightness
 			auto&       data = a_light->GetLightRuntimeData();
 			if (!isl && a_plain) {
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
@@ -266,6 +266,10 @@ namespace Plugin
 				auto* node = body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot]));
 				auto* parent = node ? node->AsNode() : nullptr;
 				if (!parent) {
+					if (h.light) {
+						Drop(h.light.get(), h.bs, a_scene);
+						h = {};
+					}
 					continue;
 				}
 				if (h.light && h.node.get() != parent) {

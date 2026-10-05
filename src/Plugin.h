@@ -92,9 +92,15 @@ namespace Plugin
 	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
 	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights
 	void        SetOpacity(int a_percent);
+	inline constexpr int kTransparencyDefault = 25;  // his default, 2026-10-03
 	inline constexpr int kTransparencyMax = 90;  // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
 	int         Transparency();  // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
 	void        SetTransparency(int a_percent);
+	inline constexpr int kBrightnessMin = 25;   // the range is centred on 100 (as built): the slider starts in the middle (his call)
+	inline constexpr int kBrightnessMax = 175;
+	int         Brightness();  // kBrightnessMin-kBrightnessMax, percent: every ward's glow AND its lights (100 = as built)
+	void        SetBrightness(int a_percent);
+	float       LightDim();    // what a ward light's strength is multiplied by: opacity x brightness
 	bool        Dome360();
 	void        SetDome360(bool a_on);
 	bool        WardLightOn();

@@ -563,16 +563,22 @@ namespace Plugin
 			}
 			RE::BGSArtObject* dome = (use360 && gUnlocked && a->dome360) ? a->dome360 : a->dome;
 			const bool        table = t.how == How::kTable;
+			bool              put = false;
 			if (table || t.castWard) {
 				Put(d.castingArt, a->hand, c.art);
+				put = true;
 			}
 			if (table || t.hitWard) {
 				Put(d.hitEffectArt, dome, c.art);
+				put = true;
 			}
 			if (!table && t.enchWard) {
 				Put(d.enchantEffectArt, dome, c.art);
+				put = true;
 			}
-			++dressed;
+			if (put) {
+				++dressed;
+			}
 		}
 		// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
 		const bool recolored = ApplyColors();
@@ -605,8 +611,9 @@ namespace Plugin
 			if (t.how == How::kSilent) {
 				ApplyLight(t, false, false, quiet);
 			} else {
-				const Art* a = Worn(t);
-				auto*      mine = (a && ownHand && (t.how == How::kTable || t.castWard)) ? HandLightFor(t.row) : nullptr;
+				// only a ward whose casting art is ours has its light decided here; one wearing its own hand art keeps its own light
+				const bool ourHand = Worn(t) && (t.how == How::kTable || t.castWard);
+				auto*      mine = (ourHand && ownHand) ? HandLightFor(t.row) : nullptr;
 				if (mine) {
 					if (slot) {
 						t.takenLight = slot;  // back when the row turns Vanilla
@@ -614,7 +621,7 @@ namespace Plugin
 					slot = light ? mine : nullptr;
 				} else {
 					// a dressed ward on ENB lights itself (the light is in the mesh); a Vanilla row keeps the game's
-					ApplyLight(t, (light && !ownHand && !meshLights) || !a, a != nullptr, quiet);
+					ApplyLight(t, (light && !ownHand && !meshLights) || !ourHand, Worn(t) != nullptr, quiet);
 				}
 			}
 			if (slot != before) {

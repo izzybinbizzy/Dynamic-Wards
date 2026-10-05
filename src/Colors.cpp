@@ -13,6 +13,7 @@
 //      whose emissive is a color takes the ward's hue at its own brightness (wardgen.retint); a palette block's emissive is a
 //      coordinate into its palette and keeps its number. The ENB light sprite takes the ward's color at full saturation.
 //   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp).
+//   5. its BRIGHTNESS: every block's glow strength (emissive multiple), by the menu's all-in-one slider - the lights follow it.
 //   4. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
 //      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
 //      tested on ENB, Vanilla and Community Shaders: `Temp\DW orb + transparency test\round 2*`).
@@ -60,6 +61,7 @@ namespace Plugin
 			bool                                      fill = false;     // a dome's fill: thinned by the transparency slider
 			bool                                      startFaces = false;  // the start angle is the one facing you
 			float                                     facing = 0.0f;    // the fill's own opacity facing you
+			float                                     scale = 1.0f;     // the block's own glow strength (emissive multiple)
 		};
 
 		struct Master
@@ -79,6 +81,7 @@ namespace Plugin
 			Color                    applied = 0xFFFFFFFF;
 			int                      appliedOpacity = -1;
 			int                      appliedTransparency = -1;
+			int                      appliedBrightness = -1;
 		};
 
 		struct Grave
@@ -291,6 +294,7 @@ namespace Plugin
 						named && prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
 					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
+					b.scale = mat->baseColorScale;
 					// a dome's fill: falloff on, and more opaque facing you (the larger cos angle) than at the rim
 					if (prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
 						Lower(model).find("wardbodyfx") != std::string::npos) {
@@ -336,8 +340,9 @@ namespace Plugin
 			}
 		}
 
-		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency)
+		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency, int a_brightness)
 		{
+			const float glow = a_brightness / 100.0f;
 			const float alpha = a_opacity / 100.0f;
 			const float clear = 1.0f - a_transparency / 100.0f;
 			for (auto& p : a_row.palettes) {
@@ -406,6 +411,7 @@ namespace Plugin
 						fresh->baseColor.blue = b / m * bright;
 					}
 					fresh->baseColor.alpha = blk.base.alpha * (blk.sprite ? 1.0f : alpha);
+					fresh->baseColorScale = blk.scale * glow;
 					if (blk.fill) {
 						(blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = blk.facing * clear;
 					}
@@ -420,6 +426,7 @@ namespace Plugin
 			a_row.applied = a_c;
 			a_row.appliedOpacity = a_opacity;
 			a_row.appliedTransparency = a_transparency;
+			a_row.appliedBrightness = a_brightness;
 		}
 	}
 
@@ -435,6 +442,7 @@ namespace Plugin
 	{
 		const int opacity = Opacity();
 		const int transparency = Transparency();
+		const int brightness = Brightness();
 		bool      changed = false;
 		std::scoped_lock l{ gLock };
 		Bury();
@@ -447,9 +455,9 @@ namespace Plugin
 			if (!row.loaded) {
 				LoadRow(row);
 			}
-			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency ||
+			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency || row.appliedBrightness != brightness ||
 				std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
-				PaintRow(row, *c, opacity, transparency);
+				PaintRow(row, *c, opacity, transparency, brightness);
 				changed = true;
 			}
 		}
