@@ -12,7 +12,8 @@
 //   2. the GLOW of its other blocks (their emissive), on the cached MODEL every ward is cloned from (BSModelDB): a block
 //      whose emissive is a color takes the ward's hue at its own brightness (wardgen.retint); a palette block's emissive is a
 //      coordinate into its palette and keeps its number. The ENB light sprite takes the ward's color at full saturation.
-//   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp).
+//   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp); a
+//      palette block that reads no alpha from its emissive is dimmed through its glow strength instead (Block::alphaDead).
 //   5. its BRIGHTNESS: every block's glow strength (emissive multiple), by the menu's all-in-one slider - the lights follow it.
 //   4. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
 //      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
@@ -34,6 +35,11 @@ namespace Plugin
 		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
 		constexpr float       kHandCore = 1.0f;
+		// a DOME on the Vanilla lighting pick: at least this far toward the ward's colour (his report 2026-10-05: on the vanilla
+		// profiles the domes are "too washed out" beside the casting art, most of all blue). The other picks keep the ramp as built.
+		// 0.5 was still washed out beside the hand (his screenshot, same day, LTBG - Vanilla, normal dome): tinted as fully as
+		// the hand now, so the dome reads the color the casting art does.
+		constexpr float       kDomeCoreVanilla = 1.0f;
 
 		struct Source
 		{
@@ -62,6 +68,12 @@ namespace Plugin
 			bool                                      startFaces = false;  // the start angle is the one facing you
 			float                                     facing = 0.0f;    // the fill's own opacity facing you
 			float                                     scale = 1.0f;     // the block's own glow strength (emissive multiple)
+			// a palette block whose emissive alpha is 0: the shader takes its alpha from the palette and the texture, never from
+			// the emissive, so the opacity slider cannot reach it through alpha (the normal dome's vapour layers and flare - his
+			// report 2026-10-05, "the actual flares and second layer both are the same throughout the entire spectrum").
+			// Blended additively (every ward block is SrcAlpha + One), its glow strength scaled is the same thing as its alpha.
+			bool                                      alphaDead = false;
+			bool                                      additive = false;
 		};
 
 		struct Master
@@ -70,6 +82,7 @@ namespace Plugin
 			RE::NiPointer<RE::NiNode>   root;
 			std::vector<Block>          blocks;
 			std::size_t                 controllersOff = 0;
+			bool                        hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
 		};
 
 		struct Row
@@ -82,6 +95,7 @@ namespace Plugin
 			int                      appliedOpacity = -1;
 			int                      appliedTransparency = -1;
 			int                      appliedBrightness = -1;
+			int                      appliedCastingGlow = -1;
 		};
 
 		struct Grave
@@ -192,7 +206,8 @@ namespace Plugin
 				return false;
 			}
 			// the mip chain, box-filtered down to 1x1
-			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, a_p.hand ? kHandCore : 0.0f) };
+			const float core = a_p.hand ? kHandCore : LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla : 0.0f;
+			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, core) };
 			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
 			while (sizes.back().first > 1 || sizes.back().second > 1) {
 				const auto [pw, ph] = sizes.back();
@@ -275,6 +290,7 @@ namespace Plugin
 			std::set<std::string> paths, handPaths;
 			for (const auto& model : a_row.models) {
 				Master m{ model, nullptr, {}, 0 };
+				m.hand = Lower(model).find("wardinhandfx") != std::string::npos;
 				RE::BSModelDB::DBTraits::ArgsType args{};
 				if (RE::BSModelDB::Demand(model.c_str(), m.root, args) != RE::BSResource::ErrorCode::kNone || !m.root) {
 					++gMissing;
@@ -295,6 +311,10 @@ namespace Plugin
 					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
 					b.scale = mat->baseColorScale;
+					b.alphaDead = b.palette && mat->baseColor.alpha < 0.01f;
+					if (const auto& ap = a_geometry->GetGeometryRuntimeData().alphaProperty) {
+						b.additive = ap->GetAlphaBlending() && ap->GetDestBlendMode() == RE::NiAlphaProperty::AlphaFunction::kOne;
+					}
 					// a dome's fill: falloff on, and more opaque facing you (the larger cos angle) than at the rim
 					if (prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
 						Lower(model).find("wardbodyfx") != std::string::npos) {
@@ -340,10 +360,10 @@ namespace Plugin
 			}
 		}
 
-		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency, int a_brightness)
+		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency, int a_brightness, int a_castingGlow)
 		{
-			const float glow = a_brightness / 100.0f;
-			const float alpha = a_opacity / 100.0f;
+			const float wardGlow = a_brightness / 100.0f;
+			const float wardAlpha = a_opacity / 100.0f;
 			const float clear = 1.0f - a_transparency / 100.0f;
 			for (auto& p : a_row.palettes) {
 				if (p.applied == a_c) {
@@ -390,6 +410,10 @@ namespace Plugin
 			};
 			const auto sprite = hsv(sh, ss);
 			for (auto& master : a_row.masters) {
+				// the ward in the hands answers to the casting glow slider alone; opacity and ward brightness are the wards' own
+				// (his rule 2026-10-05)
+				const float glow = master.hand ? a_castingGlow / 100.0f : wardGlow;
+				const float alpha = master.hand ? 1.0f : wardAlpha;
 				for (auto& blk : master.blocks) {
 					auto* mat = static_cast<RE::BSEffectShaderMaterial*>(blk.prop->GetMaterial());
 					if (!mat) {
@@ -411,9 +435,13 @@ namespace Plugin
 						fresh->baseColor.blue = b / m * bright;
 					}
 					fresh->baseColor.alpha = blk.base.alpha * (blk.sprite ? 1.0f : alpha);
-					fresh->baseColorScale = blk.scale * glow;
+					fresh->baseColorScale = blk.scale * glow * (blk.alphaDead && blk.additive ? alpha : 1.0f);
 					if (blk.fill) {
 						(blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = blk.facing * clear;
+					}
+					if (blk.alphaDead && !blk.additive) {  // not seen in our meshes; the falloff is the alpha the shader does read
+						fresh->falloffStartOpacity *= alpha;
+						fresh->falloffStopOpacity *= alpha;
 					}
 					blk.prop->SetMaterial(fresh, true);
 					if (blk.prop->GetMaterial() != fresh) {
@@ -427,6 +455,7 @@ namespace Plugin
 			a_row.appliedOpacity = a_opacity;
 			a_row.appliedTransparency = a_transparency;
 			a_row.appliedBrightness = a_brightness;
+			a_row.appliedCastingGlow = a_castingGlow;
 		}
 	}
 
@@ -443,6 +472,7 @@ namespace Plugin
 		const int opacity = Opacity();
 		const int transparency = Transparency();
 		const int brightness = Brightness();
+		const int castingGlow = CastingGlow();
 		bool      changed = false;
 		std::scoped_lock l{ gLock };
 		Bury();
@@ -455,9 +485,9 @@ namespace Plugin
 			if (!row.loaded) {
 				LoadRow(row);
 			}
-			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency || row.appliedBrightness != brightness ||
+			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency || row.appliedBrightness != brightness || row.appliedCastingGlow != castingGlow ||
 				std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
-				PaintRow(row, *c, opacity, transparency, brightness);
+				PaintRow(row, *c, opacity, transparency, brightness, castingGlow);
 				changed = true;
 			}
 		}

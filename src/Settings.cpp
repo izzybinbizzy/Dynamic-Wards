@@ -27,6 +27,7 @@ namespace Plugin
 		int                    gOpacity = 100;
 		int                    gTransparency = kTransparencyDefault;
 		int                    gBrightness = 100;
+		int                    gCastingGlow = 100;
 		int                    gDome = 0;
 		bool                   gLight = true;
 		bool                   gColoredLights = true;
@@ -162,6 +163,8 @@ namespace Plugin
 					gTransparency = std::clamp(v, 0, kTransparencyMax);
 				} else if (key == "Brightness") {
 					gBrightness = std::clamp(v, kBrightnessMin, kBrightnessMax);
+				} else if (key == "CastingGlow") {
+					gCastingGlow = std::clamp(v, kBrightnessMin, kBrightnessMax);
 				} else if (key == "Dome") {
 					gDome = std::clamp(v, 0, 1);
 				} else if (key == "Unlock360") {
@@ -190,9 +193,9 @@ namespace Plugin
 				}
 			}
 		}
-		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
+		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, casting glow {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 						"Crusader shields {}, every ward {} ({} line(s) read{})",
-			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
+			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gCastingGlow, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
 			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", read,
 			old ? "; a 2.x file, carried over" : "");
 	}
@@ -207,7 +210,7 @@ namespace Plugin
 		}
 		out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
 			<< "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
-			<< "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nBrightness=" << gBrightness << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
+			<< "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nBrightness=" << gBrightness << "\nCastingGlow=" << gCastingGlow << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
 			<< "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
 			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
 			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0) << "\n[Colors]\n";
@@ -293,6 +296,21 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return gOpacity / 100.0f * gBrightness / 100.0f;
+	}
+	int CastingGlow()
+	{
+		std::scoped_lock l{ gLock };
+		return gCastingGlow;
+	}
+	void SetCastingGlow(int a_percent)
+	{
+		std::scoped_lock l{ gLock };
+		gCastingGlow = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+	}
+	float HandDim()
+	{
+		std::scoped_lock l{ gLock };
+		return gCastingGlow / 100.0f;
 	}
 	int Transparency()
 	{
@@ -399,6 +417,16 @@ namespace Plugin
 		const auto       k = Lower(a_plugin);
 		std::scoped_lock l{ gLock };
 		gMods[k] = a_on;
+	}
+
+	void ApplyScheme(const Scheme& a_scheme)
+	{
+		std::scoped_lock l{ gLock };
+		gLadder = a_scheme.ladder & 0xFFFFFF;  // colors only - gStages and gReversed are the player's (his rule 2026-10-05)
+		for (std::size_t i = 0; i < kRows; ++i) {
+			const Color c = a_scheme.rows[i];
+			gRows[i] = c ? Row{ RowMode::kCustom, c & 0xFFFFFF } : Row{ RowMode::kDefault, gRows[i].color };
+		}
 	}
 
 	int StopPercent(std::size_t a_rank)

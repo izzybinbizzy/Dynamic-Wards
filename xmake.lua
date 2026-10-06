@@ -19,8 +19,12 @@ set_config("skyrim_vr", vr_only)
 
 includes("lib/commonlibsse-ng")
 
+-- DevBench replies are JSON (MIT-licensed library; the same version CommonLib pins for its own JSON option)
+add_requires("nlohmann_json v3.12.0")
+
 target("DynamicWards", function()
     add_deps("commonlibsse-ng")
+    add_packages("nlohmann_json")
     add_rules("commonlibsse-ng.plugin", {
         name = "DynamicWards",
         author = "izzydoingit",

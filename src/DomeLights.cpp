@@ -2,9 +2,9 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The colored light on a ward's dome (every pick but ENB, 3.0), and - on ENB, or where Community Shaders' Effects 11 is
-// installed - a light on the FIRST-PERSON hand while a ward is cast: the game's casting light, Light Placer's and the ENB
-// mesh light hang on the third-person body, which first person does not draw. ENB too since 2026-10-03 (his call).
+// The colored light on a ward's dome (every pick but ENB, 3.0), and - on every pick since 2026-10-05 (his order) - a light on
+// the FIRST-PERSON hand while one of our wards is cast: the game's casting light, Light Placer's and the ENB mesh light hang
+// on the third-person body, which first person does not draw.
 // Each light takes its row's color and the opacity slider every tick, so a change in the menu reaches a ward already up.
 // Where it sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
 //
@@ -57,8 +57,16 @@ namespace Plugin
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
 		std::vector<Lit>                      gLit;
-		std::array<Hand1st, 2>                gHands{};
-		std::size_t                           gHandsMade = 0;
+		// every actor casting one of our wards: a light on each casting hand (his order 2026-10-05: first person on every pick,
+		// and the light must reach the GROUND - the game's casting light lit the caster but not the land, so on the picks where
+		// this plugin makes the lights it hangs the hand light itself, made like the dome light: affectLand on)
+		struct ActorHands
+		{
+			std::array<Hand1st, 2> h{};
+			bool                   seen = false;
+		};
+		std::unordered_map<RE::FormID, ActorHands> gHands;
+		std::size_t                                gHandsMade = 0;
 		RE::NiPointer<RE::NiPointLight>       gMaster;
 		std::atomic<DomeMode>                 gMode{ DomeMode::kAuto };
 		std::atomic_bool                      gQueued{ false };
@@ -118,11 +126,13 @@ namespace Plugin
 			return netimmerse_cast<RE::NiPointLight*>(gMaster->Clone());
 		}
 
-		// color, strength and reach: the row's color, dimmed by the opacity slider (his call: "light should dim with opacity")
-		void Dress(RE::NiPointLight* a_light, Color a_color, float a_fade, float a_reach, float a_size, float a_plainFade, float a_plainRadius, bool a_plain)
+		// color, strength and reach: the row's color, dimmed by `a_dim` - a dome's light by opacity x brightness (his call: "light
+		// should dim with opacity"), a hand's by the casting glow slider alone (his rule 2026-10-05)
+		void Dress(RE::NiPointLight* a_light, Color a_color, float a_fade, float a_reach, float a_size, float a_plainFade, float a_plainRadius, bool a_plain,
+			float a_dim)
 		{
 			const bool  isl = InverseSquare();
-			const float dim = LightDim();  // opacity x brightness
+			const float dim = a_dim;
 			auto&       data = a_light->GetLightRuntimeData();
 			if (!isl && a_plain) {
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
@@ -186,7 +196,7 @@ namespace Plugin
 				if (!light) {
 					return;
 				}
-				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, a_spec.plainRadius, a_spec.plain);
+				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, a_spec.plainRadius, a_spec.plain, LightDim());
 				light->name = kLightName;
 				light->local.translate = at;
 				light->SetLightAttenuation(light->GetLightRuntimeData().radius.x);
@@ -224,19 +234,28 @@ namespace Plugin
 			}
 		}
 
-		// the row of the ward a first-person hand is casting now, or kRows
-		std::size_t CastingRow(RE::PlayerCharacter* a_player, std::size_t a_slot)
+		// the row of the ward a hand is casting now, or kRows
+		// the hand's ward: while it is cast (charging, ready, held) the caster's spell; while it is only readied in that hand
+		// (the casting art shows, nothing cast yet - his catch 2026-10-05, "im talking about the casting art too") the spell
+		// equipped there, hands drawn
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot)
 		{
-			auto* caster = a_player->GetActorRuntimeData().magicCasters[a_slot];
-			if (!caster || !caster->currentSpell) {
-				return kRows;
-			}
+			auto*                     caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
+			const RE::MagicItem*      spell = nullptr;
 			using S = RE::MagicCaster::State;
-			const auto state = caster->state.get();
-			if (state != S::kCasting && state != S::kCharging && state != S::kReady) {
+			if (caster && caster->currentSpell) {
+				const auto state = caster->state.get();
+				if (state == S::kCasting || state == S::kCharging || state == S::kReady) {
+					spell = caster->currentSpell;
+				}
+			}
+			if (!spell && a_actor->AsActorState()->IsWeaponDrawn()) {
+				spell = skyrim_cast<RE::SpellItem*>(a_actor->GetEquippedObject(a_slot == 0));
+			}
+			if (!spell) {
 				return kRows;
 			}
-			for (auto* e : caster->currentSpell->effects) {
+			for (auto* e : spell->effects) {
 				const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
 				if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
 					return row;
@@ -245,36 +264,28 @@ namespace Plugin
 			return kRows;
 		}
 
-		// ENB or Effects 11: a light on each first-person hand that is casting one of our wards
-		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
+		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
-			auto*      player = RE::PlayerCharacter::GetSingleton();
-			auto*      cam = RE::PlayerCamera::GetSingleton();
-			const bool first = cam && cam->IsInFirstPerson();
-			auto*      body = player ? player->Get3D(true) : nullptr;
+			if (a_h.light) {
+				Drop(a_h.light.get(), a_h.bs, a_scene);
+			}
+			a_h = {};
+		}
+
+		// one actor's two hands: a light on each hand casting one of our wards, under that hand's magic node
+		void TickActor(RE::Actor* a_actor, RE::NiAVObject* a_body, ActorHands& a_hands, RE::ShadowSceneNode* a_scene)
+		{
 			for (std::size_t slot = 0; slot < 2; ++slot) {
-				auto&      h = gHands[slot];
-				const auto row = (a_on && first && body && player) ? CastingRow(player, slot) : kRows;
+				auto&      h = a_hands.h[slot];
+				const auto row = a_body ? CastingRow(a_actor, slot) : kRows;
 				const auto color = row < kRows ? RowColor(row) : std::nullopt;
-				if (!color) {
-					if (h.light) {
-						Drop(h.light.get(), h.bs, a_scene);
-						h = {};
-					}
-					continue;
+				auto*      node = color ? a_body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot])) : nullptr;
+				auto*      parent = node ? node->AsNode() : nullptr;
+				if (!parent || (h.light && h.node.get() != parent)) {
+					DropHand(h, a_scene);
 				}
-				auto* node = body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot]));
-				auto* parent = node ? node->AsNode() : nullptr;
 				if (!parent) {
-					if (h.light) {
-						Drop(h.light.get(), h.bs, a_scene);
-						h = {};
-					}
 					continue;
-				}
-				if (h.light && h.node.get() != parent) {
-					Drop(h.light.get(), h.bs, a_scene);
-					h = {};
 				}
 				if (!h.light) {
 					RE::BSLight* bs = nullptr;
@@ -284,9 +295,51 @@ namespace Plugin
 					}
 				}
 				if (h.light) {
-					Dress(h.light.get(), *color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true);
+					Dress(h.light.get(), *color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true, HandDim());
 				}
 			}
+		}
+
+		// The hand lights. First person (every pick): the player's first-person hands - the game's, Light Placer's and the ENB
+		// lights all hang on the third-person body, which first person does not draw. Third person, and every other actor
+		// casting one of our wards: only where this plugin makes the lights (not ENB, whose light is in the mesh).
+		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
+		{
+			for (auto& [id, a] : gHands) {
+				a.seen = false;
+			}
+			auto visit = [&](RE::Actor* a_actor, bool a_first) {
+				if (!a_actor) {
+					return;
+				}
+				auto* body = a_actor->Get3D(a_first);
+				auto& a = gHands[a_actor->GetFormID()];
+				a.seen = true;
+				TickActor(a_actor, (a_first || OwnLights()) ? body : nullptr, a, a_scene);
+			};
+			if (a_on) {
+				auto*      player = RE::PlayerCharacter::GetSingleton();
+				auto*      cam = RE::PlayerCamera::GetSingleton();
+				const bool first = cam && cam->IsInFirstPerson();
+				visit(player, first);
+				if (OwnLights()) {
+					if (auto* lists = RE::ProcessLists::GetSingleton()) {
+						for (auto& handle : lists->highActorHandles) {
+							if (auto actor = handle.get(); actor && actor.get() != player) {
+								visit(actor.get(), false);
+							}
+						}
+					}
+				}
+			}
+			std::erase_if(gHands, [&](auto& a_entry) {
+				auto& a = a_entry.second;
+				if (!a.seen) {
+					DropHand(a.h[0], a_scene);
+					DropHand(a.h[1], a_scene);
+				}
+				return !a.seen && !a.h[0].light && !a.h[1].light;
+			});
 		}
 
 		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks
@@ -342,7 +395,7 @@ namespace Plugin
 					lit.light->SetAppCulled(hide);
 				}
 				if (const auto c = RowColor(lit.row)) {
-					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, lit.spec->plainRadius, lit.spec->plain);
+					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, lit.spec->plainRadius, lit.spec->plain, LightDim());
 				}
 			}
 			TickHands(scene, HandLight1st() && (MeshLights() || WardLightOn()));
@@ -357,7 +410,7 @@ namespace Plugin
 		}
 		SKSE::log::info("dome lights: {} dome model(s) in {}; {}; first-person hand light {}", gSpecs.size(), kPath,
 			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" : "off",
-			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" : "on (Effects 11)");
+			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" : "on");
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock
 		std::thread([]() {
 			for (;;) {
@@ -365,7 +418,7 @@ namespace Plugin
 				bool active = false;
 				{
 					std::scoped_lock l{ gLock };
-					active = Wanted() || !gLit.empty() || gHands[0].light || gHands[1].light || HandLight1st();
+					active = Wanted() || !gLit.empty() || !gHands.empty() || HandLight1st();
 				}
 				if (active && !gQueued.exchange(true)) {
 					Later(Tick);
@@ -382,8 +435,15 @@ namespace Plugin
 	std::string DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
-		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"hand1stMade":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
-			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), gHands[0].light != nullptr, gHands[1].light != nullptr, gHandsMade,
+		const auto* player = RE::PlayerCharacter::GetSingleton();
+		const auto  it = player ? gHands.find(player->GetFormID()) : gHands.end();
+		const bool  leftLit = it != gHands.end() && it->second.h[0].light, rightLit = it != gHands.end() && it->second.h[1].light;
+		std::size_t lights = 0;
+		for (const auto& [id, a] : gHands) {
+			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
+		}
+		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
+			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade,
 			gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue);
 	}
 }

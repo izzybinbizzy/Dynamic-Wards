@@ -5,6 +5,9 @@
 // The SKSE Menu Framework pages (3.0): the ladder and every ward in any color - a drawn spectrum bar, color pickers,
 // quick picks, live swatches of each rank - the opacity slider, the dome, the lights and the compatibility page. A color
 // is applied when the pick is let go (a drag does not rebuild palettes every frame). The HUD swatch is gone (his call 2026-10-03).
+// His layout 2026-10-05: a Colors page first (presets, then the ladder and every ward, the rankless ones with their mod
+// named), then Settings (Lights, Dome, Opacity - Transparency right below Opacity, greyed out without 360 Ward), then
+// Compatibility. Every change is saved the moment it is made (a slider when it is let go), so closing the menu loses nothing.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -85,13 +88,33 @@ namespace Plugin
 			}
 		}
 
-		void __stdcall RenderSettings()
+		static_assert(std::size(kRowFrom) == kRows);
+
+		// The Colors page (his ask 2026-10-05: its own page above Settings): the presets first, then the ladder and every ward
+		void __stdcall RenderColors()
 		{
 			MenuStyle::Page page;
 
-			Header(Icon::kPalette, T("Colors"));
 			static Color ladder = LadderColor();
 			static bool  editingLadder = false;
+			Header(Icon::kStar, T("Presets"));
+			TextColored(kMuted, "%s", T("Sets the colors only - the stages and Reverse stay as you set them."));
+			for (std::size_t s = 0; s < std::size(kSchemes); ++s) {
+				const auto& sc = kSchemes[s];
+				if (s % 4) {
+					SameLine();
+				}
+				PushID(static_cast<int>(s));
+				if (Button(T(sc.name))) {
+					ApplyScheme(sc);
+					Changed();
+					editingLadder = false;  // the picker shows the preset's ladder, not the one before it
+				}
+				SetItemTooltip("%s", T(sc.tip));
+				PopID();
+			}
+
+			Header(Icon::kPalette, T("Colors"));
 			if (!editingLadder) {
 				ladder = LadderColor();
 			}
@@ -137,6 +160,10 @@ namespace Plugin
 						Changed();
 					}
 					SetItemTooltip("%s", T("Vanilla leaves that ward exactly as the game or your other mods have it."));
+					if (*kRowFrom[i]) {
+						SameLine();
+						TextColored(kMuted, "(%s)", kRowFrom[i]);
+					}
 					if (RowModeOf(i) == RowMode::kCustom) {
 						Indent(26.0f);
 						Color c = RowCustom(i);
@@ -151,38 +178,33 @@ namespace Plugin
 					PopID();
 				}
 			}
+		}
 
-			Header(Icon::kEye, T("Opacity"));
-			int opacity = Opacity();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Ward opacity"), &opacity, kOpacityMin, 100, "%d%%");
-			if (opacity != Opacity()) {
-				SetOpacity(opacity);
+		// The Settings page (his order 2026-10-05): Lights first, then the dome, Opacity last
+		void __stdcall RenderSettings()
+		{
+			MenuStyle::Page page;
+
+			Header(Icon::kBulb, T("Lights"));
+			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
+			TextColored(kMuted, T("Lighting picked in the installer: %s"), lighting[static_cast<int>(LightingPick())]);
+			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
+			if (MeshLights()) {
+				TextColored(kMuted, "%s", T("ENB lights are part of the ward meshes; they take the ward's color and dim with its opacity."));
+			} else {
+				bool light = WardLightOn();
+				if (Checkbox(T("Ward casting light"), &light)) {
+					SetWardLightOn(light);
+					Changed();
+				}
+				SetItemTooltip("%s", T("The light on your hand while you raise a ward, in the ward's color."));
+				bool colored = ColoredLightsOn();
+				if (Checkbox(T("Colored ward lights"), &colored)) {
+					SetColoredLightsOn(colored);
+					Changed();
+				}
+				SetItemTooltip("%s", T("Each ward's dome lights the area around you in its own color."));
 			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
-			SetItemTooltip("%s", T("How strong the whole ward is: its color, glow and light fade together."));
-			int brightness = Brightness();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Ward brightness"), &brightness, kBrightnessMin, kBrightnessMax, "%d%%");
-			if (brightness != Brightness()) {
-				SetBrightness(brightness);
-			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
-			SetItemTooltip("%s", T("How bright every ward is: its glow and its light together. Turn it up if your lighting makes wards look dim."));
-			int transparency = Transparency();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Dome transparency"), &transparency, 0, kTransparencyMax, "%d%%");
-			if (transparency != Transparency()) {
-				SetTransparency(transparency);
-			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
-			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
 
 			if (Has360Ward()) {
 				Header(Icon::kShield, T("Dome"));
@@ -233,29 +255,57 @@ namespace Plugin
 				TextColored(kMuted, "%s", T("The 360 dome needs 360 Ward Universal Patch SKSE as well as 360 Ward."));
 			}
 
-			Header(Icon::kBulb, T("Lights"));
-			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
-			TextColored(kMuted, T("Lighting picked in the installer: %s"), lighting[static_cast<int>(LightingPick())]);
-			if (LightingPick() == Lighting::kShaders && Effects11()) {
-				TextColored(kMuted, "%s", T("Effects 11 found: your ward also lights your hand in first person."));
+			Header(Icon::kEye, T("Opacity"));
+			int opacity = Opacity();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Opacity"), &opacity, kOpacityMin, 100, "%d%%");
+			if (opacity != Opacity()) {
+				SetOpacity(opacity);
 			}
-			if (MeshLights()) {
-				TextColored(kMuted, "%s", T("ENB lights are part of the ward meshes; they take the ward's color and dim with its opacity."));
-				TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
-			} else {
-				bool light = WardLightOn();
-				if (Checkbox(T("Ward casting light"), &light)) {
-					SetWardLightOn(light);
-					Changed();
-				}
-				SetItemTooltip("%s", T("The light on your hand while you raise a ward, in the ward's color."));
-				bool colored = ColoredLightsOn();
-				if (Checkbox(T("Colored ward lights"), &colored)) {
-					SetColoredLightsOn(colored);
-					Changed();
-				}
-				SetItemTooltip("%s", T("Each ward's dome lights the area around you in its own color."));
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
 			}
+			SetItemTooltip("%s", T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Casting glow instead."));
+			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
+			const bool has360 = Has360Ward();
+			BeginDisabled(!has360);
+			int transparency = Transparency();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Transparency"), &transparency, 0, kTransparencyMax, "%d%%");
+			if (has360 && transparency != Transparency()) {
+				SetTransparency(transparency);
+			}
+			if (has360 && IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
+			EndDisabled();
+			if (!has360) {
+				TextColored(kMuted, "%s", T("Needs 360 Ward."));
+			}
+			int brightness = Brightness();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Ward brightness"), &brightness, kBrightnessMin, kBrightnessMax, "%d%%");
+			if (brightness != Brightness()) {
+				SetBrightness(brightness);
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Casting glow instead."));
+
+			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
+			Header(Icon::kStar, T("Casting art"));
+			int castingGlow = CastingGlow();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Casting glow"), &castingGlow, kBrightnessMin, kBrightnessMax, "%d%%");
+			if (castingGlow != CastingGlow()) {
+				SetCastingGlow(castingGlow);
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
@@ -313,6 +363,7 @@ namespace Plugin
 			return;
 		}
 		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
+		SKSEMenuFramework::AddSectionItem(T("Colors"), RenderColors);  // first (his ask 2026-10-05)
 		SKSEMenuFramework::AddSectionItem(T("Settings"), RenderSettings);
 		SKSEMenuFramework::AddSectionItem(T("Compatibility"), RenderCompatibility);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());

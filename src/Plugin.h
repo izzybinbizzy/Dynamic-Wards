@@ -34,6 +34,39 @@ namespace Plugin
 		{ "Purple", 0x9646FF }, { "White", kWhite } };
 	// what a rankless row wears on its default
 	inline constexpr Color kRowDefault[] = { 0, 0, 0, 0, 0, 0xFFBE5A, kWhite, kWhite, 0xFF3648 };
+	// the mod each rankless row comes from, named beside it in the menu (his ask 2026-10-05); a rank has none
+	inline constexpr const char* kRowFrom[] = { "", "", "", "", "", "Skyrim", "Knights of the Nine", "Legacy of the Dragonborn", "Better Vampires" };
+
+	// a whole look at once, picked on the Colors page above the colors (his ask 2026-10-05). Each sets the ladder color and
+	// every row's color - colors only: the stages and Reverse stay as the player set them (his rule 2026-10-05: "preset only
+	// changes colors nothing else").
+	struct Scheme
+	{
+		const char* name;
+		const char* tip;
+		Color       ladder;
+		Color       rows[9];  // 0 = the row's default (a rank follows the ladder)
+	};
+	// his ask 2026-10-05: "as diverse as possible to avoid intersecting colors". The ladder hues sit about 30 degrees apart round
+	// the wheel (crimson 350, ember 25, gold 45, green 135, teal 170, frost 190, the game's blue 220, violet 265, magenta 315);
+	// Vanilla is the game's own ward blue (wardgen WARD_BLUE) on every ward, flat, the way the base game shows them.
+	inline constexpr Scheme kSchemes[] = {
+		{ "Vanilla", "Every ward in the game's own ward blue.", 0x2468FF,
+			{ 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF, 0x2468FF } },
+		{ "Daedric", "White to blood crimson.", 0xD0102E, {} },
+		{ "Ember", "White to burning orange.", 0xFF6A10, {} },
+		{ "Aedric", "White to sun gold.", 0xFFC420, {} },
+		{ "Verdant", "White to leaf green.", 0x2ED452, {} },
+		{ "Psijic", "White to deep teal.", 0x00D2B0, {} },
+		{ "Frost", "White to glacier cyan.", 0x40DCFF, {} },
+		{ "Nightingale", "White to shadow violet.", 0x7A3CFF, {} },
+		{ "Sanguine", "White to wild magenta.", 0xFF2EC4, {} },
+		{ "Schools", "Every rank its own color: blue, gold, white, violet, crimson.", 0x2468FF,
+			{ 0x2468FF, 0xFFC420, 0xFFFFFF, 0x7A3CFF, 0xD0102E, 0, 0, 0, 0 } },
+		{ "Rainbow", "Every rank a step round the rainbow: crimson, gold, green, blue, violet.", 0x2468FF,
+			{ 0xD0102E, 0xFFC420, 0x2ED452, 0x2468FF, 0x7A3CFF, 0, 0, 0, 0 } },
+	};
+	void ApplyScheme(const Scheme& a_scheme);  // Settings.cpp; the caller saves and applies
 
 	// a ladder's stops, in percent of the way from white to its color
 	inline constexpr std::array<int, 3> kStages3{ 0, 55, 100 };
@@ -90,7 +123,7 @@ namespace Plugin
 	bool        LadderReversed();
 	void        SetLadderReversed(bool a_on);
 	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
-	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights
+	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
 	void        SetOpacity(int a_percent);
 	inline constexpr int kTransparencyDefault = 25;  // his default, 2026-10-03
 	inline constexpr int kTransparencyMax = 90;  // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
@@ -98,9 +131,15 @@ namespace Plugin
 	void        SetTransparency(int a_percent);
 	inline constexpr int kBrightnessMin = 25;   // the range is centred on 100 (as built): the slider starts in the middle (his call)
 	inline constexpr int kBrightnessMax = 175;
-	int         Brightness();  // kBrightnessMin-kBrightnessMax, percent: every ward's glow AND its lights (100 = as built)
+	int         Brightness();  // kBrightnessMin-kBrightnessMax, percent: the wards' glow AND their lights (100 = as built)
 	void        SetBrightness(int a_percent);
-	float       LightDim();    // what a ward light's strength is multiplied by: opacity x brightness
+	float       LightDim();    // what a dome / hit light's strength is multiplied by: opacity x brightness
+	// the casting art (the ward in the hands) and its light have their own slider and nothing else touches them - his rule
+	// 2026-10-05: "opacity should not be affecting casting art brightness, neither should ward brightness ... make it the sole
+	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
+	int         CastingGlow();  // kBrightnessMin-kBrightnessMax, percent (100 = as built)
+	void        SetCastingGlow(int a_percent);
+	float       HandDim();      // what a hand light's strength (and the hand art's glow) is multiplied by: casting glow alone
 	bool        Dome360();
 	void        SetDome360(bool a_on);
 	bool        WardLightOn();
@@ -143,7 +182,7 @@ namespace Plugin
 	bool               MeshLights();                      // ENB: the light is in the mesh, the game's ward light goes
 	bool               OwnLights();                       // this plugin makes the hand and dome lights
 	bool               Effects11();                       // Community Shaders' Effects 11 is installed
-	bool               HandLight1st();                    // the first-person hand light: ENB, or Community Shaders with Effects 11
+	bool               HandLight1st();                    // the first-person hand light: every pick (his order 2026-10-05)
 	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
 	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
 	void               ColorHandLights();                 // after a color change: each row's light in its color
@@ -167,6 +206,7 @@ namespace Plugin
 	void RegisterMenu();
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
+	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
 
 	std::string  Lower(std::string_view a_text);
 	bool         Contains(std::string_view a_haystack, std::string_view a_needle);

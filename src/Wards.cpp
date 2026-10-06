@@ -618,7 +618,10 @@ namespace Plugin
 					if (slot) {
 						t.takenLight = slot;  // back when the row turns Vanilla
 					}
-					slot = light ? mine : nullptr;
+					// 2026-10-05 (his report: the ward lit the caster but not the ground): the game's casting light never reaches
+					// the land, so DomeLights.cpp hangs the hand light itself on every caster (behind the same switch) and the
+					// effect carries none - two lights on one hand would double the caster
+					slot = nullptr;
 				} else {
 					// a dressed ward on ENB lights itself (the light is in the mesh); a Vanilla row keeps the game's
 					ApplyLight(t, (light && !ownHand && !meshLights) || !ourHand, Worn(t) != nullptr, quiet);
@@ -649,6 +652,7 @@ namespace Plugin
 		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; unlisted mods {}",
 			gLastApply, dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
 			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" : "360 (locked)", every ? "on" : "off");
+		WardsApplied(gLastApply.c_str(), gTargets.size(), dressed);  // only hands the numbers to DevBench; takes no lock of ours
 	}
 
 	void CheckUnlock(const char* a_why)

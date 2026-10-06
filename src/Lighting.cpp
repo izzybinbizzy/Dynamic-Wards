@@ -6,11 +6,10 @@
 //
 //   Community Shaders   this plugin makes every ward light: the hand light (the game's ward light record, one copy per row in
 //                       that row's color) and the dome light (DomeLights.cpp, inverse square when Community Shaders has it).
-//                       With Effects 11 installed it also lights the first-person hand (DomeLights.cpp) - Light Placer's light
-//                       hangs on the third-person body, which first person does not draw.
 //   ENB                 the light is an ENB particle light inside each ward mesh, colored by Colors.cpp; the game's light goes.
-//                       First person also gets this plugin's hand light (DomeLights.cpp; his call 2026-10-03).
-//   Vanilla             as Community Shaders, in the game's own lighting.
+//   Vanilla             as Community Shaders, in the game's own lighting; the hand light copies take the house light (178 / 1.14).
+// Every pick also lights the FIRST-PERSON hand while one of our wards is cast (DomeLights.cpp; his order 2026-10-05, "every
+// mod gets light for first person as well") - the game's, Light Placer's and the ENB lights hang on the third-person body.
 //
 // The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs. No file reads
 // as Community Shaders.
@@ -35,6 +34,12 @@ namespace Plugin
 		const RE::TESObjectLIGH*                  gGame = nullptr;
 		std::array<RE::TESObjectLIGH*, kRows>     gHand{};
 		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
+		float                                     gHandFade = 1.0f;  // the hand lights' strength before the casting glow slider
+		// Vanilla: the game's ward light (radius 50) barely reads in the game's own lighting - his report 2026-10-05, "the
+		// casting art doesn't have light on vanilla". Our ward copies take the house light instead (LTBG section 4's 133 reach
+		// as the game's lights draw it: wardgen.plain_light, radius 178 / fade 1.14); only ward spells wear these copies.
+		constexpr std::uint32_t kPlainRadius = 178;
+		constexpr float         kPlainFade = 1.14f;
 
 		Lighting ReadPick()
 		{
@@ -91,13 +96,18 @@ namespace Plugin
 			SKSE::log::warn("lighting: the game's ward light was NOT found - no hand lights");
 			return;
 		}
+		const bool plain = gPick.load() == Lighting::kVanilla && !gIsl;
+		gHandFade = plain ? kPlainFade : gGame->fade;
 		for (auto& h : gHand) {
 			auto* out = NewForm<RE::TESObjectLIGH>();
 			if (!out) {
 				continue;
 			}
 			out->data = gGame->data;
-			out->fade = gGame->fade;
+			if (plain) {
+				out->data.radius = kPlainRadius;
+			}
+			out->fade = gHandFade;
 			out->emittanceColor = gGame->emittanceColor;
 			out->lensFlare = gGame->lensFlare;
 			out->sound = gGame->sound;
@@ -109,7 +119,7 @@ namespace Plugin
 
 	void ColorHandLights()
 	{
-		const float      dim = LightDim();  // opacity x brightness
+		const float      dim = HandDim();  // the casting glow slider alone (his rule 2026-10-05: opacity and ward brightness leave the hand)
 		std::scoped_lock l{ gLock };
 		for (std::size_t i = 0; i < kRows; ++i) {
 			auto* h = gHand[i];
@@ -120,7 +130,7 @@ namespace Plugin
 			h->data.color.red = static_cast<std::uint8_t>((*c >> 16) & 0xFF);
 			h->data.color.green = static_cast<std::uint8_t>((*c >> 8) & 0xFF);
 			h->data.color.blue = static_cast<std::uint8_t>(*c & 0xFF);
-			h->fade = gGame->fade * dim;  // his calls: "light should dim with opacity" (2026-10-02), the brightness slider (2026-10-03)
+			h->fade = gHandFade * dim;
 		}
 	}
 
@@ -153,7 +163,9 @@ namespace Plugin
 	bool HandLight1st()
 	{
 		std::scoped_lock l{ gLock };
-		return gPick.load() == Lighting::kEnb || (gE11 && gPick.load() == Lighting::kShaders);
+		// every pick (his order 2026-10-05, "every mod gets light for first person as well"): the game's casting light, Light
+		// Placer's and the ENB mesh light all hang on the third-person body, which first person does not draw
+		return true;
 	}
 
 	bool InverseSquare()
