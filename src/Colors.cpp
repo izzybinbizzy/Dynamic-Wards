@@ -36,10 +36,12 @@ namespace Plugin
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
 		constexpr float       kHandCore = 1.0f;
 		// a DOME on the Vanilla lighting pick: at least this far toward the ward's colour (his report 2026-10-05: on the vanilla
-		// profiles the domes are "too washed out" beside the casting art, most of all blue). The other picks keep the ramp as built.
-		// 0.5 was still washed out beside the hand (his screenshot, same day, LTBG - Vanilla, normal dome): tinted as fully as
-		// the hand now, so the dome reads the color the casting art does.
+		// profiles the domes are "too washed out" beside the casting art, most of all blue). 0.5 was still washed out beside the
+		// hand (his screenshot, same day, LTBG - Vanilla, normal dome): tinted as fully as the hand.
 		constexpr float       kDomeCoreVanilla = 1.0f;
+		// the NORMAL dome (not the 360 sphere) on EVERY lighting pick (his report 2026-10-06: "the vanilla wards are still too
+		// washed out and need more saturation to match the casting art"; his pick: the normal dome, every lighting)
+		constexpr float       kNormalDomeCore = 1.0f;
 
 		struct Source
 		{
@@ -56,6 +58,7 @@ namespace Plugin
 			RE::NiPointer<RE::NiSourceTexture> tex;
 			Color                             applied = 0xFFFFFFFF;
 			bool                              hand = false;  // named by the hand art (wardinhandfx): tinted to its core
+			bool                              normalDome = false;  // named by the normal dome (wardbodyfx, not 360): tinted to its core
 		};
 
 		struct Block
@@ -74,6 +77,12 @@ namespace Plugin
 			// Blended additively (every ward block is SrcAlpha + One), its glow strength scaled is the same thing as its alpha.
 			bool                                      alphaDead = false;
 			bool                                      additive = false;
+			// the normal dome's vapour layer 1 (palette row 0.39, both greyscale bits): on Community Shaders a gold or orange ward
+			// wears the baked plain-glow copy instead (kGoldVapour) - Community Shaders shades that block's spikes cream on those hues
+			bool                                      vapourOne = false;
+			bool                                      paletteAlpha = false;
+			RE::NiPointer<RE::NiSourceTexture>        source;
+			RE::BSFixedString                         sourcePath;
 		};
 
 		struct Master
@@ -111,11 +120,47 @@ namespace Plugin
 		std::vector<Grave>             gGrave;
 		std::size_t                    gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0;
 		std::string                    gLastProblem = "none";
+		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
+		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
+		constexpr const char*          kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
+		RE::NiPointer<RE::NiSourceTexture> gGoldVapour;
+		bool                           gGoldVapourTried = false;
+		std::size_t                    gGoldVapourBlocks = 0;
 
 		float Sat(float a_b, float a_g, float a_r)
 		{
 			const float m = (std::max)({ a_b, a_g, a_r });
 			return m <= 0.0f ? 0.0f : (m - (std::min)({ a_b, a_g, a_r })) / m;
+		}
+
+		// a gold or orange ward (hue 15-60 degrees, at least 35% saturated): the hues whose vapour spikes Community Shaders
+		// shades cream (Aedric FFC420 and Ember FF6A10, his report 2026-10-06; violet, frost, green, pink were fine)
+		bool GoldVapour(Color a_c)
+		{
+			if (LightingPick() != Lighting::kShaders) {
+				return false;  // ENB and Vanilla show the palette layer in its true color (measured 2026-10-06)
+			}
+			const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
+			const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), d = mx - mn;
+			if (mx <= 0.0f || d / mx < 0.35f || mx != r) {
+				return false;
+			}
+			const float hue = 60.0f * (g - b) / d;  // red is the largest channel: the hue sits between -60 and 60
+			return hue >= 15.0f && hue <= 60.0f;
+		}
+
+		RE::NiSourceTexture* GoldVapourTexture()
+		{
+			if (!gGoldVapourTried) {
+				gGoldVapourTried = true;
+				RE::NiPointer<RE::NiTexture> t;
+				RE::BSShaderManager::GetTexture(kGoldVapour, true, t, false);
+				gGoldVapour.reset(t ? netimmerse_cast<RE::NiSourceTexture*>(t.get()) : nullptr);
+				if (!gGoldVapour) {
+					gLastProblem = std::format("{} is missing - gold and orange domes keep the palette layer", kGoldVapour);
+				}
+			}
+			return gGoldVapour.get();
 		}
 
 		bool HoldsHue(Color a_c)
@@ -178,15 +223,16 @@ namespace Plugin
 				const float b = a_s.bgra[i], g = a_s.bgra[i + 1], r = a_s.bgra[i + 2];
 				const float v = (std::max)({ b, g, r });
 				float       cb = tb, cg = tg, cr = tr;
+				const float pb = cb, pg = cg, pr = cr;  // the target this texel tints toward
 				if (curve) {
 					float k = tsat <= 0.0f ? 1.0f : (std::min)(1.0f, Sat(b, g, r) / tsat);
 					if (hold) {
 						k = (std::max)(k, kHueHold);
 					}
 					k = (std::max)(k, a_floor);
-					cb = 1.0f + k * (tb - 1.0f);
-					cg = 1.0f + k * (tg - 1.0f);
-					cr = 1.0f + k * (tr - 1.0f);
+					cb = 1.0f + k * (pb - 1.0f);
+					cg = 1.0f + k * (pg - 1.0f);
+					cr = 1.0f + k * (pr - 1.0f);
 				}
 				out[i] = static_cast<std::uint8_t>(std::clamp(std::lround(cb * v), 0L, 255L));
 				out[i + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(cg * v), 0L, 255L));
@@ -206,7 +252,7 @@ namespace Plugin
 				return false;
 			}
 			// the mip chain, box-filtered down to 1x1
-			const float core = a_p.hand ? kHandCore : LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla : 0.0f;
+			const float core = a_p.hand ? kHandCore : a_p.normalDome ? kNormalDomeCore : LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla : 0.0f;
 			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, core) };
 			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
 			while (sizes.back().first > 1 || sizes.back().second > 1) {
@@ -287,7 +333,7 @@ namespace Plugin
 		void LoadRow(Row& a_row)
 		{
 			a_row.loaded = true;
-			std::set<std::string> paths, handPaths;
+			std::set<std::string> paths, handPaths, normalDomePaths;
 			for (const auto& model : a_row.models) {
 				Master m{ model, nullptr, {}, 0 };
 				m.hand = Lower(model).find("wardinhandfx") != std::string::npos;
@@ -311,6 +357,18 @@ namespace Plugin
 					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
 					b.scale = mat->baseColorScale;
+					{
+						const auto lm = Lower(model);
+						const bool normalDome = lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos;
+						// layer 1 = the vapour block on the lower palette row (0.39; layer 2 sits at 0.74)
+						b.vapourOne = normalDome && b.palette && src.find("vapor") != std::string::npos && mat->baseColor.red < 0.5f;
+						if (b.vapourOne) {
+							b.paletteAlpha = prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteAlpha);
+							b.source = mat->sourceTexture;
+							b.sourcePath = mat->sourceTexturePath;
+							++gGoldVapourBlocks;
+						}
+					}
 					b.alphaDead = b.palette && mat->baseColor.alpha < 0.01f;
 					if (const auto& ap = a_geometry->GetGeometryRuntimeData().alphaProperty) {
 						b.additive = ap->GetAlphaBlending() && ap->GetDestBlendMode() == RE::NiAlphaProperty::AlphaFunction::kOne;
@@ -325,8 +383,11 @@ namespace Plugin
 					}
 					if (b.palette && mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str()) {
 						paths.insert(mat->greyscaleTexturePath.c_str());
-						if (Lower(model).find("wardinhandfx") != std::string::npos) {
+						const auto lm = Lower(model);
+						if (lm.find("wardinhandfx") != std::string::npos) {
 							handPaths.insert(mat->greyscaleTexturePath.c_str());
+						} else if (lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos) {
+							normalDomePaths.insert(mat->greyscaleTexturePath.c_str());
 						}
 					}
 					// the colour controllers come off the cached model once: a clone of it has none
@@ -350,6 +411,7 @@ namespace Plugin
 			for (const auto& path : paths) {
 				Palette p{ path, {}, nullptr };
 				p.hand = handPaths.contains(path);
+				p.normalDome = !p.hand && normalDomePaths.contains(path);
 				const auto name = std::filesystem::path(path).filename().string();
 				// "<stem><look code, 4><row digit>.dds": the stem names the neutral source the DLL recolors from
 				p.stem = name.size() > 9 ? name.substr(0, name.size() - 9) : name;
@@ -409,6 +471,7 @@ namespace Plugin
 				return RE::NiColor{ rr + mm, gg + mm, bb + mm };
 			};
 			const auto sprite = hsv(sh, ss);
+			const bool goldVapour = GoldVapour(a_c) && GoldVapourTexture();
 			for (auto& master : a_row.masters) {
 				// the ward in the hands answers to the casting glow slider alone; opacity and ward brightness are the wards' own
 				// (his rule 2026-10-05)
@@ -425,17 +488,41 @@ namespace Plugin
 					}
 					fresh->CopyMembers(mat);
 					const float bright = (std::max)({ blk.base.red, blk.base.green, blk.base.blue });
+					const bool  plainVapour = blk.vapourOne && goldVapour;
+					if (blk.vapourOne) {
+						// the baked copy carries the palette's value and alpha itself, so the block becomes a plain glow in
+						// the ward's color; any other hue (or lighting) gets the palette layer back exactly as loaded
+						using F = RE::BSShaderProperty::EShaderPropertyFlag;
+						fresh->sourceTexture = plainVapour ? RE::NiPointer<RE::NiSourceTexture>(gGoldVapour) : blk.source;
+						fresh->sourceTexturePath = plainVapour ? RE::BSFixedString(kGoldVapour) : blk.sourcePath;
+						if (plainVapour) {
+							blk.prop->flags.reset(F::kGrayscaleToPaletteColor, F::kGrayscaleToPaletteAlpha);
+						} else {
+							blk.prop->flags.set(F::kGrayscaleToPaletteColor);
+							if (blk.paletteAlpha) {
+								blk.prop->flags.set(F::kGrayscaleToPaletteAlpha);
+							}
+						}
+					}
 					if (blk.sprite) {
 						fresh->baseColor.red = sprite.red * alpha;
 						fresh->baseColor.green = sprite.green * alpha;
 						fresh->baseColor.blue = sprite.blue * alpha;
+					} else if (plainVapour) {
+						fresh->baseColor.red = r / m;
+						fresh->baseColor.green = g / m;
+						fresh->baseColor.blue = b / m;
+					} else if (blk.vapourOne) {
+						fresh->baseColor.red = blk.base.red;  // the palette row coordinate, as loaded
+						fresh->baseColor.green = blk.base.green;
+						fresh->baseColor.blue = blk.base.blue;
 					} else if (!blk.palette && bright > 0.0001f) {
 						fresh->baseColor.red = r / m * bright;
 						fresh->baseColor.green = g / m * bright;
 						fresh->baseColor.blue = b / m * bright;
 					}
-					fresh->baseColor.alpha = blk.base.alpha * (blk.sprite ? 1.0f : alpha);
-					fresh->baseColorScale = blk.scale * glow * (blk.alphaDead && blk.additive ? alpha : 1.0f);
+					fresh->baseColor.alpha = plainVapour ? alpha : blk.base.alpha * (blk.sprite ? 1.0f : alpha);
+					fresh->baseColorScale = blk.scale * glow * (blk.alphaDead && blk.additive && !plainVapour ? alpha : 1.0f);
 					if (blk.fill) {
 						(blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = blk.facing * clear;
 					}
@@ -518,7 +605,7 @@ namespace Plugin
 				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
 				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
 		}
-		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"missingModels":{},"lastProblem":"{}","rows":{{{}}}}})", gSwaps, gSwapFails, gEdits,
-			gMissing, JsonEscape(gLastProblem), rows);
+		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"missingModels":{},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
+			gSwaps, gSwapFails, gEdits, gMissing, gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);
 	}
 }
