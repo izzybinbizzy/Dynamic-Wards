@@ -23,6 +23,7 @@ namespace Plugin
 		constexpr const char*   kHandName = "DWHand1st";
 		constexpr float         kK = 3918.88f;  // the build's cutoff constant: cutoff = kK * fade / (reach^2 + size^2)
 		constexpr std::uint32_t kIslFlag = 1u << 10;
+		constexpr float         kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto          kTick = std::chrono::milliseconds(100);
 		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
 		constexpr float         kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
@@ -138,11 +139,17 @@ namespace Plugin
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
 				data.fade = a_plainFade * dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
-				gLastAmbient = data.ambient;
 			} else {
 				data.diffuse = LightColor(a_color, isl);
 				data.fade = a_fade * dim;
 				data.radius = { a_reach, a_reach, a_size };
+			}
+			if (!isl) {
+				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
+				// NiPointLight starts with a WHITE ambient. With inverse square lighting these words carry its flag and cutoff
+				// (below), so they are never written as a colour there.
+				data.ambient = { data.diffuse.red * kAmbientRatio, data.diffuse.green * kAmbientRatio, data.diffuse.blue * kAmbientRatio };
+				gLastAmbient = data.ambient;
 			}
 			if (isl) {
 				// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color
