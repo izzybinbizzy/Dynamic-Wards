@@ -32,6 +32,7 @@ namespace Plugin
 		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
 		constexpr float       kSatFloor = 0.25f;  // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
 		constexpr float       kHueHold = 0.50f;   // wardgen HUE_HOLD: green and blue keep at least this much hue
+		constexpr std::uint64_t kMaxPalettePixels = 1u << 20;  // 64x the largest shipped palette
 		constexpr float       kSpriteSat = 0.75f; // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
@@ -195,6 +196,13 @@ namespace Plugin
 			if (w == 0 || h == 0 || w > 16384 || h > 16384) {
 				s.w = -1;
 				gLastProblem = std::format("palette source {} has an unusable size {}x{}", a_stem, w, h);
+				return s;
+			}
+			// and no more pixels than a ramp could need (CodeRabbit, PR #3: a 16384x16384 file passed the side check and
+			// would cost gigabytes here). The shipped palettes are 16384 pixels at most (128x128, 256x64, 512x32).
+			if (static_cast<std::uint64_t>(w) * h > kMaxPalettePixels) {
+				s.w = -1;
+				gLastProblem = std::format("palette source {} is too large for a palette ({}x{})", a_stem, w, h);
 				return s;
 			}
 			if (bits != 32 || raw.size() < 128 + static_cast<std::size_t>(w) * h * 4) {
@@ -680,9 +688,7 @@ namespace Plugin
 				changed = true;
 			}
 		}
-		if (changed) {
-			gLiveDomes = RepaintLive();
-		}
+		gLiveDomes = changed ? RepaintLive() : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		ColorHandLights();
 		if (a_quiet) {
 			return changed;  // a drag in the menu: ~15 a second, the log keeps the one made when the mouse is let go

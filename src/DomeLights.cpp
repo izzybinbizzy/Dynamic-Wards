@@ -318,7 +318,7 @@ namespace Plugin
 
 		// The hand lights. First person (every pick): the player's first-person hands - the game's, Light Placer's and the ENB
 		// lights all hang on the third-person body, which first person does not draw. Third person, and every other actor
-		// casting one of our wards: only where this plugin makes the lights (not ENB, whose light is in the mesh).
+		// casting one of our wards: on every pick (ENB too since 2026-10-06, OwnLights).
 		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
 		{
 			for (auto& [id, a] : gHands) {

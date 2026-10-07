@@ -623,7 +623,7 @@ namespace Plugin
 					slot = nullptr;
 				} else {
 					// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
-					ApplyLight(t, (light && !ownHand) || !ourHand, Worn(t) != nullptr, quiet);
+					ApplyLight(t, !ourHand, Worn(t) != nullptr, quiet);  // OwnLights is true on every pick (CodeRabbit, PR #3)
 				}
 			}
 			if (slot != before) {
