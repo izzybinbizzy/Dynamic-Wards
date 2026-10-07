@@ -12,8 +12,9 @@
 // Every pick also lights the FIRST-PERSON hand while one of our wards is cast (DomeLights.cpp; his order 2026-10-05, "every
 // mod gets light for first person as well") - the game's, Light Placer's and the ENB lights hang on the third-person body.
 //
-// The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs. No file reads
-// as Community Shaders.
+// The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs. With no file
+// the game is looked at, as Illuminated, Waning Glow and RELight - Spell Addon do: Community Shaders' inverse square shader
+// -> Community Shaders, an ENB's settings in the game folder -> ENB, else Vanilla.
 
 #include "Plugin.h"
 
@@ -54,7 +55,12 @@ namespace Plugin
 				gPickRead = true;
 				return word == "enb" ? Lighting::kEnb : word == "vanilla" ? Lighting::kVanilla : Lighting::kShaders;
 			}
-			return Lighting::kShaders;
+			// no pick: look at the game
+			std::error_code ec;
+			if (std::filesystem::exists(kIslShader, ec)) {
+				return Lighting::kShaders;
+			}
+			return std::filesystem::exists("enbseries.ini", ec) || std::filesystem::exists("enblocal.ini", ec) ? Lighting::kEnb : Lighting::kVanilla;
 		}
 	}
 
@@ -85,7 +91,7 @@ namespace Plugin
 		gIsl = std::filesystem::exists(kIslShader);
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {}", kNames[static_cast<int>(gPick.load())],
-			gPickRead ? "the installer's pick" : "no Lighting.txt, the default", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
+			gPickRead ? "the installer's pick" : "no Lighting.txt, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
 	}
 
 	void MakeHandLights()
