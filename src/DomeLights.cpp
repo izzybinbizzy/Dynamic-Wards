@@ -3,8 +3,9 @@
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // The colored light on a ward's dome (every pick; ENB too since 2026-10-06 - Lighting.cpp OwnLights), and - on every pick since 2026-10-05 (his order) - a light on
-// the FIRST-PERSON hand while one of our wards is cast: the game's casting light, Light Placer's and the ENB mesh light hang
-// on the third-person body, which first person does not draw.
+// each hand casting or readying one of our wards, first person included (his "every mod gets light for first person as
+// well"). Since 3.1 the player's hand lights hang under the THIRD-person body in first person too (TickHands has the
+// measurement): under the first-person skeleton a light lit nothing on ENB. (The name DWHand1st is kept - reports read it.)
 // Each light takes its row's color and the opacity slider every tick, so a change in the menu reaches a ward already up.
 // Where it sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
 //
@@ -317,33 +318,33 @@ namespace Plugin
 			}
 		}
 
-		// The hand lights. First person (every pick): the player's first-person hands - the game's, Light Placer's and the ENB
-		// lights all hang on the third-person body, which first person does not draw. Third person, and every other actor
-		// casting one of our wards: on every pick (ENB too since 2026-10-06, OwnLights).
+		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too since
+		// 2026-10-06, OwnLights). Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
+		// on ENB (a user's report "the ENB light in first person did not work"): the same hand light hung under the
+		// first-person skeleton's magic nodes sat right (in front of her at camera height) yet lit nothing - the ground ON /
+		// OFF / ON 45.6 / 44.2 / 45.4 - while under the third-person nodes it doubled the ground (117.9 / 57.5 / 117.9).
 		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
 		{
 			for (auto& [id, a] : gHands) {
 				a.seen = false;
 			}
-			auto visit = [&](RE::Actor* a_actor, bool a_first) {
+			auto visit = [&](RE::Actor* a_actor) {
 				if (!a_actor) {
 					return;
 				}
-				auto* body = a_actor->Get3D(a_first);
+				auto* body = a_actor->Get3D(false);
 				auto& a = gHands[a_actor->GetFormID()];
 				a.seen = true;
-				TickActor(a_actor, (a_first || OwnLights()) ? body : nullptr, a, a_scene);
+				TickActor(a_actor, OwnLights() ? body : nullptr, a, a_scene);
 			};
 			if (a_on) {
-				auto*      player = RE::PlayerCharacter::GetSingleton();
-				auto*      cam = RE::PlayerCamera::GetSingleton();
-				const bool first = cam && cam->IsInFirstPerson();
-				visit(player, first);
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				visit(player);
 				if (OwnLights()) {
 					if (auto* lists = RE::ProcessLists::GetSingleton()) {
 						for (auto& handle : lists->highActorHandles) {
 							if (auto actor = handle.get(); actor && actor.get() != player) {
-								visit(actor.get(), false);
+								visit(actor.get());
 							}
 						}
 					}
