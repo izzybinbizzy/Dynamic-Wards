@@ -4,7 +4,7 @@
 //
 // 3.0: ONE neutral set of meshes per row, and the color made here, in memory.
 //
-// A ward keeps its color in three places, and each is reached once per color change, never per frame:
+// A ward keeps its look in five places, and each is reached once per color change, never per frame:
 //   1. its PALETTES (the greyscale-to-palette blocks). Each row's meshes name palette files of their own, so the texture
 //      object behind a palette is that row's alone: its pixels are rebuilt from the neutral source in the ward's color (the
 //      same curve the 2.x build baked - wardgen.pal_retint) and swapped in on the graphics card. Every live ward of the row
@@ -14,8 +14,9 @@
 //      coordinate into its palette and keeps its number. The ENB light sprite takes the ward's color at full saturation.
 //   3. its OPACITY: every block's alpha, by the menu's slider (the lights dim with it, Lighting.cpp / DomeLights.cpp); a
 //      palette block that reads no alpha from its emissive is dimmed through its glow strength instead (Block::alphaDead).
-//   5. its BRIGHTNESS: every block's glow strength (emissive multiple), by the menu's all-in-one slider - the lights follow it.
-//   4. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
+//   4. its BRIGHTNESS: every block's glow strength (emissive multiple), by Ward brightness (the ward in the hands: Hand
+//      Brightness) - the lights follow it.
+//   5. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
 //      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
 //      tested on ENB, Vanilla and Community Shaders: `Temp\DW orb + transparency test\round 2*`).
 // The dome's colour controllers would write the neutral color back every frame (probe 2, 2026-10-02: clearing kActive
@@ -31,6 +32,7 @@ namespace Plugin
 		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
 		constexpr float       kSatFloor = 0.25f;  // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
 		constexpr float       kHueHold = 0.50f;   // wardgen HUE_HOLD: green and blue keep at least this much hue
+		constexpr std::uint64_t kMaxPalettePixels = 1u << 20;  // 64x the largest shipped palette
 		constexpr float       kSpriteSat = 0.75f; // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
@@ -118,7 +120,7 @@ namespace Plugin
 		std::array<Row, kRows>         gRows;
 		std::map<std::string, Source>  gSources;
 		std::vector<Grave>             gGrave;
-		std::size_t                    gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0;
+		std::size_t                    gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0, gLiveDomes = 0;
 		std::string                    gLastProblem = "none";
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
 		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
@@ -189,6 +191,20 @@ namespace Plugin
 			std::memcpy(&h, raw.data() + 12, 4);
 			std::memcpy(&w, raw.data() + 16, 4);
 			std::memcpy(&bits, raw.data() + 88, 4);
+			// a palette is a small ramp: no zero side (the mip chain would read an empty buffer) and nothing past the
+			// graphics card's 16384 limit (which also keeps w * h * 4 far from overflowing)
+			if (w == 0 || h == 0 || w > 16384 || h > 16384) {
+				s.w = -1;
+				gLastProblem = std::format("palette source {} has an unusable size {}x{}", a_stem, w, h);
+				return s;
+			}
+			// and no more pixels than a ramp could need (CodeRabbit, PR #3: a 16384x16384 file passed the side check and
+			// would cost gigabytes here). The shipped palettes are 16384 pixels at most (128x128, 256x64, 512x32).
+			if (static_cast<std::uint64_t>(w) * h > kMaxPalettePixels) {
+				s.w = -1;
+				gLastProblem = std::format("palette source {} is too large for a palette ({}x{})", a_stem, w, h);
+				return s;
+			}
 			if (bits != 32 || raw.size() < 128 + static_cast<std::size_t>(w) * h * 4) {
 				s.w = -1;
 				gLastProblem = std::format("palette source {} is not uncompressed 32-bit", a_stem);
@@ -544,6 +560,100 @@ namespace Plugin
 			a_row.appliedBrightness = a_brightness;
 			a_row.appliedCastingGlow = a_castingGlow;
 		}
+
+		// A dome already on screen (a held ward's, the menu's preview) is a CLONE of the cached model, made before the change:
+		// it shares the palette textures (so those follow at once) but carries its own copy of every block's glow, so its
+		// emissive blocks kept the old color until the next cast (his ask 2026-10-06: drag the color bar and watch the ward
+		// "skim through the color spectrum"). Every live dome of a row is given the master's materials again, block for
+		// block - a clone walks its geometry in the same order as the model it was cloned from. Main thread (ApplyColors).
+		std::size_t RepaintLive()
+		{
+			auto* lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
+				return 0;
+			}
+			std::map<std::string, const Master*> byModel;
+			for (const auto& row : gRows) {
+				for (const auto& m : row.masters) {
+					byModel.emplace(ModelKey(m.model), &m);
+				}
+			}
+			std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const Master*>> live;
+			{
+				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
+				for (auto& temp : lists->magicEffects) {
+					auto* e = temp.get();
+					if (!e || e->GetType() != RE::TEMP_EFFECT_TYPE::kRefModel) {
+						continue;
+					}
+					auto* m = static_cast<RE::ModelReferenceEffect*>(e);
+					if (m->finished || !m->artObject || !m->artObject3D) {
+						continue;
+					}
+					const auto* model = m->artObject->GetModel();
+					if (const auto it = byModel.find(ModelKey(model ? model : "")); it != byModel.end()) {
+						live.emplace_back(m->artObject3D, it->second);
+					}
+				}
+			}
+			std::size_t painted = 0;
+			for (const auto& [root, master] : live) {
+				std::vector<RE::BSEffectShaderProperty*> props;
+				RE::BSVisit::TraverseScenegraphGeometries(root.get(), [&](RE::BSGeometry* a_geometry) {
+					auto* raw = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+					auto* prop = raw ? netimmerse_cast<RE::BSEffectShaderProperty*>(raw) : nullptr;
+					if (prop && prop->GetMaterial()) {
+						props.push_back(prop);
+					}
+					return RE::BSVisit::BSVisitControl::kContinue;
+				});
+				if (props.size() != master->blocks.size()) {
+					continue;  // not the shape the master was read from: leave it to the next cast
+				}
+				using F = RE::BSShaderProperty::EShaderPropertyFlag;
+				for (std::size_t i = 0; i < props.size(); ++i) {
+					auto* from = static_cast<RE::BSEffectShaderMaterial*>(master->blocks[i].prop->GetMaterial());
+					auto* fresh = from ? static_cast<RE::BSEffectShaderMaterial*>(from->Create()) : nullptr;
+					if (!fresh) {
+						continue;
+					}
+					fresh->CopyMembers(from);
+					// the gold vapour switch moves the palette bits on the master's block; the clone follows it
+					for (const auto f : { F::kGrayscaleToPaletteColor, F::kGrayscaleToPaletteAlpha }) {
+						if (master->blocks[i].prop->flags.any(f)) {
+							props[i]->flags.set(f);
+						} else {
+							props[i]->flags.reset(f);
+						}
+					}
+					props[i]->SetMaterial(fresh, true);
+					if (props[i]->GetMaterial() != fresh) {
+						fresh->~BSEffectShaderMaterial();
+						RE::free(fresh);
+					}
+				}
+				++painted;
+			}
+			return painted;
+		}
+
+		std::atomic<bool> gLiveQueued{ false };
+		std::chrono::steady_clock::time_point gLiveLast{};
+	}
+
+	void LiveRecolor()
+	{
+		// the menu's render thread, once per frame while a color is dragged: at most ~15 recolors a second, one queued at a
+		// time - colors only (no save, no re-equip of a ward in the hands; both happen once the mouse is let go)
+		const auto now = std::chrono::steady_clock::now();
+		if (now - gLiveLast < std::chrono::milliseconds(66) || gLiveQueued.exchange(true)) {
+			return;
+		}
+		gLiveLast = now;
+		Later([]() {
+			gLiveQueued = false;
+			ApplyColors(true);
+		});
 	}
 
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models)
@@ -554,7 +664,7 @@ namespace Plugin
 		}
 	}
 
-	bool ApplyColors()
+	bool ApplyColors(bool a_quiet)
 	{
 		const int opacity = Opacity();
 		const int transparency = Transparency();
@@ -578,9 +688,13 @@ namespace Plugin
 				changed = true;
 			}
 		}
+		gLiveDomes = changed ? RepaintLive() : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		ColorHandLights();
-		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set{}", gSwaps, gSwapFails, gEdits,
-			gSwapFails ? " - " + gLastProblem : "");
+		if (a_quiet) {
+			return changed;  // a drag in the menu: ~15 a second, the log keeps the one made when the mouse is let go
+		}
+		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted{}", gSwaps, gSwapFails,
+			gEdits, gLiveDomes, gSwapFails ? " - " + gLastProblem : "");
 		return changed;
 	}
 
@@ -605,7 +719,7 @@ namespace Plugin
 				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
 				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
 		}
-		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"missingModels":{},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
-			gSwaps, gSwapFails, gEdits, gMissing, gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);
+		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
+			gSwaps, gSwapFails, gEdits, gLiveDomes, gMissing, gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);
 	}
 }

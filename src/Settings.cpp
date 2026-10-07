@@ -193,7 +193,7 @@ namespace Plugin
 				}
 			}
 		}
-		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, casting glow {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
+		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 						"Crusader shields {}, every ward {} ({} line(s) read{})",
 			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gCastingGlow, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
 			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", read,
