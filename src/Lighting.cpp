@@ -91,7 +91,7 @@ namespace Plugin
 		gIsl = std::filesystem::exists(kIslShader);
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {}", kNames[static_cast<int>(gPick.load())],
-			gPickRead ? "the installer's pick" : "no Lighting.txt, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
+			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
 	}
 
 	void MakeHandLights()
