@@ -124,6 +124,11 @@ namespace Plugin
 				SetLadderColor(ladder);
 				Changed();
 				editingLadder = false;
+			} else if (ladder != LadderColor()) {
+				// dragged (the color bar, the picker's hue): the wards follow live - his ask 2026-10-06, "slide the mouse
+				// across the slider ... to make the ward just skim through the color spectrum". Saved when let go.
+				SetLadderColor(ladder);
+				LiveRecolor();
 			}
 			int stages = LadderStages() - kMinStages;
 			const char* stageNames[] = { T("3 stages"), T("4 stages"), T("5 stages") };
@@ -171,7 +176,8 @@ namespace Plugin
 							SetRow(i, RowMode::kCustom, c);
 							Changed();
 						} else if (c != RowCustom(i)) {
-							SetRow(i, RowMode::kCustom, c);  // shown while dragging, applied when let go
+							SetRow(i, RowMode::kCustom, c);  // the ward follows the drag live; saved when let go
+							LiveRecolor();
 						}
 						Unindent(26.0f);
 					}
@@ -189,9 +195,7 @@ namespace Plugin
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
 			TextColored(kMuted, T("Lighting picked in the installer: %s"), lighting[static_cast<int>(LightingPick())]);
 			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
-			if (MeshLights()) {
-				TextColored(kMuted, "%s", T("ENB lights are part of the ward meshes; they take the ward's color and dim with its opacity."));
-			} else {
+			{  // every pick since 2026-10-06: ENB gets the plugin's lights too (Lighting.cpp OwnLights), so its switches show
 				bool light = WardLightOn();
 				if (Checkbox(T("Ward casting light"), &light)) {
 					SetWardLightOn(light);
@@ -265,7 +269,7 @@ namespace Plugin
 			if (IsItemDeactivatedAfterEdit()) {
 				Changed();
 			}
-			SetItemTooltip("%s", T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Casting glow instead."));
+			SetItemTooltip("%s", T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
 			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
 			const bool has360 = Has360Ward();
 			BeginDisabled(!has360);
@@ -283,6 +287,10 @@ namespace Plugin
 			if (!has360) {
 				TextColored(kMuted, "%s", T("Needs 360 Ward."));
 			}
+
+			// his order 2026-10-06: Ward brightness moves down under the old "Casting art" heading, now "Brightness", and
+			// Casting glow is "Hand Brightness" (the ini key stays CastingGlow so saved settings carry over)
+			Header(Icon::kStar, T("Brightness"));
 			int brightness = Brightness();
 			SetNextItemWidth(260.0f);
 			SliderInt(T("Ward brightness"), &brightness, kBrightnessMin, kBrightnessMax, "%d%%");
@@ -292,13 +300,12 @@ namespace Plugin
 			if (IsItemDeactivatedAfterEdit()) {
 				Changed();
 			}
-			SetItemTooltip("%s", T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Casting glow instead."));
+			SetItemTooltip("%s", T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
 
 			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
-			Header(Icon::kStar, T("Casting art"));
 			int castingGlow = CastingGlow();
 			SetNextItemWidth(260.0f);
-			SliderInt(T("Casting glow"), &castingGlow, kBrightnessMin, kBrightnessMax, "%d%%");
+			SliderInt(T("Hand Brightness"), &castingGlow, kBrightnessMin, kBrightnessMax, "%d%%");
 			if (castingGlow != CastingGlow()) {
 				SetCastingGlow(castingGlow);
 			}

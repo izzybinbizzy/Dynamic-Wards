@@ -125,7 +125,7 @@ namespace Plugin
 	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
 	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
 	void        SetOpacity(int a_percent);
-	inline constexpr int kTransparencyDefault = 25;  // his default, 2026-10-03
+	inline constexpr int kTransparencyDefault = 0;  // his default 2026-10-06 (was 25, 2026-10-03): "transparency 0, opacity 100"
 	inline constexpr int kTransparencyMax = 90;  // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
 	int         Transparency();  // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
 	void        SetTransparency(int a_percent);
@@ -137,9 +137,9 @@ namespace Plugin
 	// the casting art (the ward in the hands) and its light have their own slider and nothing else touches them - his rule
 	// 2026-10-05: "opacity should not be affecting casting art brightness, neither should ward brightness ... make it the sole
 	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
-	int         CastingGlow();  // kBrightnessMin-kBrightnessMax, percent (100 = as built)
+	int         CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
 	void        SetCastingGlow(int a_percent);
-	float       HandDim();      // what a hand light's strength (and the hand art's glow) is multiplied by: casting glow alone
+	float       HandDim();      // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
 	bool        Dome360();
 	void        SetDome360(bool a_on);
 	bool        WardLightOn();
@@ -166,21 +166,22 @@ namespace Plugin
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
 	// cached model every copy is cloned from
 	void        RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
-	bool        ApplyColors();                                                            // main thread; true when a row changed
+	bool        ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
+	void        LiveRecolor();  // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	std::string ColorsReport();
 
 	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
 	enum class Lighting : int
 	{
 		kShaders = 0,  // Community Shaders (with or without Effects 11) or none: this plugin makes the lights
-		kEnb = 1,      // an ENB light inside each ward mesh
+		kEnb = 1,      // an ENB light inside each ward mesh, and (since 2026-10-06) this plugin's lights as on Vanilla
 		kVanilla = 2,  // this plugin makes the lights, in the game's own lighting
 	};
 	void               ReadLighting();  // data load, before MakeArt
 	Lighting           LightingPick();
 	void               SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool               MeshLights();                      // ENB: the light is in the mesh, the game's ward light goes
-	bool               OwnLights();                       // this plugin makes the hand and dome lights
+	bool               MeshLights();                      // ENB: the meshes carry an ENB light sprite as well
+	bool               OwnLights();                       // this plugin makes the hand and dome lights (every pick since 2026-10-06)
 	bool               Effects11();                       // Community Shaders' Effects 11 is installed
 	bool               HandLight1st();                    // the first-person hand light: every pick (his order 2026-10-05)
 	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
@@ -192,7 +193,7 @@ namespace Plugin
 	std::string        ModelKey(std::string_view a_model);  // lower case, back slashes, under the meshes folder
 	RE::NiColor        LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
 
-	// DomeLights.cpp: the colored light on each dome, and (ENB, or Effects 11) the first-person hand light
+	// DomeLights.cpp: the colored light on each dome, and the hand lights (every pick)
 	enum class DomeMode : int
 	{
 		kAuto = 0,

@@ -6,7 +6,8 @@
 //
 //   Community Shaders   this plugin makes every ward light: the hand light (the game's ward light record, one copy per row in
 //                       that row's color) and the dome light (DomeLights.cpp, inverse square when Community Shaders has it).
-//   ENB                 the light is an ENB particle light inside each ward mesh, colored by Colors.cpp; the game's light goes.
+//   ENB                 an ENB particle light inside each ward mesh, colored by Colors.cpp, AND (since 2026-10-06) this plugin's
+//                       hand and dome lights as on Vanilla - the mesh light alone barely lit the ground; the game's light goes.
 //   Vanilla             as Community Shaders, in the game's own lighting; the hand light copies take the house light (178 / 1.14).
 // Every pick also lights the FIRST-PERSON hand while one of our wards is cast (DomeLights.cpp; his order 2026-10-05, "every
 // mod gets light for first person as well") - the game's, Light Placer's and the ENB lights hang on the third-person body.
@@ -151,7 +152,12 @@ namespace Plugin
 
 	bool OwnLights()
 	{
-		return gPick.load() != Lighting::kEnb;
+		// every pick since 2026-10-06 (his yes): on ENB the mesh's particle light alone barely lit anything - measured at his
+		// temple-steps spot, the floor in front of her went 18.5 -> 18.2 (Nightingale), 22.7 (Ember), 20.5 (Frost green) on a
+		// 0-255 scale; his "why is the light so faint ... there's no light coming off the wards". So ENB also gets this
+		// plugin's hand and dome lights, the game's own lighting values as on Vanilla (no inverse square there); the mesh's
+		// ENB sprite stays as it was.
+		return true;
 	}
 
 	bool Effects11()

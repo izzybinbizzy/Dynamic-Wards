@@ -591,7 +591,6 @@ namespace Plugin
 			RefreshHands();
 		}
 		const bool ownHand = OwnLights();
-		const bool meshLights = MeshLights();
 		for (auto& t : gTargets) {
 			// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
 			// too big beside his other casting art. The silent row fires with EVERY vanilla ward and kept the game's white
@@ -600,8 +599,8 @@ namespace Plugin
 			// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
 			// decides it. A Vanilla row only gets back a light the switch took.
 			// 2.3, the installer's lighting pick (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
-			// no light framework loaded) a colored ward casts with the game's ward light in its own color; on the ENB pick
-			// the light is in the mesh, so the game's goes as it does under Light Placer.
+			// no light framework loaded) a colored ward casts with the game's ward light in its own color. Since 2026-10-06
+			// every pick (ENB too) gets this plugin's hand light, so a dressed ward's own light always goes.
 			auto&       slot = t.effect->data.light;
 			auto* const before = slot;
 			if (IsOurHandLight(slot)) {
@@ -623,8 +622,8 @@ namespace Plugin
 					// effect carries none - two lights on one hand would double the caster
 					slot = nullptr;
 				} else {
-					// a dressed ward on ENB lights itself (the light is in the mesh); a Vanilla row keeps the game's
-					ApplyLight(t, (light && !ownHand && !meshLights) || !ourHand, Worn(t) != nullptr, quiet);
+					// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
+					ApplyLight(t, (light && !ownHand) || !ourHand, Worn(t) != nullptr, quiet);
 				}
 			}
 			if (slot != before) {

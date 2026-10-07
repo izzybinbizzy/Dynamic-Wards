@@ -2,7 +2,7 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The colored light on a ward's dome (every pick but ENB, 3.0), and - on every pick since 2026-10-05 (his order) - a light on
+// The colored light on a ward's dome (every pick; ENB too since 2026-10-06 - Lighting.cpp OwnLights), and - on every pick since 2026-10-05 (his order) - a light on
 // the FIRST-PERSON hand while one of our wards is cast: the game's casting light, Light Placer's and the ENB mesh light hang
 // on the third-person body, which first person does not draw.
 // Each light takes its row's color and the opacity slider every tick, so a change in the menu reaches a ward already up.
@@ -114,6 +114,15 @@ namespace Plugin
 			}
 		}
 
+		// ENB (his report 2026-10-06 ~21:30, "wards still dont provide enb light and if they do its too small"): the dome light
+		// in the game's own lighting reaches 178 (the house light) - barely past the dome itself (~83). On the ENB pick it reaches
+		// kEnbDomeReach times as far.
+		constexpr float kEnbDomeReach = 2.25f;
+		float DomeRadius(const Spec& a_spec)
+		{
+			return a_spec.plainRadius * (LightingPick() == Lighting::kEnb ? kEnbDomeReach : 1.0f);
+		}
+
 		RE::NiPointLight* CloneMaster()
 		{
 			if (!gMaster) {
@@ -203,7 +212,7 @@ namespace Plugin
 				if (!light) {
 					return;
 				}
-				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, a_spec.plainRadius, a_spec.plain, LightDim());
+				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
 				light->name = kLightName;
 				light->local.translate = at;
 				light->SetLightAttenuation(light->GetLightRuntimeData().radius.x);
@@ -402,10 +411,10 @@ namespace Plugin
 					lit.light->SetAppCulled(hide);
 				}
 				if (const auto c = RowColor(lit.row)) {
-					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, lit.spec->plainRadius, lit.spec->plain, LightDim());
+					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, DomeRadius(*lit.spec), lit.spec->plain, LightDim());
 				}
 			}
-			TickHands(scene, HandLight1st() && (MeshLights() || WardLightOn()));
+			TickHands(scene, HandLight1st() && WardLightOn());  // ENB too since 2026-10-06 (OwnLights), behind the same switch
 		}
 	}
 
