@@ -114,13 +114,14 @@ namespace Plugin
 			}
 		}
 
-		// ENB (his report 2026-10-06 ~21:30, "wards still dont provide enb light and if they do its too small"): the dome light
-		// in the game's own lighting reaches 178 (the house light) - barely past the dome itself (~83). On the ENB pick it reaches
-		// kEnbDomeReach times as far.
-		constexpr float kEnbDomeReach = 2.25f;
+		// ENB (his report 2026-10-06 ~21:30, "wards still dont provide enb light and if they do its too small") and Vanilla (his
+		// report ~22:10, "fix vanilla ward light because ... it is too low or not there as well"): the dome light in the game's
+		// own lighting reaches 178 (the house light) - barely past the dome itself (~83). On those two picks it reaches
+		// kPlainDomeReach times as far (Community Shaders' inverse square light keeps its own reach).
+		constexpr float kPlainDomeReach = 2.25f;
 		float DomeRadius(const Spec& a_spec)
 		{
-			return a_spec.plainRadius * (LightingPick() == Lighting::kEnb ? kEnbDomeReach : 1.0f);
+			return a_spec.plainRadius * (LightingPick() != Lighting::kShaders ? kPlainDomeReach : 1.0f);
 		}
 
 		RE::NiPointLight* CloneMaster()
