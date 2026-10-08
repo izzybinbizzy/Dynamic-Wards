@@ -349,6 +349,27 @@ namespace Plugin
 					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
 					  "Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
 			}
+			// his order 2026-10-08: one switch per shield; off = blocking with that shield raises no ward at all
+			bool shieldsShown = false;
+			for (const auto row : kShieldRows) {
+				if (!ShieldFound(row)) {
+					continue;
+				}
+				if (!shieldsShown) {
+					Header(Icon::kShield, T("Shields"));
+					shieldsShown = true;
+				}
+				PushID(static_cast<int>(row));
+				bool on = ShieldWardOn(row);
+				if (Checkbox(Fill(T("{} raises a ward"), std::string(T(kRowLabel[row]))).c_str(), &on)) {
+					SetShieldWardOn(row, on);
+					Changed();
+				}
+				SetItemTooltip("%s",
+					T("Off: blocking with this shield raises no ward at all. Turned off, the ward goes at once; turned back on, it "
+					  "returns the next time the shield is equipped."));
+				PopID();
+			}
 			if (CrusaderAvailable()) {
 				Separator();
 				bool cru = CrusaderOn();
