@@ -19,24 +19,24 @@ namespace Plugin
 			Color   color = kWhite;
 		};
 
-		std::mutex             gLock;
-		std::array<Row, kRows> gRows{};
-		Color                  gLadder = kPresets[0].color;
-		int                    gStages = kMinStages;
-		bool                   gReversed = false;
-		int                    gOpacity = 100;
-		int                    gTransparency = kTransparencyDefault;
-		int                    gBrightness = 100;
-		int                    gCastingGlow = 100;
-		int                    gDome = 0;
-		bool                   gLight = true;
-		bool                   gColoredLights = true;
-		Unlock                 gUnlock = Unlock::kSkill75;
-		std::string            gPerk;
-		bool                   gCrusader = true;
-		bool                   gEvery = true;
-		bool                   gKeepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
-		std::map<std::string, bool, std::less<>> gMods;  // [Compatibility] plugin=0/1, lowercased; missing = gEvery
+		std::mutex                               gLock;
+		std::array<Row, kRows>                   gRows{};
+		Color                                    gLadder = kPresets[0].color;
+		int                                      gStages = kMinStages;
+		bool                                     gReversed = false;
+		int                                      gOpacity = 100;
+		int                                      gTransparency = kTransparencyDefault;
+		int                                      gBrightness = 100;
+		int                                      gCastingGlow = 100;
+		int                                      gDome = 0;
+		bool                                     gLight = true;
+		bool                                     gColoredLights = true;
+		Unlock                                   gUnlock = Unlock::kSkill75;
+		std::string                              gPerk;
+		bool                                     gCrusader = true;
+		bool                                     gEvery = true;
+		bool                                     gKeepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
+		std::map<std::string, bool, std::less<>> gMods;               // [Compatibility] plugin=0/1, lowercased; missing = gEvery
 
 		std::string Trim(std::string s)
 		{
@@ -90,7 +90,7 @@ namespace Plugin
 		if (a_text.starts_with("0x") || a_text.starts_with("0X")) {
 			a_text.remove_prefix(2);
 		}
-		Color v = 0;
+		Color       v = 0;
 		const auto* end = a_text.data() + a_text.size();
 		if (a_text.size() != 6) {
 			return std::nullopt;
@@ -105,9 +105,9 @@ namespace Plugin
 	{
 		const int k = std::clamp(a_percent, 0, 100);
 		auto      ch = [&](int a_shift) {
-            const int a = (a_from >> a_shift) & 0xFF;
-            const int b = (a_to >> a_shift) & 0xFF;
-            return static_cast<Color>(std::clamp(a + ((b - a) * k + 50) / 100, 0, 255)) << a_shift;
+			const int a = (a_from >> a_shift) & 0xFF;
+			const int b = (a_to >> a_shift) & 0xFF;
+			return static_cast<Color>(std::clamp(a + ((b - a) * k + 50) / 100, 0, 255)) << a_shift;
 		};
 		return ch(16) | ch(8) | ch(0);
 	}
@@ -193,8 +193,9 @@ namespace Plugin
 				}
 			}
 		}
-		SKSE::log::info("settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
-						"Crusader shields {}, every ward {} ({} line(s) read{})",
+		SKSE::log::info(
+			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
+			"Crusader shields {}, every ward {} ({} line(s) read{})",
 			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gCastingGlow, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
 			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", read,
 			old ? "; a 2.x file, carried over" : "");
@@ -216,7 +217,8 @@ namespace Plugin
 			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0) << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const auto& r = gRows[i];
-			out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") : HexColor(r.color))
+			out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
+																															  HexColor(r.color))
 				<< "\n";
 		}
 		out << "[Compatibility]\n";
@@ -443,7 +445,8 @@ namespace Plugin
 			const auto pos = (std::min)(a_rank, n - 1);  // ranks past the ladder hold its last stop
 			return a_stops[rev ? n - 1 - pos : pos];
 		};
-		return stages == 5 ? pick(kStages5) : stages == 4 ? pick(kStages4) : pick(kStages3);
+		return stages == 5 ? pick(kStages5) : stages == 4 ? pick(kStages4) :
+		                                                    pick(kStages3);
 	}
 
 	std::optional<Color> RowColor(std::size_t a_row)

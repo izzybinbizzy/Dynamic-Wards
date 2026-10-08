@@ -28,15 +28,15 @@ namespace Plugin
 		constexpr const char*   kGame = "Skyrim.esm";
 		constexpr std::uint32_t kWardLight = 0x02F3EF;  // MagicLightWardHand01, the light every vanilla ward casts with
 
-		std::mutex                                gLock;
-		std::atomic<Lighting>                     gPick{ Lighting::kShaders };
-		bool                                      gPickRead = false;
-		bool                                      gE11 = false;
-		bool                                      gIsl = false;
-		const RE::TESObjectLIGH*                  gGame = nullptr;
-		std::array<RE::TESObjectLIGH*, kRows>     gHand{};
+		std::mutex                                   gLock;
+		std::atomic<Lighting>                        gPick{ Lighting::kShaders };
+		bool                                         gPickRead = false;
+		bool                                         gE11 = false;
+		bool                                         gIsl = false;
+		const RE::TESObjectLIGH*                     gGame = nullptr;
+		std::array<RE::TESObjectLIGH*, kRows>        gHand{};
 		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
-		float                                     gHandFade = 1.0f;  // the hand lights' strength before the casting glow slider
+		float                                        gHandFade = 1.0f;  // the hand lights' strength before the casting glow slider
 		// Vanilla: the game's ward light (radius 50) barely reads in the game's own lighting - his report 2026-10-05, "the
 		// casting art doesn't have light on vanilla". Our ward copies take the house light instead (LTBG section 4's 133 reach
 		// as the game's lights draw it: wardgen.plain_light, radius 178 / fade 1.14); only ward spells wear these copies.
@@ -53,7 +53,8 @@ namespace Plugin
 					continue;
 				}
 				gPickRead = true;
-				return word == "enb" ? Lighting::kEnb : word == "vanilla" ? Lighting::kVanilla : Lighting::kShaders;
+				return word == "enb" ? Lighting::kEnb : word == "vanilla" ? Lighting::kVanilla :
+				                                                            Lighting::kShaders;
 			}
 			// no pick: look at the game
 			std::error_code ec;
@@ -129,7 +130,7 @@ namespace Plugin
 		const float      dim = HandDim();  // the casting glow slider alone (his rule 2026-10-05: opacity and ward brightness leave the hand)
 		std::scoped_lock l{ gLock };
 		for (std::size_t i = 0; i < kRows; ++i) {
-			auto* h = gHand[i];
+			auto*      h = gHand[i];
 			const auto c = RowColor(i);
 			if (!h || !c || !gGame) {
 				continue;

@@ -27,8 +27,8 @@ namespace Plugin
 		constexpr float         kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto          kTick = std::chrono::milliseconds(100);
 		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
-		constexpr float         kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
-		constexpr const char*   kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
+		constexpr float       kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
+		constexpr const char* kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
 
 		struct Spec
 		{
@@ -69,10 +69,10 @@ namespace Plugin
 		};
 		std::unordered_map<RE::FormID, ActorHands> gHands;
 		std::size_t                                gHandsMade = 0;
-		RE::NiPointer<RE::NiPointLight>       gMaster;
-		std::atomic<DomeMode>                 gMode{ DomeMode::kAuto };
-		std::atomic_bool                      gQueued{ false };
-		RE::NiColor                           gLastAmbient{};
+		RE::NiPointer<RE::NiPointLight>            gMaster;
+		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
+		std::atomic_bool                           gQueued{ false };
+		RE::NiColor                                gLastAmbient{};
 
 		bool Wanted()
 		{
@@ -120,7 +120,7 @@ namespace Plugin
 		// own lighting reaches 178 (the house light) - barely past the dome itself (~83). On those two picks it reaches
 		// kPlainDomeReach times as far (Community Shaders' inverse square light keeps its own reach).
 		constexpr float kPlainDomeReach = 2.25f;
-		float DomeRadius(const Spec& a_spec)
+		float           DomeRadius(const Spec& a_spec)
 		{
 			return a_spec.plainRadius * (LightingPick() != Lighting::kShaders ? kPlainDomeReach : 1.0f);
 		}
@@ -129,7 +129,7 @@ namespace Plugin
 		{
 			if (!gMaster) {
 				const RE::NiPointer<RE::NiPointLight> fresh(RE::NiPointLight::Create());
-				auto* clone = fresh ? netimmerse_cast<RE::NiPointLight*>(fresh->Clone()) : nullptr;
+				auto*                                 clone = fresh ? netimmerse_cast<RE::NiPointLight*>(fresh->Clone()) : nullptr;
 				if (!clone) {
 					return nullptr;
 				}
@@ -258,8 +258,8 @@ namespace Plugin
 		// equipped there, hands drawn
 		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot)
 		{
-			auto*                     caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
-			const RE::MagicItem*      spell = nullptr;
+			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
+			const RE::MagicItem* spell = nullptr;
 			using S = RE::MagicCaster::State;
 			if (caster && caster->currentSpell) {
 				const auto state = caster->state.get();
@@ -369,9 +369,9 @@ namespace Plugin
 			if (!scene || !lists) {
 				return;
 			}
-			const bool on = Wanted() && ColoredLightsOn();
+			const bool                                                                   on = Wanted() && ColoredLightsOn();
 			std::vector<std::tuple<RE::ModelReferenceEffect*, std::size_t, const Spec*>> live;
-			std::scoped_lock l{ gLock };
+			std::scoped_lock                                                             l{ gLock };
 			if (on) {
 				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
 				for (auto& temp : lists->magicEffects) {
@@ -406,7 +406,7 @@ namespace Plugin
 				}
 			}
 			for (auto& lit : gLit) {
-				const auto ref = lit.target.get();
+				const auto  ref = lit.target.get();
 				const auto* actor = ref ? ref->As<RE::Actor>() : nullptr;
 				const bool  hide = actor && actor->IsSneaking();
 				if (lit.light->GetAppCulled() != hide) {
@@ -427,8 +427,10 @@ namespace Plugin
 			ReadSpecs();
 		}
 		SKSE::log::info("dome lights: {} dome model(s) in {}; {}; first-person hand light {}", gSpecs.size(), kPath,
-			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" : "off",
-			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" : "on");
+			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" :
+															  "off",
+			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" :
+													 "on");
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock
 		std::thread([]() {
 			for (;;) {
@@ -453,10 +455,10 @@ namespace Plugin
 	std::string DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
-		const auto* player = RE::PlayerCharacter::GetSingleton();
-		const auto  it = player ? gHands.find(player->GetFormID()) : gHands.end();
-		const bool  leftLit = it != gHands.end() && it->second.h[0].light, rightLit = it != gHands.end() && it->second.h[1].light;
-		std::size_t lights = 0;
+		const auto*      player = RE::PlayerCharacter::GetSingleton();
+		const auto       it = player ? gHands.find(player->GetFormID()) : gHands.end();
+		const bool       leftLit = it != gHands.end() && it->second.h[0].light, rightLit = it != gHands.end() && it->second.h[1].light;
+		std::size_t      lights = 0;
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
 		}
