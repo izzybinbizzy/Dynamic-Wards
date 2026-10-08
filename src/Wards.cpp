@@ -125,6 +125,108 @@ namespace Plugin
 		std::unordered_map<const RE::EffectSetting*, std::size_t>        gTargetOf;  // effect -> gTargets index
 		std::unordered_set<const RE::BGSArtObject*>                      gOurs;      // every art object made here: a slot holding one was dressed by us
 
+		// His order 2026-10-08: each shield ward has its own switch, and off means that shield raises no ward at all. A worn
+		// shield raises its ward through its enchantment (Spellbreaker, the Crusader shields) or through an ability its equip
+		// script adds (Reman's shield). While a switch is off, each such entry points at an inert copy of the ward effect (no
+		// art, no light, no actor value, hidden), so the enchantment or ability keeps its length and a save's active effects
+		// still find their entry. The ward effect itself is left as it is: the Creation Club Warlock ring wears Spellbreaker's
+		// effect through its own enchantment and keeps its ward.
+		struct ShieldEntry
+		{
+			RE::Effect*        entry;
+			RE::EffectSetting* ward;
+			RE::EffectSetting* inert;
+			std::size_t        row;
+			RE::MagicItem*     carrier;
+			bool               ability;  // a spell the shield's script adds; else the shield's enchantment
+		};
+		std::vector<ShieldEntry> gShieldEntries;
+
+		RE::EffectSetting* InertCopy(const RE::EffectSetting* a_ward)
+		{
+			auto* e = NewForm<RE::EffectSetting>();
+			if (!e) {
+				return nullptr;
+			}
+			using Flag = RE::EffectSetting::EffectSettingData::Flag;
+			e->data.archetype = RE::EffectSetting::Archetype::kScript;  // a script effect with no script does nothing
+			e->data.castingType = a_ward->data.castingType;             // the carrier's own cast and delivery, so it is accepted
+			e->data.delivery = a_ward->data.delivery;
+			e->data.primaryAV = RE::ActorValue::kNone;
+			e->data.secondaryAV = RE::ActorValue::kNone;
+			e->data.flags.set(Flag::kHideInUI, Flag::kNoDuration, Flag::kNoMagnitude, Flag::kNoArea, Flag::kPainless, Flag::kNoHitEvent,
+				Flag::kNoHitEffect);
+			return e;
+		}
+
+		// the ward a shield-row entry raises now: the ward, or its inert copy while that shield's switch is off
+		RE::EffectSetting* ShieldWant(const ShieldEntry& a_s)
+		{
+			return ShieldWardOn(a_s.row) || !a_s.inert ? a_s.ward : a_s.inert;
+		}
+
+		// The live effects follow at once, on the player and every actor near her. They are taken off BEFORE the entries are
+		// switched (run 1 of the in-game test, 2026-10-08: refreshed after the switch, Reman's ward ended on the inert copy and
+		// its +20 Ward Power was never taken back - an effect must end on the base effect it started on): a shield's enchantment
+		// effect is dispelled (off: the ward is gone; on: the inert one goes and the ward comes back the next time the shield is
+		// equipped), an ability is taken off and, once the entries are switched, given back (rebuilt from its entries now).
+		std::vector<RE::Actor*> ShieldActors()
+		{
+			std::vector<RE::Actor*> out;
+			auto*                   player = RE::PlayerCharacter::GetSingleton();
+			if (player) {
+				out.push_back(player);
+			}
+			if (auto* lists = RE::ProcessLists::GetSingleton()) {
+				for (auto& handle : lists->highActorHandles) {
+					if (auto actor = handle.get(); actor && actor.get() != player) {
+						out.push_back(actor.get());
+					}
+				}
+			}
+			return out;
+		}
+
+		struct ShieldRefresh
+		{
+			std::vector<std::pair<RE::Actor*, RE::SpellItem*>> giveBack;
+			std::size_t                                        dispelled = 0;
+		};
+
+		ShieldRefresh TakeShieldEffects(const std::vector<const ShieldEntry*>& a_changing)
+		{
+			ShieldRefresh                         r;
+			std::unordered_set<const RE::Effect*> entries;
+			std::unordered_set<RE::SpellItem*>    abilities;
+			for (const auto* s : a_changing) {
+				if (!s->ability) {
+					entries.insert(s->entry);
+				} else if (auto* spell = skyrim_cast<RE::SpellItem*>(s->carrier)) {
+					abilities.insert(spell);
+				}
+			}
+			for (auto* actor : a_changing.empty() ? std::vector<RE::Actor*>{} : ShieldActors()) {
+				std::vector<RE::ActiveEffect*> dispel;
+				if (auto* list = entries.empty() ? nullptr : actor->AsMagicTarget()->GetActiveEffectList()) {
+					for (auto* ae : *list) {
+						if (ae && entries.contains(ae->effect)) {
+							dispel.push_back(ae);
+						}
+					}
+				}
+				for (auto* ae : dispel) {
+					ae->Dispel(true);
+				}
+				r.dispelled += dispel.size();
+				for (auto* spell : abilities) {
+					if (actor->HasSpell(spell) && actor->RemoveSpell(spell)) {
+						r.giveBack.emplace_back(actor, spell);
+					}
+				}
+			}
+			return r;
+		}
+
 		// loaded, not merely present: LookupModByName also finds a plugin that is installed but not enabled
 		bool Loaded(RE::TESDataHandler* a_dh, std::string_view a_name)
 		{
@@ -481,7 +583,51 @@ namespace Plugin
 				}
 			}
 		}
+		// every entry through which a worn shield raises a shield-row ward (its enchantment), and every ability holding one
+		// (Reman's shield adds its ward as an ability from its equip script)
+		std::unordered_map<RE::EffectSetting*, std::size_t> shieldWard;
+		for (const auto& t : found) {
+			if (t.how == How::kTable && std::ranges::find(kShieldRows, t.row) != kShieldRows.end()) {
+				shieldWard.emplace(t.effect, t.row);
+			}
+		}
+		std::vector<ShieldEntry>                                   entries;
+		std::unordered_set<const RE::Effect*>                      seen;
+		std::unordered_map<RE::EffectSetting*, RE::EffectSetting*> inert;
+		auto                                                       collect = [&](RE::MagicItem* a_carrier, bool a_ability) {
+			for (auto* e : a_carrier->effects) {
+				const auto it = e ? shieldWard.find(e->baseEffect) : shieldWard.end();
+				if (it == shieldWard.end() || !seen.insert(e).second) {
+					continue;
+				}
+				auto& copy = inert[it->first];
+				if (!copy) {
+					copy = InertCopy(it->first);
+				}
+				entries.push_back({ e, it->first, copy, it->second, a_carrier, a_ability });
+			}
+		};
+		if (!shieldWard.empty()) {
+			for (auto* armo : dh->GetFormArray<RE::TESObjectARMO>()) {
+				if (armo && armo->IsShield() && armo->formEnchanting) {
+					collect(armo->formEnchanting, false);
+				}
+			}
+			if (ench) {  // the Crusader ward the Legacy shields can be given (the switch above), also on the Knights shield
+				collect(ench, false);
+			}
+			for (auto* spell : dh->GetFormArray<RE::SpellItem>()) {
+				if (spell && spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility) {
+					collect(spell, true);
+				}
+			}
+		}
+		for (const auto& s : entries) {
+			SKSE::log::info("[SHIELD] {} raises the {} ward through {} ({})", Where(s.carrier), kTokens[s.row], Where(s.ward),
+				s.ability ? "an ability" : "an enchantment");
+		}
 		std::scoped_lock l{ gLock };
+		gShieldEntries = std::move(entries);
 		gTargets = std::move(found);
 		gTargetOf.clear();
 		for (std::size_t i = 0; i < gTargets.size(); ++i) {
@@ -642,6 +788,27 @@ namespace Plugin
 				++c.shield;
 			}
 		}
+		std::vector<const ShieldEntry*> switched;
+		for (const auto& s : gShieldEntries) {
+			if (s.entry->baseEffect != ShieldWant(s)) {
+				switched.push_back(&s);
+			}
+		}
+		auto refresh = TakeShieldEffects(switched);  // before the switch: each effect ends on the base it started on
+		for (const auto* s : switched) {
+			s->entry->baseEffect = ShieldWant(*s);
+		}
+		std::size_t givenBack = 0;
+		for (const auto& [actor, spell] : refresh.giveBack) {
+			givenBack += actor->AddSpell(spell) ? 1 : 0;
+		}
+		if (!switched.empty()) {
+			SKSE::log::info(
+				"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "
+				"ability(ies) given back",
+				switched.size(), ShieldWardOn(kShieldRows[0]) ? "on" : "off", ShieldWardOn(kShieldRows[1]) ? "on" : "off",
+				ShieldWardOn(kShieldRows[2]) ? "on" : "off", refresh.dispelled, givenBack, refresh.giveBack.size());
+		}
 		if (gLightsGlobal) {
 			gLightsGlobal->value = ColoredLightsOn() ? 1.0f : 0.0f;
 		}
@@ -700,6 +867,12 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return !gShields.empty() && gCrusaderEnch;
+	}
+
+	bool ShieldFound(std::size_t a_row)
+	{
+		std::scoped_lock l{ gLock };
+		return std::ranges::any_of(gShieldEntries, [a_row](const ShieldEntry& s) { return s.row == a_row; });
 	}
 
 	std::size_t DressedCount()
@@ -805,14 +978,20 @@ namespace Plugin
 			shields += std::format(R"({}{{"shield":"{}","enchantment":"{}","own":"{}"}})", shields.empty() ? "" : ",", JsonEscape(Where(armo)),
 				JsonEscape(Where(armo->formEnchanting)), JsonEscape(Where(own)));
 		}
+		std::string shieldWards;
+		for (const auto& s : gShieldEntries) {
+			shieldWards += std::format(R"({}{{"row":"{}","carrier":"{}","ability":{},"ward":"{}","on":{},"raisesWard":{}}})",
+				shieldWards.empty() ? "" : ",", kTokens[s.row], JsonEscape(Where(s.carrier)), s.ability, JsonEscape(Where(s.ward)),
+				ShieldWardOn(s.row), s.entry->baseEffect == s.ward);
+		}
 		return std::format(
 			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360":{},)"
 			R"("unlocked360":{},"unlockRule":{},"unlockPerk":"{}","ladder":"{}","wardLight":{},"coloredLights":{},"lightsGlobal":{},)"
-			R"("lightPlacer":{},"everyWard":{},"crusader":{},"rows":{{{}}},"shields":[{}],"wards":[{}]}})",
+			R"("lightPlacer":{},"everyWard":{},"crusader":{},"rows":{{{}}},"shields":[{}],"shieldWards":[{}],"wards":[{}]}})",
 			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), std::ranges::count_if(gArt, [](const Art& a) { return a.hand != nullptr; }),
 			JsonEscape(gFlashTemplate), gHas360, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
 			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
 			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), rows,
-			shields, wards);
+			shields, shieldWards, wards);
 	}
 }

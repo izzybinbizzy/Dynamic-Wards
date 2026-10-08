@@ -2,9 +2,11 @@
 
 Copyright (C) 2026 izzydoingit. GPL-3.0-or-later, see `LICENSE`.
 
-Ships with Dynamic Wards 3.0 and is required by it. One neutral set of ward meshes, coloured in memory: any colour
+Ships with Dynamic Wards 3 and is required by it. One neutral set of ward meshes, colored in memory: any color
 for any ward and an opacity slider (the palettes are rebuilt on the graphics card, the glow set on the cached model),
-and the ward lights made by the plugin - no plugin file. Settings are in SKSE Menu Framework's Mod Control Panel.
+and the ward lights made by the plugin - no plugin file. A switch for each shield that raises a ward (Spellbreaker,
+the Shield of the Crusader, the Shield of Reman Cyrodiil): off, that shield raises no ward. Settings are in SKSE Menu
+Framework's Mod Control Panel.
 
 `src/DevBenchAPI.h` and `src/DevBenchAPI.cpp` are devbench's own interface files, MIT licensed by
 their author (see `src/DevBenchAPI.LICENSE.txt`) and copied unchanged. devbench is not required.

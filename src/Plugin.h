@@ -20,6 +20,8 @@ namespace Plugin
 		"Crusader", "Reman", "Vampire" };
 	inline constexpr std::size_t      kRows = std::size(kTokens);
 	inline constexpr std::size_t      kRanks = 5;
+	// the rows a worn shield raises (Spellbreaker, the Crusader shields, Reman's): each has its own on/off (his order 2026-10-08)
+	inline constexpr std::array<std::size_t, 3> kShieldRows{ 5, 6, 7 };
 
 	// colors are 0xRRGGBB; the ladder runs from white to one color
 	using Color = std::uint32_t;
@@ -101,6 +103,7 @@ namespace Plugin
 	bool                                             LightPlacerLoaded();
 	bool                                             Unlocked360();
 	bool                                             CrusaderAvailable();
+	bool                                             ShieldFound(std::size_t a_row);  // a shield in this load order raises that row's ward
 	std::size_t                                      DressedCount();
 	std::size_t                                      FoundCount();
 	std::string                                      WardsReport();
@@ -152,6 +155,8 @@ namespace Plugin
 	void                 SetUnlockPerk(std::string a_perk);
 	bool                 CrusaderOn();
 	void                 SetCrusaderOn(bool a_on);
+	bool                 ShieldWardOn(std::size_t a_row);  // a kShieldRows row: off = the shield raises no ward at all
+	void                 SetShieldWardOn(std::size_t a_row, bool a_on);
 	bool                 KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
 	void                 SetKeepStrangeRunes(bool a_on);
 	bool                 StrangeRunesLoaded();
