@@ -18,8 +18,8 @@ namespace Plugin
 	// a row: five ranks, three worn shield wards, the vampire ward - one set of neutral meshes each (3.0)
 	inline constexpr std::string_view kTokens[] = { "Novice", "Apprentice", "Adept", "Expert", "Master", "Spellbreaker",
 		"Crusader", "Reman", "Vampire" };
-	inline constexpr std::size_t kRows = std::size(kTokens);
-	inline constexpr std::size_t kRanks = 5;
+	inline constexpr std::size_t      kRows = std::size(kTokens);
+	inline constexpr std::size_t      kRanks = 5;
 
 	// colors are 0xRRGGBB; the ladder runs from white to one color
 	using Color = std::uint32_t;
@@ -92,82 +92,82 @@ namespace Plugin
 	};
 
 	// Wards.cpp: which effects are wards, and what each wears
-	void        MakeArt();                       // data load: each row's neutral art, in memory
-	void        FindWards();                     // data load: every ward, by the 1.0 table and by what it is
-	void        ApplyAll(const char* a_why);     // every dressed ward to what the settings ask for (main thread)
-	void        CheckUnlock(const char* a_why);  // re-reads the player's skill or perk; re-applies when it changed
-	bool        Has360Ward();       // 360 Ward.esp loaded and 360 Ward Universal Patch SKSE present
-	bool        Missing360Patch();  // 360 Ward.esp loaded, its Universal Patch not
-	bool        LightPlacerLoaded();
-	bool        Unlocked360();
-	bool        CrusaderAvailable();
-	std::size_t DressedCount();
-	std::size_t FoundCount();
-	std::string WardsReport();
-	RE::BGSReferenceEffect* FlashFor(RE::EffectSetting* a_effect);
-	bool        PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player
-	std::size_t RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
+	void                                             MakeArt();                       // data load: each row's neutral art, in memory
+	void                                             FindWards();                     // data load: every ward, by the 1.0 table and by what it is
+	void                                             ApplyAll(const char* a_why);     // every dressed ward to what the settings ask for (main thread)
+	void                                             CheckUnlock(const char* a_why);  // re-reads the player's skill or perk; re-applies when it changed
+	bool                                             Has360Ward();                    // 360 Ward.esp loaded and 360 Ward Universal Patch SKSE present
+	bool                                             Missing360Patch();               // 360 Ward.esp loaded, its Universal Patch not
+	bool                                             LightPlacerLoaded();
+	bool                                             Unlocked360();
+	bool                                             CrusaderAvailable();
+	std::size_t                                      DressedCount();
+	std::size_t                                      FoundCount();
+	std::string                                      WardsReport();
+	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect);
+	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player
+	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
-	void        LoadSettings();
-	void        SaveSettings();
-	RowMode     RowModeOf(std::size_t a_row);
-	Color       RowCustom(std::size_t a_row);
-	void        SetRow(std::size_t a_row, RowMode a_mode, Color a_color);
-	Color       LadderColor();
-	void        SetLadderColor(Color a_color);
-	int         LadderStages();
-	void        SetLadderStages(int a_stages);
-	bool        LadderReversed();
-	void        SetLadderReversed(bool a_on);
+	void                 LoadSettings();
+	void                 SaveSettings();
+	RowMode              RowModeOf(std::size_t a_row);
+	Color                RowCustom(std::size_t a_row);
+	void                 SetRow(std::size_t a_row, RowMode a_mode, Color a_color);
+	Color                LadderColor();
+	void                 SetLadderColor(Color a_color);
+	int                  LadderStages();
+	void                 SetLadderStages(int a_stages);
+	bool                 LadderReversed();
+	void                 SetLadderReversed(bool a_on);
 	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
-	int         Opacity();  // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
-	void        SetOpacity(int a_percent);
+	int                  Opacity();         // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
+	void                 SetOpacity(int a_percent);
 	inline constexpr int kTransparencyDefault = 0;  // his default 2026-10-06 (was 25, 2026-10-03): "transparency 0, opacity 100"
-	inline constexpr int kTransparencyMax = 90;  // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
-	int         Transparency();  // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
-	void        SetTransparency(int a_percent);
-	inline constexpr int kBrightnessMin = 25;   // the range is centred on 100 (as built): the slider starts in the middle (his call)
+	inline constexpr int kTransparencyMax = 90;     // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
+	int                  Transparency();            // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
+	void                 SetTransparency(int a_percent);
+	inline constexpr int kBrightnessMin = 25;  // the range is centred on 100 (as built): the slider starts in the middle (his call)
 	inline constexpr int kBrightnessMax = 175;
-	int         Brightness();  // kBrightnessMin-kBrightnessMax, percent: the wards' glow AND their lights (100 = as built)
-	void        SetBrightness(int a_percent);
-	float       LightDim();    // what a dome / hit light's strength is multiplied by: opacity x brightness
+	int                  Brightness();  // kBrightnessMin-kBrightnessMax, percent: the wards' glow AND their lights (100 = as built)
+	void                 SetBrightness(int a_percent);
+	float                LightDim();  // what a dome / hit light's strength is multiplied by: opacity x brightness
 	// the casting art (the ward in the hands) and its light have their own slider and nothing else touches them - his rule
 	// 2026-10-05: "opacity should not be affecting casting art brightness, neither should ward brightness ... make it the sole
 	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
-	int         CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
-	void        SetCastingGlow(int a_percent);
-	float       HandDim();      // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
-	bool        Dome360();
-	void        SetDome360(bool a_on);
-	bool        WardLightOn();
-	void        SetWardLightOn(bool a_on);
-	bool        ColoredLightsOn();
-	void        SetColoredLightsOn(bool a_on);
-	Unlock      UnlockRule();
-	void        SetUnlockRule(Unlock a_rule);
-	std::string UnlockPerk();
-	void        SetUnlockPerk(std::string a_perk);
-	bool        CrusaderOn();
-	void        SetCrusaderOn(bool a_on);
-	bool        KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
-	void        SetKeepStrangeRunes(bool a_on);
-	bool        StrangeRunesLoaded();
-	void        WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
-	bool        EveryWard();
-	void        SetEveryWard(bool a_on);
-	bool        ModOn(std::string_view a_plugin);
-	void        SetModOn(std::string_view a_plugin, bool a_on);
-	std::optional<Color> RowColor(std::size_t a_row);  // what the row wears now; nothing = Vanilla
-	int         StopPercent(std::size_t a_rank);       // where a rank sits on the ladder, 0 white - 100 the color
+	int                  CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
+	void                 SetCastingGlow(int a_percent);
+	float                HandDim();  // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
+	bool                 Dome360();
+	void                 SetDome360(bool a_on);
+	bool                 WardLightOn();
+	void                 SetWardLightOn(bool a_on);
+	bool                 ColoredLightsOn();
+	void                 SetColoredLightsOn(bool a_on);
+	Unlock               UnlockRule();
+	void                 SetUnlockRule(Unlock a_rule);
+	std::string          UnlockPerk();
+	void                 SetUnlockPerk(std::string a_perk);
+	bool                 CrusaderOn();
+	void                 SetCrusaderOn(bool a_on);
+	bool                 KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
+	void                 SetKeepStrangeRunes(bool a_on);
+	bool                 StrangeRunesLoaded();
+	void                 WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
+	bool                 EveryWard();
+	void                 SetEveryWard(bool a_on);
+	bool                 ModOn(std::string_view a_plugin);
+	void                 SetModOn(std::string_view a_plugin, bool a_on);
+	std::optional<Color> RowColor(std::size_t a_row);      // what the row wears now; nothing = Vanilla
+	int                  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
 	// cached model every copy is cloned from
 	void        RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
 	bool        ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
-	void        LiveRecolor();  // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
+	void        LiveRecolor();                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	std::string ColorsReport();
 
 	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
@@ -190,7 +190,7 @@ namespace Plugin
 	RE::TESObjectLIGH* HandLightFor(std::size_t a_row);
 	bool               IsOurHandLight(const RE::TESObjectLIGH* a_light);
 	std::string        LightingReport();
-	std::string        ModelKey(std::string_view a_model);  // lower case, back slashes, under the meshes folder
+	std::string        ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
 	RE::NiColor        LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
 
 	// DomeLights.cpp: the colored light on each dome, and the hand lights (every pick)
@@ -209,14 +209,14 @@ namespace Plugin
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
 
-	std::string  Lower(std::string_view a_text);
-	bool         Contains(std::string_view a_haystack, std::string_view a_needle);
-	std::string  Where(const RE::TESForm* a_form);
-	std::string  JsonEscape(std::string_view a_text);
-	RE::TESForm* ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
-	std::string  FormText(const RE::TESForm* a_form);
-	std::string  HexColor(Color a_color);               // "2468FF"
+	std::string          Lower(std::string_view a_text);
+	bool                 Contains(std::string_view a_haystack, std::string_view a_needle);
+	std::string          Where(const RE::TESForm* a_form);
+	std::string          JsonEscape(std::string_view a_text);
+	RE::TESForm*         ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
+	std::string          FormText(const RE::TESForm* a_form);
+	std::string          HexColor(Color a_color);  // "2468FF"
 	std::optional<Color> ParseColor(std::string_view a_text);
-	Color        Mix(Color a_from, Color a_to, int a_percent);
-	void         Later(std::function<void()> a_job);  // onto the game's main thread (the menu draws off it)
+	Color                Mix(Color a_from, Color a_to, int a_percent);
+	void                 Later(std::function<void()> a_job);  // onto the game's main thread (the menu draws off it)
 }

@@ -60,18 +60,18 @@ namespace Plugin
 
 		constexpr const char*   k360Plugin = "360 Ward.esp";
 		constexpr const char*   k360Patch = "360WardUniversalPatchSKSE.dll";  // 360 Ward Universal Patch SKSE: the 360 dome needs both
-		constexpr std::uint32_t k360Flash = 0x000803;  // WardShieldHit
+		constexpr std::uint32_t k360Flash = 0x000803;                         // WardShieldHit
 
 		constexpr const char*   kLookDir = "magic\\Dynamic Wards\\";
-		constexpr const char*   kLightsGlobal = "DynamicWardsLights";     // the dome lights (Colored ward lights)
-		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";    // the hand light (Ward casting light)
-		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";   // always 1: the light mods' ward lights step down
-		constexpr std::uint32_t kArtChanged = 'DWAC';  // to RELight - Spell Addon: casting art moved, find the hand lights again
+		constexpr const char*   kLightsGlobal = "DynamicWardsLights";    // the dome lights (Colored ward lights)
+		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";   // the hand light (Ward casting light)
+		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";  // always 1: the light mods' ward lights step down
+		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight - Spell Addon: casting art moved, find the hand lights again
 
 		struct Art
 		{
 			RE::BGSArtObject*       hand = nullptr;
-			RE::BGSArtObject*       dome = nullptr;     // the vanilla-shaped dome; also the 360 dome while it is locked
+			RE::BGSArtObject*       dome = nullptr;  // the vanilla-shaped dome; also the 360 dome while it is locked
 			RE::BGSArtObject*       dome360 = nullptr;
 			RE::BGSReferenceEffect* flash = nullptr;
 		};
@@ -103,27 +103,27 @@ namespace Plugin
 			std::size_t art = 0, light = 0, shield = 0;
 		};
 
-		std::mutex              gLock;
-		std::array<Art, kRows>  gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
-		RE::TESGlobal*          gLightsGlobal = nullptr;
-		RE::TESGlobal*          gHandGlobal = nullptr;
-		RE::TESGlobal*          gPresentGlobal = nullptr;
-		bool                    gLightPlacer = false;
-		RE::BGSArtObject*       gEmpty = nullptr;
-		RE::BGSReferenceEffect* gNoFlash = nullptr;
-		std::vector<Target>     gTargets;
-		std::size_t             gSkipped = 0;
-		bool                    gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch: the only way the 360 dome is used
-		bool                    gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
-		bool                    gUnlocked = true;
-		std::size_t             gDressed = 0;
+		std::mutex                                                       gLock;
+		std::array<Art, kRows>                                           gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
+		RE::TESGlobal*                                                   gLightsGlobal = nullptr;
+		RE::TESGlobal*                                                   gHandGlobal = nullptr;
+		RE::TESGlobal*                                                   gPresentGlobal = nullptr;
+		bool                                                             gLightPlacer = false;
+		RE::BGSArtObject*                                                gEmpty = nullptr;
+		RE::BGSReferenceEffect*                                          gNoFlash = nullptr;
+		std::vector<Target>                                              gTargets;
+		std::size_t                                                      gSkipped = 0;
+		bool                                                             gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch: the only way the 360 dome is used
+		bool                                                             gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
+		bool                                                             gUnlocked = true;
+		std::size_t                                                      gDressed = 0;
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> gShields;
-		RE::EnchantmentItem*    gCrusaderEnch = nullptr;
-		std::string             gLastApply = "never";
-		std::string             gFlashTemplate = "none";
-		std::array<const Art*, kRows> gRowArt{};  // what each row wears now, resolved once per apply
-		std::unordered_map<const RE::EffectSetting*, std::size_t> gTargetOf;  // effect -> gTargets index
-		std::unordered_set<const RE::BGSArtObject*> gOurs;  // every art object made here: a slot holding one was dressed by us
+		RE::EnchantmentItem*                                             gCrusaderEnch = nullptr;
+		std::string                                                      gLastApply = "never";
+		std::string                                                      gFlashTemplate = "none";
+		std::array<const Art*, kRows>                                    gRowArt{};  // what each row wears now, resolved once per apply
+		std::unordered_map<const RE::EffectSetting*, std::size_t>        gTargetOf;  // effect -> gTargets index
+		std::unordered_set<const RE::BGSArtObject*>                      gOurs;      // every art object made here: a slot holding one was dressed by us
 
 		// loaded, not merely present: LookupModByName also finds a plugin that is installed but not enabled
 		bool Loaded(RE::TESDataHandler* a_dh, std::string_view a_name)
@@ -164,7 +164,10 @@ namespace Plugin
 
 		std::size_t RankRow(std::int32_t a_skill)
 		{
-			return a_skill >= 100 ? 4 : a_skill >= 75 ? 3 : a_skill >= 50 ? 2 : a_skill >= 25 ? 1 : 0;
+			return a_skill >= 100 ? 4 : a_skill >= 75 ? 3 :
+			                        a_skill >= 50     ? 2 :
+			                        a_skill >= 25     ? 1 :
+			                                            0;
 		}
 
 		bool Unlocked()
@@ -314,7 +317,7 @@ namespace Plugin
 			if (!policy || !player) {
 				return false;
 			}
-			const auto handle = policy->GetHandleForObject(RE::FormType::ActorCharacter, player);
+			const auto                                               handle = policy->GetHandleForObject(RE::FormType::ActorCharacter, player);
 			RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new AfterCall(std::move(a_then)) };
 			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
 		}
@@ -398,7 +401,9 @@ namespace Plugin
 			++made;
 		}
 		SKSE::log::info("art: {} row(s) made, {} missing; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made, missing,
-			gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" : "not loaded", gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
+			gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
+																 "not loaded",
+			gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
 
@@ -435,7 +440,7 @@ namespace Plugin
 			}
 			auto&      d = eff->data;
 			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-					Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
+				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
@@ -466,7 +471,7 @@ namespace Plugin
 			found.push_back(std::move(t));
 		}
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> shields;
-		RE::EnchantmentItem*                                              ench = nullptr;
+		RE::EnchantmentItem*                                             ench = nullptr;
 		if (Loaded(dh, kCrusaderHub) && Loaded(dh, kKnights)) {
 			if ((ench = dh->LookupForm<RE::EnchantmentItem>(kCrusaderEnch, kKnights))) {
 				for (const auto id : kCrusaderShields) {
@@ -511,7 +516,7 @@ namespace Plugin
 					std::size_t swapped = 0;
 					{
 						std::scoped_lock l{ gLock };
-						const bool use360 = gHas360 && Dome360();
+						const bool       use360 = gHas360 && Dome360();
 						for (const auto& t : gTargets) {
 							const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
 							if (!a) {
@@ -650,7 +655,9 @@ namespace Plugin
 		gLastApply = a_why ? a_why : "?";
 		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; unlisted mods {}",
 			gLastApply, dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
-			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" : "360 (locked)", every ? "on" : "off");
+			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" :
+											  "360 (locked)",
+			every ? "on" : "off");
 		WardsApplied(gLastApply.c_str(), gTargets.size(), dressed);  // only hands the numbers to DevBench; takes no lock of ours
 	}
 
@@ -723,9 +730,9 @@ namespace Plugin
 
 	bool PreviewRow(std::size_t a_row, float a_seconds)
 	{
-		auto* player = RE::PlayerCharacter::GetSingleton();
+		auto*            player = RE::PlayerCharacter::GetSingleton();
 		std::scoped_lock l{ gLock };
-		const Art* a = a_row < kRows ? ArtFor(a_row) : nullptr;
+		const Art*       a = a_row < kRows ? ArtFor(a_row) : nullptr;
 		if (!player || !a) {
 			return false;
 		}
@@ -781,7 +788,9 @@ namespace Plugin
 				R"({}{{"effect":"{}","name":"{}","row":"{}","how":"{}","why":"{}","castingArt":"{}","hitEffectArt":"{}","enchantEffectArt":"{}",)"
 				R"("ownCastingArt":"{}","ownHitEffectArt":"{}","light":"{}","ownLight":"{}","takenLight":"{}","dressed":{}}})",
 				wards.empty() ? "" : ",", JsonEscape(Where(t.effect)), JsonEscape(name ? name : ""), t.row < kRows ? kTokens[t.row] : "silent",
-				t.how == How::kTable ? "table" : t.how == How::kFound ? "found" : "silent", JsonEscape(t.why), JsonEscape(ModelOf(d.castingArt)),
+				t.how == How::kTable ? "table" : t.how == How::kFound ? "found" :
+																		"silent",
+				JsonEscape(t.why), JsonEscape(ModelOf(d.castingArt)),
 				JsonEscape(ModelOf(d.hitEffectArt)), JsonEscape(ModelOf(d.enchantEffectArt)), JsonEscape(ModelOf(t.ownCast)),
 				JsonEscape(ModelOf(t.ownHit)), lightId(d.light), lightId(t.ownLight), lightId(t.takenLight), Worn(t) != nullptr);
 		}

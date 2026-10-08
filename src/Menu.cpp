@@ -22,8 +22,8 @@ namespace Plugin
 	namespace
 	{
 		using namespace ImGuiMCP;
-		using Translation::T;
 		using Translation::Fill;
+		using Translation::T;
 #define TR_MARK(x) x  // a line Translation.json carries, though it is not written inside T( ) here
 
 		using MenuStyle::Header;
@@ -130,7 +130,7 @@ namespace Plugin
 				SetLadderColor(ladder);
 				LiveRecolor();
 			}
-			int stages = LadderStages() - kMinStages;
+			int         stages = LadderStages() - kMinStages;
 			const char* stageNames[] = { T("3 stages"), T("4 stages"), T("5 stages") };
 			SetNextItemWidth(160.0f);
 			if (Combo(T("Ladder stages"), &stages, stageNames, kMaxStages - kMinStages + 1)) {
@@ -139,7 +139,7 @@ namespace Plugin
 			}
 			SetItemTooltip("%s",
 				T("3: Lesser, Steadfast and Greater each a step. 4 or 5: Expert and Master wards (magic overhauls) get steps of "
-				"their own, so a Greater ward stops short of the full color."));
+				  "their own, so a Greater ward stops short of the full color."));
 			SameLine();
 			bool reversed = LadderReversed();
 			if (Checkbox(T("Reverse the ladder"), &reversed)) {
@@ -153,8 +153,8 @@ namespace Plugin
 			if (CollapsingHeader(T("Each ward"), ImGuiTreeNodeFlags_DefaultOpen)) {
 				for (std::size_t i = 0; i < kRows; ++i) {
 					PushID(static_cast<int>(i));
-					int         mode = static_cast<int>(RowModeOf(i));
-					const auto  shown = RowColor(i);
+					int        mode = static_cast<int>(RowModeOf(i));
+					const auto shown = RowColor(i);
 					ColorButton("##now", shown ? Vec(*shown) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 					SameLine();
 					const std::string first = i < kRanks ? std::string(T("Ladder")) : std::string(T("Default"));
@@ -229,11 +229,11 @@ namespace Plugin
 					}
 					SetItemTooltip("%s",
 						T("Until then your wards use the normal dome in their own color. The ward's blocking is set by Perfectly "
-						"Valid Wards, not here."));
+						  "Valid Wards, not here."));
 					if (UnlockRule() == Unlock::kPerk) {
 						static std::vector<std::pair<std::string, std::string>> perks = WardPerks();
-						const auto  cur = UnlockPerk();
-						std::string preview = cur.empty() ? std::string(T("(pick a perk)")) : cur;
+						const auto                                              cur = UnlockPerk();
+						std::string                                             preview = cur.empty() ? std::string(T("(pick a perk)")) : cur;
 						for (const auto& [id, name] : perks) {
 							if (id == cur) {
 								preview = name;
@@ -347,7 +347,7 @@ namespace Plugin
 				}
 				SetItemTooltip("%s",
 					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
-					"Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
+					  "Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
 			}
 			if (CrusaderAvailable()) {
 				Separator();
@@ -358,7 +358,7 @@ namespace Plugin
 				}
 				SetItemTooltip("%s",
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
-					"also take that ward's strength instead of Spellbreaker's."));
+					  "also take that ward's strength instead of Spellbreaker's."));
 			}
 		}
 	}

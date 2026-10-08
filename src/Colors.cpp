@@ -29,21 +29,21 @@ namespace Plugin
 {
 	namespace
 	{
-		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
-		constexpr float       kSatFloor = 0.25f;  // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
-		constexpr float       kHueHold = 0.50f;   // wardgen HUE_HOLD: green and blue keep at least this much hue
+		constexpr const char*   kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
+		constexpr float         kSatFloor = 0.25f;             // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
+		constexpr float         kHueHold = 0.50f;              // wardgen HUE_HOLD: green and blue keep at least this much hue
 		constexpr std::uint64_t kMaxPalettePixels = 1u << 20;  // 64x the largest shipped palette
-		constexpr float       kSpriteSat = 0.75f; // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
+		constexpr float         kSpriteSat = 0.75f;            // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
-		constexpr float       kHandCore = 1.0f;
+		constexpr float kHandCore = 1.0f;
 		// a DOME on the Vanilla lighting pick: at least this far toward the ward's colour (his report 2026-10-05: on the vanilla
 		// profiles the domes are "too washed out" beside the casting art, most of all blue). 0.5 was still washed out beside the
 		// hand (his screenshot, same day, LTBG - Vanilla, normal dome): tinted as fully as the hand.
-		constexpr float       kDomeCoreVanilla = 1.0f;
+		constexpr float kDomeCoreVanilla = 1.0f;
 		// the NORMAL dome (not the 360 sphere) on EVERY lighting pick (his report 2026-10-06: "the vanilla wards are still too
 		// washed out and need more saturation to match the casting art"; his pick: the normal dome, every lighting)
-		constexpr float       kNormalDomeCore = 1.0f;
+		constexpr float kNormalDomeCore = 1.0f;
 
 		struct Source
 		{
@@ -55,12 +55,12 @@ namespace Plugin
 
 		struct Palette
 		{
-			std::string                       path;  // as the material names it
-			std::string                       stem;
+			std::string                        path;  // as the material names it
+			std::string                        stem;
 			RE::NiPointer<RE::NiSourceTexture> tex;
-			Color                             applied = 0xFFFFFFFF;
-			bool                              hand = false;  // named by the hand art (wardinhandfx): tinted to its core
-			bool                              normalDome = false;  // named by the normal dome (wardbodyfx, not 360): tinted to its core
+			Color                              applied = 0xFFFFFFFF;
+			bool                               hand = false;        // named by the hand art (wardinhandfx): tinted to its core
+			bool                               normalDome = false;  // named by the normal dome (wardbodyfx, not 360): tinted to its core
 		};
 
 		struct Block
@@ -69,31 +69,31 @@ namespace Plugin
 			RE::NiColorA                              base;  // as the neutral mesh has it
 			bool                                      palette = false;
 			bool                                      sprite = false;
-			bool                                      fill = false;     // a dome's fill: thinned by the transparency slider
+			bool                                      fill = false;        // a dome's fill: thinned by the transparency slider
 			bool                                      startFaces = false;  // the start angle is the one facing you
-			float                                     facing = 0.0f;    // the fill's own opacity facing you
-			float                                     scale = 1.0f;     // the block's own glow strength (emissive multiple)
+			float                                     facing = 0.0f;       // the fill's own opacity facing you
+			float                                     scale = 1.0f;        // the block's own glow strength (emissive multiple)
 			// a palette block whose emissive alpha is 0: the shader takes its alpha from the palette and the texture, never from
 			// the emissive, so the opacity slider cannot reach it through alpha (the normal dome's vapour layers and flare - his
 			// report 2026-10-05, "the actual flares and second layer both are the same throughout the entire spectrum").
 			// Blended additively (every ward block is SrcAlpha + One), its glow strength scaled is the same thing as its alpha.
-			bool                                      alphaDead = false;
-			bool                                      additive = false;
+			bool alphaDead = false;
+			bool additive = false;
 			// the normal dome's vapour layer 1 (palette row 0.39, both greyscale bits): on Community Shaders a gold or orange ward
 			// wears the baked plain-glow copy instead (kGoldVapour) - Community Shaders shades that block's spikes cream on those hues
-			bool                                      vapourOne = false;
-			bool                                      paletteAlpha = false;
-			RE::NiPointer<RE::NiSourceTexture>        source;
-			RE::BSFixedString                         sourcePath;
+			bool                               vapourOne = false;
+			bool                               paletteAlpha = false;
+			RE::NiPointer<RE::NiSourceTexture> source;
+			RE::BSFixedString                  sourcePath;
 		};
 
 		struct Master
 		{
-			std::string                 model;
-			RE::NiPointer<RE::NiNode>   root;
-			std::vector<Block>          blocks;
-			std::size_t                 controllersOff = 0;
-			bool                        hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
+			std::string               model;
+			RE::NiPointer<RE::NiNode> root;
+			std::vector<Block>        blocks;
+			std::size_t               controllersOff = 0;
+			bool                      hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
 		};
 
 		struct Row
@@ -111,23 +111,23 @@ namespace Plugin
 
 		struct Grave
 		{
-			REX::W32::ID3D11Resource*           tex;
-			REX::W32::ID3D11ShaderResourceView* srv;
+			REX::W32::ID3D11Resource*             tex;
+			REX::W32::ID3D11ShaderResourceView*   srv;
 			std::chrono::steady_clock::time_point at;
 		};
 
-		std::mutex                     gLock;
-		std::array<Row, kRows>         gRows;
-		std::map<std::string, Source>  gSources;
-		std::vector<Grave>             gGrave;
-		std::size_t                    gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0, gLiveDomes = 0;
-		std::string                    gLastProblem = "none";
+		std::mutex                    gLock;
+		std::array<Row, kRows>        gRows;
+		std::map<std::string, Source> gSources;
+		std::vector<Grave>            gGrave;
+		std::size_t                   gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0, gLiveDomes = 0;
+		std::string                   gLastProblem = "none";
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
 		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
-		constexpr const char*          kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
+		constexpr const char*              kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
 		RE::NiPointer<RE::NiSourceTexture> gGoldVapour;
-		bool                           gGoldVapourTried = false;
-		std::size_t                    gGoldVapourBlocks = 0;
+		bool                               gGoldVapourTried = false;
+		std::size_t                        gGoldVapourBlocks = 0;
 
 		float Sat(float a_b, float a_g, float a_r)
 		{
@@ -180,7 +180,7 @@ namespace Plugin
 			if (s.ok || s.w < 0) {
 				return s;
 			}
-			std::ifstream in(std::string(kPaletteDir) + a_stem + ".dds", std::ios::binary);
+			std::ifstream             in(std::string(kPaletteDir) + a_stem + ".dds", std::ios::binary);
 			std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 			if (raw.size() < 128 || std::memcmp(raw.data(), "DDS ", 4) != 0) {
 				s.w = -1;
@@ -229,11 +229,11 @@ namespace Plugin
 		// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's
 		std::vector<std::uint8_t> Retint(const Source& a_s, Color a_c, float a_floor)
 		{
-			const float m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
-			const float tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
-			const bool  curve = a_s.sref >= kSatFloor;
-			const float tsat = Sat(static_cast<float>(a_c & 0xFF), static_cast<float>((a_c >> 8) & 0xFF), static_cast<float>((a_c >> 16) & 0xFF));
-			const bool  hold = HoldsHue(a_c);
+			const float               m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
+			const float               tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
+			const bool                curve = a_s.sref >= kSatFloor;
+			const float               tsat = Sat(static_cast<float>(a_c & 0xFF), static_cast<float>((a_c >> 8) & 0xFF), static_cast<float>((a_c >> 16) & 0xFF));
+			const bool                hold = HoldsHue(a_c);
 			std::vector<std::uint8_t> out(a_s.bgra.size());
 			for (std::size_t i = 0; i + 3 < a_s.bgra.size(); i += 4) {
 				const float b = a_s.bgra[i], g = a_s.bgra[i + 1], r = a_s.bgra[i + 2];
@@ -268,13 +268,15 @@ namespace Plugin
 				return false;
 			}
 			// the mip chain, box-filtered down to 1x1
-			const float core = a_p.hand ? kHandCore : a_p.normalDome ? kNormalDomeCore : LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla : 0.0f;
+			const float                            core = a_p.hand ? kHandCore : a_p.normalDome                   ? kNormalDomeCore :
+			                                                                 LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla :
+			                                                                                                        0.0f;
 			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, core) };
 			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
 			while (sizes.back().first > 1 || sizes.back().second > 1) {
 				const auto [pw, ph] = sizes.back();
-				const int  w = (std::max)(1, pw / 2), h = (std::max)(1, ph / 2);
-				const auto& prev = mips.back();
+				const int                 w = (std::max)(1, pw / 2), h = (std::max)(1, ph / 2);
+				const auto&               prev = mips.back();
 				std::vector<std::uint8_t> next(static_cast<std::size_t>(w) * h * 4);
 				for (int y = 0; y < h; ++y) {
 					for (int x = 0; x < w; ++x) {
@@ -367,8 +369,8 @@ namespace Plugin
 					}
 					// a palette block both says so AND names a palette: the ENB build's hand wisps keep the flag with no palette
 					// (Particle Patch's fix, so ENB does not make each wisp a light) and their color is still their emissive
-					const bool named = mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str();
-					Block b{ RE::NiPointer<RE::BSEffectShaderProperty>(prop), mat->baseColor,
+					const bool        named = mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str();
+					Block             b{ RE::NiPointer<RE::BSEffectShaderProperty>(prop), mat->baseColor,
 						named && prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
 					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
@@ -468,7 +470,8 @@ namespace Plugin
 				sv = mx;
 				ss = mx <= 0 ? 0 : dd / mx;
 				if (dd > 0) {
-					sh = mx == r ? std::fmod((g - b) / dd, 6.0f) : mx == g ? (b - r) / dd + 2.0f : (r - g) / dd + 4.0f;
+					sh = mx == r ? std::fmod((g - b) / dd, 6.0f) : mx == g ? (b - r) / dd + 2.0f :
+					                                                         (r - g) / dd + 4.0f;
 					sh = sh < 0 ? sh + 6.0f : sh;
 				}
 			}
@@ -477,12 +480,24 @@ namespace Plugin
 				const float c = a_s, x = c * (1 - std::fabs(std::fmod(a_h, 2.0f) - 1)), mm = 1 - c;
 				float       rr = 0, gg = 0, bb = 0;
 				switch (static_cast<int>(a_h) % 6) {
-				case 0: rr = c, gg = x; break;
-				case 1: rr = x, gg = c; break;
-				case 2: gg = c, bb = x; break;
-				case 3: gg = x, bb = c; break;
-				case 4: rr = x, bb = c; break;
-				default: rr = c, bb = x; break;
+				case 0:
+					rr = c, gg = x;
+					break;
+				case 1:
+					rr = x, gg = c;
+					break;
+				case 2:
+					gg = c, bb = x;
+					break;
+				case 3:
+					gg = x, bb = c;
+					break;
+				case 4:
+					rr = x, bb = c;
+					break;
+				default:
+					rr = c, bb = x;
+					break;
 				}
 				return RE::NiColor{ rr + mm, gg + mm, bb + mm };
 			};
@@ -637,7 +652,7 @@ namespace Plugin
 			return painted;
 		}
 
-		std::atomic<bool> gLiveQueued{ false };
+		std::atomic<bool>                     gLiveQueued{ false };
 		std::chrono::steady_clock::time_point gLiveLast{};
 	}
 
@@ -666,11 +681,11 @@ namespace Plugin
 
 	bool ApplyColors(bool a_quiet)
 	{
-		const int opacity = Opacity();
-		const int transparency = Transparency();
-		const int brightness = Brightness();
-		const int castingGlow = CastingGlow();
-		bool      changed = false;
+		const int        opacity = Opacity();
+		const int        transparency = Transparency();
+		const int        brightness = Brightness();
+		const int        castingGlow = CastingGlow();
+		bool             changed = false;
 		std::scoped_lock l{ gLock };
 		Bury();
 		for (std::size_t i = 0; i < kRows; ++i) {
