@@ -168,8 +168,9 @@ namespace Plugin
 		// The live effects follow at once, on the player and every actor near her. They are taken off BEFORE the entries are
 		// switched (run 1 of the in-game test, 2026-10-08: refreshed after the switch, Reman's ward ended on the inert copy and
 		// its +20 Ward Power was never taken back - an effect must end on the base effect it started on): a shield's enchantment
-		// effect is dispelled (off: the ward is gone; on: the inert one goes and the ward comes back the next time the shield is
-		// equipped), an ability is taken off and, once the entries are switched, given back (rebuilt from its entries now).
+		// effect is dispelled (off: the ward is gone; on: the inert one goes, and since 2026-10-10 the worn shield is given its
+		// ward again at once - Apply), an ability is taken off and, once the entries are switched, given back (rebuilt from its
+		// entries now).
 		std::vector<RE::Actor*> ShieldActors()
 		{
 			std::vector<RE::Actor*> out;
@@ -802,12 +803,37 @@ namespace Plugin
 		for (const auto& [actor, spell] : refresh.giveBack) {
 			givenBack += actor->AddSpell(spell) ? 1 : 0;
 		}
+		// a shield's enchantment ward switched back ON comes back at once on everyone wearing that shield, as switching it off
+		// took it at once (measured 2026-10-10 on an NPC wearing Spellbreaker: on again left him without his ward until the
+		// shield was equipped again) - the game's own equip step for an armor's enchantment, on the worn copy
+		std::unordered_set<const RE::MagicItem*> backOn;
+		for (const auto* s : switched) {
+			if (!s->ability && s->entry->baseEffect == s->ward) {
+				backOn.insert(s->carrier);
+			}
+		}
+		std::size_t reapplied = 0;
+		for (auto* actor : backOn.empty() ? std::vector<RE::Actor*>{} : ShieldActors()) {
+			for (auto& [obj, item] : actor->GetInventory()) {
+				auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
+				auto* entry = item.second.get();
+				if (!armo || !armo->formEnchanting || !backOn.contains(armo->formEnchanting) || !entry || !entry->extraLists) {
+					continue;
+				}
+				for (auto* xl : *entry->extraLists) {
+					if (xl && (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>())) {
+						actor->UpdateArmorAbility(armo, xl);
+						++reapplied;
+					}
+				}
+			}
+		}
 		if (!switched.empty()) {
 			SKSE::log::info(
 				"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "
-				"ability(ies) given back",
+				"ability(ies) given back, {} worn shield(s) given their ward again",
 				switched.size(), ShieldWardOn(kShieldRows[0]) ? "on" : "off", ShieldWardOn(kShieldRows[1]) ? "on" : "off",
-				ShieldWardOn(kShieldRows[2]) ? "on" : "off", refresh.dispelled, givenBack, refresh.giveBack.size());
+				ShieldWardOn(kShieldRows[2]) ? "on" : "off", refresh.dispelled, givenBack, refresh.giveBack.size(), reapplied);
 		}
 		if (gLightsGlobal) {
 			gLightsGlobal->value = ColoredLightsOn() ? 1.0f : 0.0f;
