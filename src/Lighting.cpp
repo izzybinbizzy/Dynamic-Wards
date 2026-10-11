@@ -22,9 +22,12 @@ namespace Plugin
 {
 	namespace
 	{
-		constexpr const char*   kPickPath = "Data/SKSE/Plugins/Dynamic Wards/Lighting.txt";
-		constexpr const char*   kEffects11 = "Data/Shaders/Features/Effects11.ini";
-		constexpr const char*   kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
+		constexpr const char* kPickPath = "Data/SKSE/Plugins/Dynamic Wards/Lighting.txt";
+		constexpr const char* kEffects11 = "Data/Shaders/Features/Effects11.ini";
+		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
+		// a Community Shaders that builds inverse square lights into Light Limit Fix (Bottled Shaders 1.0.10 dropped the
+		// separate shader above): its attenuation reads each light's InverseSquare flag
+		constexpr const char*   kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
 		constexpr const char*   kGame = "Skyrim.esm";
 		constexpr std::uint32_t kWardLight = 0x02F3EF;  // MagicLightWardHand01, the light every vanilla ward casts with
 
@@ -43,6 +46,17 @@ namespace Plugin
 		constexpr std::uint32_t kPlainRadius = 178;
 		constexpr float         kPlainFade = 1.14f;
 
+		bool IslInstalled()
+		{
+			std::error_code ec;
+			if (std::filesystem::exists(kIslShader, ec)) {
+				return true;
+			}
+			std::ifstream     in(kLlfAttenuation, std::ios::binary);
+			const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+			return text.find("InverseSquare") != std::string::npos;
+		}
+
 		Lighting ReadPick()
 		{
 			std::ifstream in(kPickPath);
@@ -58,7 +72,7 @@ namespace Plugin
 			}
 			// no pick: look at the game
 			std::error_code ec;
-			if (std::filesystem::exists(kIslShader, ec)) {
+			if (IslInstalled()) {
 				return Lighting::kShaders;
 			}
 			return std::filesystem::exists("enbseries.ini", ec) || std::filesystem::exists("enblocal.ini", ec) ? Lighting::kEnb : Lighting::kVanilla;
@@ -89,7 +103,7 @@ namespace Plugin
 		std::scoped_lock l{ gLock };
 		gPick = ReadPick();
 		gE11 = std::filesystem::exists(kEffects11);
-		gIsl = std::filesystem::exists(kIslShader);
+		gIsl = IslInstalled();
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {}", kNames[static_cast<int>(gPick.load())],
 			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
