@@ -360,7 +360,8 @@ namespace Plugin
 					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
 					  "Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
 			}
-			// his order 2026-10-08: one switch per shield; off = blocking with that shield raises no ward at all
+			// his order 2026-10-08: one switch per shield; off = blocking with that shield raises no ward at all. His yes
+			// 2026-10-12: the switch is a pick - Off, Normal dome, 360 dome (a user wanted the 360 sphere on his spell wards only)
 			bool shieldsShown = false;
 			for (const auto row : kShieldRows) {
 				if (!ShieldFound(row)) {
@@ -371,14 +372,20 @@ namespace Plugin
 					shieldsShown = true;
 				}
 				PushID(static_cast<int>(row));
-				bool on = ShieldWardOn(row);
-				if (Checkbox(Fill(T("{} raises a ward"), std::string(T(kRowLabel[row]))).c_str(), &on)) {
-					SetShieldWardOn(row, on);
+				const bool  has360 = Has360Ward();
+				int         pick = static_cast<int>(ShieldDomeOf(row));
+				const char* picks[] = { T("Off"), T("Normal dome"), T("360 dome") };
+				if (!has360 && pick == static_cast<int>(ShieldDome::k360)) {
+					pick = static_cast<int>(ShieldDome::kNormal);  // shown as what it wears without 360 Ward
+				}
+				SetNextItemWidth(160.0f);
+				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, has360 ? 3 : 2)) {
+					SetShieldDome(row, static_cast<ShieldDome>(pick));
 					Changed();
 				}
 				SetItemTooltip("%s",
-					T("Off: blocking with this shield raises no ward at all. Turned off, the ward goes at once; turned back on, it "
-					  "returns the next time the shield is equipped."));
+					T("Off: blocking with this shield raises no ward at all. Normal dome or 360 dome: the dome this shield's ward "
+					  "wears, in its own color, whatever your spell wards wear. The 360 dome needs 360 Ward and follows its unlock."));
 				PopID();
 			}
 			if (CrusaderAvailable()) {
