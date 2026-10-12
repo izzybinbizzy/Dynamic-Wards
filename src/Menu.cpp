@@ -230,7 +230,11 @@ namespace Plugin
 					SetDome360(dome == 0);
 					Changed();
 				}
-				if (Dome360()) {
+				// the unlock also rules a shield's 360 pick, so it shows when any ward wants the 360 dome (CodeRabbit, 2026-10-12)
+				const bool any360 = Dome360() || std::ranges::any_of(kShieldRows, [](std::size_t a_row) {
+					return ShieldFound(a_row) && ShieldDomeOf(a_row) == ShieldDome::k360;
+				});
+				if (any360) {
 					int         rule = static_cast<int>(UnlockRule());
 					const char* rules[] = { T("Always"), T("Restoration 50"), T("Restoration 75"), T("Restoration 100"), T("A perk") };
 					SetNextItemWidth(160.0f);

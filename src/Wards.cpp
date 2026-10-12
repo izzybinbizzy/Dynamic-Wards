@@ -847,7 +847,8 @@ namespace Plugin
 		if (!switched.empty()) {
 			const auto pick = [](std::size_t a_row) {
 				const auto d = ShieldDomeOf(a_row);
-				return d == ShieldDome::kOff ? "off" : d == ShieldDome::k360 ? "360 dome" : "normal dome";
+				return d == ShieldDome::kOff ? "off" : d == ShieldDome::k360 ? "360 dome" :
+				                                                               "normal dome";
 			};
 			SKSE::log::info(
 				"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "

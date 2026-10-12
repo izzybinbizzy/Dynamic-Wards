@@ -44,7 +44,8 @@ namespace Plugin
 
 		const char* ShieldDomeName(int a_dome)
 		{
-			return a_dome == static_cast<int>(ShieldDome::kOff) ? "off" : a_dome == static_cast<int>(ShieldDome::k360) ? "360 dome" : "normal dome";
+			return a_dome == static_cast<int>(ShieldDome::kOff) ? "off" : a_dome == static_cast<int>(ShieldDome::k360) ? "360 dome" :
+			                                                                                                             "normal dome";
 		}
 
 		std::size_t ShieldIndex(std::size_t a_row)
@@ -137,8 +138,8 @@ namespace Plugin
 
 	void LoadSettings()
 	{
-		std::ifstream    in(kPath);
-		std::string      line, section;
+		std::ifstream                       in(kPath);
+		std::string                         line, section;
 		std::size_t                         read = 0;
 		bool                                old = false;
 		std::array<int, kShieldRows.size()> oldSwitch{ -1, -1, -1 };  // the 2026-10-08 on / off keys, when the file still has them
@@ -230,7 +231,7 @@ namespace Plugin
 		for (std::size_t i = 0; i < gShieldDome.size(); ++i) {
 			if (gShieldDome[i] < 0) {
 				gShieldDome[i] = static_cast<int>(oldSwitch[i] == 0 ? ShieldDome::kOff : gDome == 0 ? ShieldDome::k360 :
-				                                                                                         ShieldDome::kNormal);
+																									  ShieldDome::kNormal);
 			}
 		}
 		SKSE::log::info(
