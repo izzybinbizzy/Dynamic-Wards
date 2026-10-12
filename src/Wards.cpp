@@ -170,12 +170,6 @@ namespace Plugin
 			return (gHas360 && want360 && gUnlocked && a_art->dome360) ? a_art->dome360 : a_art->dome;
 		}
 
-		// any ward wants the 360 dome now (the unlock is only worth re-reading then)
-		bool Any360Wanted()
-		{
-			return Dome360() || std::ranges::any_of(kShieldRows, [](std::size_t a_row) { return ShieldDomeOf(a_row) == ShieldDome::k360; });
-		}
-
 		// the ward a shield-row entry raises now: the ward, or its inert copy while that shield's switch is off
 		RE::EffectSetting* ShieldWant(const ShieldEntry& a_s)
 		{

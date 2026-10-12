@@ -168,6 +168,7 @@ namespace Plugin
 	void                 SetCrusaderOn(bool a_on);
 	bool                 ShieldWardOn(std::size_t a_row);  // a kShieldRows row: off = the shield raises no ward at all
 	ShieldDome           ShieldDomeOf(std::size_t a_row);  // a kShieldRows row: off, the normal dome or the 360 dome
+	bool                 Any360Wanted();                   // the Dome pick or any shield's pick asks for the 360 dome (the unlock matters)
 	void                 SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                 KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
 	void                 SetKeepStrangeRunes(bool a_on);

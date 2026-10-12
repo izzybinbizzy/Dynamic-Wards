@@ -455,6 +455,10 @@ namespace Plugin
 		const int d = gShieldDome[i] >= 0 ? gShieldDome[i] : (gDome == 0 ? static_cast<int>(ShieldDome::k360) : static_cast<int>(ShieldDome::kNormal));
 		return static_cast<ShieldDome>(d);
 	}
+	bool Any360Wanted()
+	{
+		return Dome360() || std::ranges::any_of(kShieldRows, [](std::size_t a_row) { return ShieldDomeOf(a_row) == ShieldDome::k360; });
+	}
 	bool ShieldWardOn(std::size_t a_row)
 	{
 		return ShieldDomeOf(a_row) != ShieldDome::kOff;
