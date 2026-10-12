@@ -20,7 +20,8 @@ namespace Plugin
 		"Crusader", "Reman", "Vampire" };
 	inline constexpr std::size_t      kRows = std::size(kTokens);
 	inline constexpr std::size_t      kRanks = 5;
-	// the rows a worn shield raises (Spellbreaker, the Crusader shields, Reman's): each has its own on/off (his order 2026-10-08)
+	// the rows a worn shield raises (Spellbreaker, the Crusader shields, Reman's): each has its own pick - off, the normal dome
+	// or the 360 dome (ShieldDome; his order 2026-10-08 made it on / off, his yes 2026-10-12 added the dome)
 	inline constexpr std::array<std::size_t, 3> kShieldRows{ 5, 6, 7 };
 
 	// colors are 0xRRGGBB; the ladder runs from white to one color
@@ -93,6 +94,16 @@ namespace Plugin
 		kPerk = 4,
 	};
 
+	// what one shield's ward does (his yes 2026-10-12, a user report: the Spellbreaker ward should not have to wear the 360
+	// sphere while the spell wards do): no ward, the normal dome, or the 360 dome (needs 360 Ward + its Universal Patch, and
+	// the 360 unlock) - each in that shield's color. Was an on / off switch (2026-10-08).
+	enum class ShieldDome : int
+	{
+		kOff = 0,
+		kNormal = 1,
+		k360 = 2,
+	};
+
 	// Wards.cpp: which effects are wards, and what each wears
 	void                                             MakeArt();                       // data load: each row's neutral art, in memory
 	void                                             FindWards();                     // data load: every ward, by the 1.0 table and by what it is
@@ -156,7 +167,9 @@ namespace Plugin
 	bool                 CrusaderOn();
 	void                 SetCrusaderOn(bool a_on);
 	bool                 ShieldWardOn(std::size_t a_row);  // a kShieldRows row: off = the shield raises no ward at all
-	void                 SetShieldWardOn(std::size_t a_row, bool a_on);
+	ShieldDome           ShieldDomeOf(std::size_t a_row);  // a kShieldRows row: off, the normal dome or the 360 dome
+	bool                 Any360Wanted();                   // the Dome pick or any shield's pick asks for the 360 dome (the unlock matters)
+	void                 SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                 KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
 	void                 SetKeepStrangeRunes(bool a_on);
 	bool                 StrangeRunesLoaded();

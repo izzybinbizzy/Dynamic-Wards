@@ -37,8 +37,16 @@ namespace Plugin
 		bool                                     gEvery = true;
 		bool                                     gKeepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
 		std::map<std::string, bool, std::less<>> gMods;               // [Compatibility] plugin=0/1, lowercased; missing = gEvery
-		// his order 2026-10-08: one switch per shield; off = that shield raises no ward at all (Spellbreaker, Crusader, Reman)
-		std::array<bool, kShieldRows.size()> gShieldWard{ true, true, true };
+		// his order 2026-10-08: one switch per shield; off = that shield raises no ward at all (Spellbreaker, Crusader, Reman).
+		// His yes 2026-10-12: the switch became a pick - off, the normal dome, the 360 dome. -1 = not in the file: LoadSettings
+		// gives it what the old switch meant (on = the dome the spell wards wear).
+		std::array<int, kShieldRows.size()> gShieldDome{ -1, -1, -1 };
+
+		const char* ShieldDomeName(int a_dome)
+		{
+			return a_dome == static_cast<int>(ShieldDome::kOff) ? "off" : a_dome == static_cast<int>(ShieldDome::k360) ? "360 dome" :
+			                                                                                                             "normal dome";
+		}
 
 		std::size_t ShieldIndex(std::size_t a_row)
 		{
@@ -47,7 +55,11 @@ namespace Plugin
 		}
 		std::string ShieldKey(std::size_t a_row)
 		{
-			return std::format("{}Ward", kTokens[a_row]);  // SpellbreakerWard, CrusaderWard, RemanWard
+			return std::format("{}Ward", kTokens[a_row]);  // SpellbreakerWard, CrusaderWard, RemanWard: the 2026-10-08 on / off (kept for older versions)
+		}
+		std::string ShieldDomeKey(std::size_t a_row)
+		{
+			return std::format("{}Dome", kTokens[a_row]);  // SpellbreakerDome, CrusaderDome, RemanDome: 0 off, 1 normal dome, 2 360 dome
 		}
 
 		std::string Trim(std::string s)
@@ -126,11 +138,12 @@ namespace Plugin
 
 	void LoadSettings()
 	{
-		std::ifstream    in(kPath);
-		std::string      line, section;
-		std::size_t      read = 0;
-		bool             old = false;
-		std::scoped_lock l{ gLock };
+		std::ifstream                       in(kPath);
+		std::string                         line, section;
+		std::size_t                         read = 0;
+		bool                                old = false;
+		std::array<int, kShieldRows.size()> oldSwitch{ -1, -1, -1 };  // the 2026-10-08 on / off keys, when the file still has them
+		std::scoped_lock                    l{ gLock };
 		while (in && std::getline(in, line)) {
 			line = Trim(line);
 			if (line.empty() || line[0] == ';' || line[0] == '#') {
@@ -192,7 +205,9 @@ namespace Plugin
 				} else {
 					for (const auto row : kShieldRows) {
 						if (key == ShieldKey(row)) {
-							gShieldWard[ShieldIndex(row)] = v != 0;
+							oldSwitch[ShieldIndex(row)] = v != 0 ? 1 : 0;
+						} else if (key == ShieldDomeKey(row)) {
+							gShieldDome[ShieldIndex(row)] = std::clamp(v, 0, 2);
 						}
 					}
 				}
@@ -211,12 +226,20 @@ namespace Plugin
 				}
 			}
 		}
+		// a shield with no pick in the file keeps what its old switch did: off stays off, on (or no line) wears the dome the spell
+		// wards wear
+		for (std::size_t i = 0; i < gShieldDome.size(); ++i) {
+			if (gShieldDome[i] < 0) {
+				gShieldDome[i] = static_cast<int>(oldSwitch[i] == 0 ? ShieldDome::kOff : gDome == 0 ? ShieldDome::k360 :
+																									  ShieldDome::kNormal);
+			}
+		}
 		SKSE::log::info(
 			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 			"Crusader shields {}, every ward {}, shield wards Spellbreaker {} Crusader {} Reman {} ({} line(s) read{})",
 			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gCastingGlow, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
-			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", gShieldWard[0] ? "on" : "off",
-			gShieldWard[1] ? "on" : "off", gShieldWard[2] ? "on" : "off", read, old ? "; a 2.x file, carried over" : "");
+			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", ShieldDomeName(gShieldDome[0]),
+			ShieldDomeName(gShieldDome[1]), ShieldDomeName(gShieldDome[2]), read, old ? "; a 2.x file, carried over" : "");
 	}
 
 	void SaveSettings()
@@ -234,8 +257,10 @@ namespace Plugin
 			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
 			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0);
 		for (const auto row : kShieldRows) {
+			// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
 			out << "\n"
-				<< ShieldKey(row) << "=" << (gShieldWard[ShieldIndex(row)] ? 1 : 0);
+				<< ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)] << "\n"
+				<< ShieldKey(row) << "=" << (gShieldDome[ShieldIndex(row)] != static_cast<int>(ShieldDome::kOff) ? 1 : 0);
 		}
 		out << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {
@@ -420,17 +445,29 @@ namespace Plugin
 			on = a_on;
 		}
 	}
-	bool ShieldWardOn(std::size_t a_row)
+	ShieldDome ShieldDomeOf(std::size_t a_row)
 	{
 		std::scoped_lock l{ gLock };
 		const auto       i = ShieldIndex(a_row);
-		return i >= gShieldWard.size() || gShieldWard[i];
+		if (i >= gShieldDome.size()) {
+			return ShieldDome::kNormal;  // not a shield row
+		}
+		const int d = gShieldDome[i] >= 0 ? gShieldDome[i] : (gDome == 0 ? static_cast<int>(ShieldDome::k360) : static_cast<int>(ShieldDome::kNormal));
+		return static_cast<ShieldDome>(d);
 	}
-	void SetShieldWardOn(std::size_t a_row, bool a_on)
+	bool Any360Wanted()
+	{
+		return Dome360() || std::ranges::any_of(kShieldRows, [](std::size_t a_row) { return ShieldDomeOf(a_row) == ShieldDome::k360; });
+	}
+	bool ShieldWardOn(std::size_t a_row)
+	{
+		return ShieldDomeOf(a_row) != ShieldDome::kOff;
+	}
+	void SetShieldDome(std::size_t a_row, ShieldDome a_dome)
 	{
 		std::scoped_lock l{ gLock };
-		if (const auto i = ShieldIndex(a_row); i < gShieldWard.size()) {
-			gShieldWard[i] = a_on;
+		if (const auto i = ShieldIndex(a_row); i < gShieldDome.size()) {
+			gShieldDome[i] = std::clamp(static_cast<int>(a_dome), 0, 2);
 		}
 	}
 	bool KeepStrangeRunes()

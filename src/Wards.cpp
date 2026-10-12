@@ -159,6 +159,17 @@ namespace Plugin
 			return e;
 		}
 
+		// The dome a row wears now: the 360 dome where the player wants it (the Dome pick for the spell wards, each shield's own
+		// pick for the shield rows - his yes 2026-10-12 after a user report: Spellbreaker kept the 360 sphere while he wanted it
+		// only on his spell wards) and 360 Ward + its Universal Patch are loaded and the 360 dome is unlocked; else the normal
+		// dome. Either is our own art, so the Universal Patch never plays its pulse over it. gLock held.
+		RE::BGSArtObject* DomeOf(std::size_t a_row, const Art* a_art)
+		{
+			const bool shield = std::ranges::find(kShieldRows, a_row) != kShieldRows.end();
+			const bool want360 = shield ? ShieldDomeOf(a_row) == ShieldDome::k360 : Dome360();
+			return (gHas360 && want360 && gUnlocked && a_art->dome360) ? a_art->dome360 : a_art->dome;
+		}
+
 		// the ward a shield-row entry raises now: the ward, or its inert copy while that shield's switch is off
 		RE::EffectSetting* ShieldWant(const ShieldEntry& a_s)
 		{
@@ -663,13 +674,12 @@ namespace Plugin
 					std::size_t swapped = 0;
 					{
 						std::scoped_lock l{ gLock };
-						const bool       use360 = gHas360 && Dome360();
 						for (const auto& t : gTargets) {
 							const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
 							if (!a) {
 								continue;
 							}
-							const auto* dome = (use360 && gUnlocked && a->dome360) ? a->dome360 : a->dome;
+							const auto* dome = DomeOf(t.row, a);
 							const bool  table = t.how == How::kTable;
 							if (((table || t.castWard) && t.effect->data.castingArt != a->hand) || ((table || t.hitWard) && t.effect->data.hitEffectArt != dome)) {
 								++swapped;
@@ -713,7 +723,7 @@ namespace Plugin
 				Restore(d.enchantEffectArt, t.ownEnch, c.art);
 				continue;
 			}
-			RE::BGSArtObject* dome = (use360 && gUnlocked && a->dome360) ? a->dome360 : a->dome;
+			RE::BGSArtObject* dome = DomeOf(t.row, a);
 			const bool        table = t.how == How::kTable;
 			bool              put = false;
 			if (table || t.castWard) {
@@ -829,11 +839,16 @@ namespace Plugin
 			}
 		}
 		if (!switched.empty()) {
+			const auto pick = [](std::size_t a_row) {
+				const auto d = ShieldDomeOf(a_row);
+				return d == ShieldDome::kOff ? "off" : d == ShieldDome::k360 ? "360 dome" :
+				                                                               "normal dome";
+			};
 			SKSE::log::info(
 				"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "
 				"ability(ies) given back, {} worn shield(s) given their ward again",
-				switched.size(), ShieldWardOn(kShieldRows[0]) ? "on" : "off", ShieldWardOn(kShieldRows[1]) ? "on" : "off",
-				ShieldWardOn(kShieldRows[2]) ? "on" : "off", refresh.dispelled, givenBack, refresh.giveBack.size(), reapplied);
+				switched.size(), pick(kShieldRows[0]), pick(kShieldRows[1]), pick(kShieldRows[2]), refresh.dispelled, givenBack,
+				refresh.giveBack.size(), reapplied);
 		}
 		if (gLightsGlobal) {
 			gLightsGlobal->value = ColoredLightsOn() ? 1.0f : 0.0f;
@@ -858,7 +873,7 @@ namespace Plugin
 	{
 		{
 			std::scoped_lock l{ gLock };
-			if (!gHas360 || !Dome360() || Unlocked() == gUnlocked) {
+			if (!gHas360 || !Any360Wanted() || Unlocked() == gUnlocked) {
 				return;
 			}
 		}
@@ -924,7 +939,8 @@ namespace Plugin
 		if (!a) {
 			return nullptr;  // 360 Ward's own flash plays
 		}
-		return (gHas360 && Dome360() && gUnlocked && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
+		const bool on360 = a->dome360 && DomeOf(gTargets[it->second].row, a) == a->dome360;
+		return (on360 && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
 	}
 
 	bool PreviewRow(std::size_t a_row, float a_seconds)
@@ -935,7 +951,7 @@ namespace Plugin
 		if (!player || !a) {
 			return false;
 		}
-		auto* dome = (gHas360 && Dome360() && gUnlocked && a->dome360) ? a->dome360 : a->dome;
+		auto* dome = DomeOf(a_row, a);
 		return player->ApplyArtObject(dome, a_seconds) != nullptr;
 	}
 
@@ -1006,9 +1022,9 @@ namespace Plugin
 		}
 		std::string shieldWards;
 		for (const auto& s : gShieldEntries) {
-			shieldWards += std::format(R"({}{{"row":"{}","carrier":"{}","ability":{},"ward":"{}","on":{},"raisesWard":{}}})",
+			shieldWards += std::format(R"({}{{"row":"{}","carrier":"{}","ability":{},"ward":"{}","on":{},"dome":{},"raisesWard":{}}})",
 				shieldWards.empty() ? "" : ",", kTokens[s.row], JsonEscape(Where(s.carrier)), s.ability, JsonEscape(Where(s.ward)),
-				ShieldWardOn(s.row), s.entry->baseEffect == s.ward);
+				ShieldWardOn(s.row), static_cast<int>(ShieldDomeOf(s.row)), s.entry->baseEffect == s.ward);
 		}
 		return std::format(
 			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360":{},)"
