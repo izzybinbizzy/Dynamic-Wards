@@ -54,7 +54,7 @@ namespace Plugin
 		}
 		std::string ShieldKey(std::size_t a_row)
 		{
-			return std::format("{}Ward", kTokens[a_row]);  // SpellbreakerWard, CrusaderWard, RemanWard: the 2026-10-08 on / off (read only)
+			return std::format("{}Ward", kTokens[a_row]);  // SpellbreakerWard, CrusaderWard, RemanWard: the 2026-10-08 on / off (kept for older versions)
 		}
 		std::string ShieldDomeKey(std::size_t a_row)
 		{
@@ -256,8 +256,10 @@ namespace Plugin
 			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
 			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0);
 		for (const auto row : kShieldRows) {
+			// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
 			out << "\n"
-				<< ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)];
+				<< ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)] << "\n"
+				<< ShieldKey(row) << "=" << (gShieldDome[ShieldIndex(row)] != static_cast<int>(ShieldDome::kOff) ? 1 : 0);
 		}
 		out << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {

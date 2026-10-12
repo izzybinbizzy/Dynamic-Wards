@@ -372,14 +372,12 @@ namespace Plugin
 					shieldsShown = true;
 				}
 				PushID(static_cast<int>(row));
-				const bool  has360 = Has360Ward();
+				// all three always shown, so the stored pick is what the menu shows (the code review of 2026-10-12: a 360 pick shown
+				// as Normal without 360 Ward could not be changed to Normal); without 360 Ward the 360 pick wears the normal dome
 				int         pick = static_cast<int>(ShieldDomeOf(row));
-				const char* picks[] = { T("Off"), T("Normal dome"), T("360 dome") };
-				if (!has360 && pick == static_cast<int>(ShieldDome::k360)) {
-					pick = static_cast<int>(ShieldDome::kNormal);  // shown as what it wears without 360 Ward
-				}
-				SetNextItemWidth(160.0f);
-				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, has360 ? 3 : 2)) {
+				const char* picks[] = { T("Off"), T("Normal dome"), Has360Ward() ? T("360 dome") : T("360 dome (needs 360 Ward)") };
+				SetNextItemWidth(220.0f);
+				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, 3)) {
 					SetShieldDome(row, static_cast<ShieldDome>(pick));
 					Changed();
 				}
