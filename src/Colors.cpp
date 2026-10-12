@@ -83,8 +83,8 @@ namespace Plugin
 			// wears the baked plain-glow copy instead (kGoldVapour) - Community Shaders shades that block's spikes cream on those hues
 			bool                               vapourOne = false;
 			bool                               paletteAlpha = false;
-			RE::NiPointer<RE::NiSourceTexture> source;
-			RE::BSFixedString                  sourcePath;
+			RE::NiPointer<RE::NiSourceTexture> source{};
+			RE::BSFixedString                  sourcePath{};
 		};
 
 		struct Master
@@ -464,10 +464,9 @@ namespace Plugin
 			const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
 			const float m = (std::max)({ r, g, b, 0.001f });
 			// the sprite: the hue at least kSpriteSat saturated, full value - a pale light reads white and washes the ward out
-			float sh = 0, ss = 0, sv = 0;
+			float sh = 0, ss = 0;
 			{
 				const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), dd = mx - mn;
-				sv = mx;
 				ss = mx <= 0 ? 0 : dd / mx;
 				if (dd > 0) {
 					sh = mx == r ? std::fmod((g - b) / dd, 6.0f) : mx == g ? (b - r) / dd + 2.0f :
