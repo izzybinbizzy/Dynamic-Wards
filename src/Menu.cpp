@@ -13,6 +13,8 @@
 #define NOMINMAX
 #include "Plugin.h"
 
+#include <cmath>
+
 // SKSE Menu Framework's own header (theirs, MIT): its warnings are not ours, and ours are errors (xmake.lua) - under
 // MSVC and under clang-cl, which checks every file too
 #pragma warning(push, 0)
@@ -204,7 +206,7 @@ namespace Plugin
 
 			Header(Icon::kBulb, T("Lights"));
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
-			TextColored(kMuted, T("Lighting picked in the installer: %s"), lighting[static_cast<int>(LightingPick())]);
+			TextColored(kMuted, "%s", Fill(T("Lighting picked in the installer: {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
 			{  // every pick since 2026-10-06: ENB gets the plugin's lights too (Lighting.cpp OwnLights), so its switches show
 				bool light = WardLightOn();
@@ -349,7 +351,7 @@ namespace Plugin
 				SetItemTooltip("%s", T("On: this mod's wards take the color of their rank. Off: they keep the mod's own look."));
 				PopID();
 			}
-			TextColored(kMuted, T("%zu ward effect(s) found, %zu colored"), FoundCount(), DressedCount());
+			TextColored(kMuted, "%s", Fill(T("{} ward effect(s) found, {} colored"), std::to_string(FoundCount()), std::to_string(DressedCount())).c_str());
 			if (StrangeRunesLoaded()) {
 				Separator();
 				bool keep = KeepStrangeRunes();
