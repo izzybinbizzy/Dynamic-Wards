@@ -202,7 +202,7 @@ namespace Plugin
 	bool               OwnLights();                       // this plugin makes the hand and dome lights (every pick since 2026-10-06)
 	bool               Effects11();                       // Community Shaders' Effects 11 is installed
 	bool               HandLight1st();                    // the first-person hand light: every pick (his order 2026-10-05)
-	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
+	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
 	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
 	void               ColorHandLights();                 // after a color change: each row's light in its color
 	RE::TESObjectLIGH* HandLightFor(std::size_t a_row);

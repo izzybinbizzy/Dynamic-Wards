@@ -155,6 +155,9 @@ namespace Plugin
 				data.fade = a_fade * dim;
 				data.radius = { a_reach, a_reach, a_size };
 			}
+			// it writes the same two words as below, so it goes first (before 3.4 a dome light got it after this, and every
+			// later tick ORed the flag onto the attenuation's float - which could read as Light Limit Fix's Disabled bit)
+			a_light->SetLightAttenuation(data.radius.x);
 			if (!isl) {
 				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
 				// NiPointLight starts with a WHITE ambient. With inverse square lighting these words carry its flag and cutoff
@@ -163,10 +166,12 @@ namespace Plugin
 				gLastAmbient = data.ambient;
 			}
 			if (isl) {
-				// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color
-				auto* words = reinterpret_cast<std::uint32_t*>(&data);
-				words[0] |= kIslFlag;
-				words[1] = std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f));
+				// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color. A light of
+				// our own, never made by the game's GenDynamic, so Community Shaders set none of its flags: the flag word is ours
+				// whole, never ORed onto what was there (written as bytes, as RELight - Spell Addon 2.2 does)
+				const std::array<std::uint32_t, 2> words{ kIslFlag,
+					std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)) };
+				std::memcpy(&data, words.data(), sizeof(words));
 			}
 		}
 
@@ -217,7 +222,6 @@ namespace Plugin
 				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
 				light->name = kLightName;
 				light->local.translate = at;
-				light->SetLightAttenuation(light->GetLightRuntimeData().radius.x);
 				parent->AttachChild(light, true);
 				RE::NiUpdateData update{};
 				light->Update(update);

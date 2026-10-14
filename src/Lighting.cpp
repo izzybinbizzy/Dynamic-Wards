@@ -48,10 +48,19 @@ namespace Plugin
 		constexpr std::uint32_t kPlainRadius = 178;
 		constexpr float         kPlainFade = 1.14f;
 
+		// Community Shaders (or a fork that keeps its DLL name - Bottled Shaders) is running. Its Light Limit Fix reads the
+		// first two words of EVERY light as its own flags and cutoff (LLFCommon::RuntimeLightDataExt), whether or not a shader
+		// file says so: an ambient color written there is read as flags - a red of 81-122 sets bit 9, Disabled (RELight -
+		// Spell Addon 2.1's user report 2026-10-14, Bottled Shaders: the frost and shock hands lit nothing)
+		bool CommunityShadersLoaded()
+		{
+			return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr;
+		}
+
 		bool IslInstalled()
 		{
 			std::error_code ec;
-			if (std::filesystem::exists(kIslShader, ec)) {
+			if (CommunityShadersLoaded() || std::filesystem::exists(kIslShader, ec)) {
 				return true;
 			}
 			std::ifstream     in(kLlfAttenuation, std::ios::binary);
@@ -107,8 +116,9 @@ namespace Plugin
 		gE11 = std::filesystem::exists(kEffects11);
 		gIsl = IslInstalled();
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
-		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {}", kNames[static_cast<int>(gPick.load())],
-			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
+		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {} (CommunityShaders.dll {})", kNames[static_cast<int>(gPick.load())],
+			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off",
+			CommunityShadersLoaded() ? "loaded" : "not loaded");
 	}
 
 	void MakeHandLights()
