@@ -176,7 +176,7 @@ namespace Plugin
 				// off the undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
 				const std::array<std::uint32_t, 3> words{ kIslFlag | kInitialisedFlag,
 					std::bit_cast<std::uint32_t>(std::clamp(kK * data.fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
-				std::memcpy(&data, words.data(), sizeof(words));
+				std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 			}
 		}
 
