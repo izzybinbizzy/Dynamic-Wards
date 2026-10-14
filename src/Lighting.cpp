@@ -38,6 +38,7 @@ namespace Plugin
 		bool                                         gPickRead = false;
 		bool                                         gE11 = false;
 		bool                                         gIsl = false;
+		bool                                         gCs = false;  // CommunityShaders.dll loaded (read with gIsl)
 		const RE::TESObjectLIGH*                     gGame = nullptr;
 		std::array<RE::TESObjectLIGH*, kRows>        gHand{};
 		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
@@ -115,10 +116,11 @@ namespace Plugin
 		gPick = ReadPick();
 		gE11 = std::filesystem::exists(kEffects11);
 		gIsl = IslInstalled();
+		gCs = CommunityShadersLoaded();
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {} (CommunityShaders.dll {})", kNames[static_cast<int>(gPick.load())],
 			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off",
-			CommunityShadersLoaded() ? "loaded" : "not loaded");
+			gCs ? "loaded" : "not loaded");
 	}
 
 	void MakeHandLights()
@@ -228,7 +230,7 @@ namespace Plugin
 	std::string LightingReport()
 	{
 		std::scoped_lock l{ gLock };
-		return std::format(R"({{"pick":{},"fromInstaller":{},"effects11":{},"inverseSquare":{},"handLights":{}}})", static_cast<int>(gPick.load()),
-			gPickRead, gE11, gIsl, gOurs.size());
+		return std::format(R"({{"pick":{},"fromInstaller":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"handLights":{}}})",
+			static_cast<int>(gPick.load()), gPickRead, gE11, gIsl, gCs, gOurs.size());
 	}
 }

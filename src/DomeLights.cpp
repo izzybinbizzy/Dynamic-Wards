@@ -24,6 +24,7 @@ namespace Plugin
 		constexpr const char*   kHandName = "DWHand1st";
 		constexpr float         kK = 3918.88f;  // the build's cutoff constant: cutoff = kK * fade / (reach^2 + size^2)
 		constexpr std::uint32_t kIslFlag = 1u << 10;
+		constexpr std::uint32_t kInitialisedFlag = 1u << 8;  // Light Limit Fix: the light's flags are set
 		constexpr float         kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto          kTick = std::chrono::milliseconds(100);
 		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
@@ -166,11 +167,13 @@ namespace Plugin
 				gLastAmbient = data.ambient;
 			}
 			if (isl) {
-				// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color. A light of
-				// our own, never made by the game's GenDynamic, so Community Shaders set none of its flags: the flag word is ours
-				// whole, never ORed onto what was there (written as bytes, as RELight - Spell Addon 2.2 does)
-				const std::array<std::uint32_t, 2> words{ kIslFlag,
-					std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)) };
+				// Community Shaders' inverse square lighting: its flags, the cutoff and a light record's FormID in the three words
+				// before the color (LLFCommon::RuntimeLightDataExt). A light of our own, never made by the game's GenDynamic, so
+				// Community Shaders set none of them: the words are ours whole, never ORed onto what was there (written as bytes,
+				// as RELight - Spell Addon 2.2 does). Initialised as Light Limit Fix marks its own lights (else it re-marks and
+				// logs ours each frame); no record - the clone's ambient blue (1.0) would read as a FormID
+				const std::array<std::uint32_t, 3> words{ kIslFlag | kInitialisedFlag,
+					std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
 				std::memcpy(&data, words.data(), sizeof(words));
 			}
 		}
