@@ -50,7 +50,7 @@ namespace Plugin
 		constexpr float         kPlainFade = 1.14f;
 
 		// Community Shaders (or a fork that keeps its DLL name - Bottled Shaders) is running. Its Light Limit Fix reads the
-		// first two words of EVERY light as its own flags and cutoff (LLFCommon::RuntimeLightDataExt), whether or not a shader
+		// first three words of EVERY light as its own flags, cutoff and record (LLFCommon::RuntimeLightDataExt), whether or not a shader
 		// file says so: an ambient color written there is read as flags - a red of 81-122 sets bit 9, Disabled (RELight -
 		// Spell Addon 2.1's user report 2026-10-14, Bottled Shaders: the frost and shock hands lit nothing)
 		bool CommunityShadersLoaded()

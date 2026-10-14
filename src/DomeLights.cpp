@@ -156,7 +156,7 @@ namespace Plugin
 				data.fade = a_fade * dim;
 				data.radius = { a_reach, a_reach, a_size };
 			}
-			// it writes the same two words as below, so it goes first (before 3.4 a dome light got it after this, and every
+			// it writes the first two of the words below, so it goes first (before 3.4 a dome light got it after this, and every
 			// later tick ORed the flag onto the attenuation's float - which could read as Light Limit Fix's Disabled bit)
 			a_light->SetLightAttenuation(data.radius.x);
 			if (!isl) {
@@ -172,8 +172,10 @@ namespace Plugin
 				// Community Shaders set none of them: the words are ours whole, never ORed onto what was there (written as bytes,
 				// as RELight - Spell Addon 2.2 does). Initialised as Light Limit Fix marks its own lights (else it re-marks and
 				// logs ours each frame); no record - the clone's ambient blue (1.0) would read as a FormID
+				// The cutoff follows the DIMMED fade (as RELight - Spell Addon's CutoffFor): the reach holds while the light dims;
+				// off the undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
 				const std::array<std::uint32_t, 3> words{ kIslFlag | kInitialisedFlag,
-					std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
+					std::bit_cast<std::uint32_t>(std::clamp(kK * data.fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
 				std::memcpy(&data, words.data(), sizeof(words));
 			}
 		}
