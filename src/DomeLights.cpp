@@ -277,7 +277,14 @@ namespace Plugin
 				}
 			}
 			if (!spell && a_actor->AsActorState()->IsWeaponDrawn()) {
-				spell = skyrim_cast<RE::SpellItem*>(a_actor->GetEquippedObject(a_slot == 0));
+				auto* held = a_actor->GetEquippedObject(a_slot == 0);
+				spell = skyrim_cast<RE::SpellItem*>(held);
+				// a STAFF drawn in this hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its
+				// ward as an ability while held): that ward's row - no spell is cast, so nothing above finds it (3.4, a user
+				// report: no light in first person)
+				if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
+					return AlwaysOnWardRow(a_actor);
+				}
 			}
 			if (!spell) {
 				return kRows;

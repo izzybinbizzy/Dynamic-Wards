@@ -42,6 +42,8 @@ namespace Plugin
 			{ "Reman", "LegacyoftheDragonborn.esm", 0x124E5B },
 			{ "Spellbreaker", "Artificer.esp", 0x00094C },
 			{ "Spellbreaker", "Artificer.esp", 0x00094D },
+			// Reliquary of Myth's Spellbreaker (its own ability ward, 100 Ward Power, the game's ward art) - as Artificer's (3.4)
+			{ "Spellbreaker", "Reliquary of Myth.esp", 0x051867 },
 			{ "Vampire", "Better Vampires.esp", 0x47179D },
 			{ "Vampire", "Better Vampires.esp", 0x4717A0 },
 			{ "Vampire", "Better Vampire NPCs.esp", 0x074F60 },
@@ -559,7 +561,14 @@ namespace Plugin
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
 				t.why = "ShieldConcSelf, silent";
-			} else if (auto it = table.find(eff->GetFormID()); it != table.end()) {
+			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !power) {
+				// a table ward another mod made into something else - no art, no Ward Power (Reliquary of Myth turns vanilla
+				// Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too): dressed,
+				// it would add a second dome over the real one (3.4)
+				++skipped;
+				SKSE::log::info("[WARD] left alone: {} (in the table, but another mod took its art and Ward Power away)", Where(eff));
+				continue;
+			} else if (it != table.end()) {
 				t.how = How::kTable;
 				t.row = it->second;
 				t.why = std::format("1.0 table: {}", kTokens[t.row]);
@@ -578,9 +587,15 @@ namespace Plugin
 				if (const auto* file = eff->GetFile(0)) {
 					t.plugin = std::string(file->GetFilename());
 				}
-				t.row = RankRow(d.minimumSkill);
-				t.why = std::format("found by {}; minimum skill {} = {}", (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power",
-					d.minimumSkill, kTokens[t.row]);
+				// an ALWAYS-ON ward (a constant effect: an artifact's ward while it is held or worn - Reliquary of Myth's Staff of
+				// Magnus, 999 Ward Power, minimum skill 0) takes the top rank, not the Novice rank its skill 0 would give: no
+				// spell ward is that strong (3.4, a user report: the Magnus ward kept the Novice row's white)
+				const bool always = d.castingType == RE::MagicSystem::CastingType::kConstantEffect;
+				t.row = always ? kRanks - 1 : RankRow(d.minimumSkill);
+				t.why = always ? std::format("found by {}; always on (an item's ward) = {}", power ? "art + Ward Power" : "art", kTokens[t.row]) :
+				                 std::format("found by {}; minimum skill {} = {}",
+									 (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power", d.minimumSkill,
+									 kTokens[t.row]);
 			}
 			found.push_back(std::move(t));
 		}
@@ -953,6 +968,27 @@ namespace Plugin
 		}
 		auto* dome = DomeOf(a_row, a);
 		return player->ApplyArtObject(dome, a_seconds) != nullptr;
+	}
+
+	std::size_t AlwaysOnWardRow(RE::Actor* a_actor)
+	{
+		auto* list = a_actor ? a_actor->AsMagicTarget()->GetActiveEffectList() : nullptr;
+		if (!list) {
+			return kRows;
+		}
+		std::scoped_lock l{ gLock };
+		for (auto* ae : *list) {
+			const auto* base = ae && ae->effect && !ae->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled) ?
+			                       ae->GetBaseObject() :
+			                       nullptr;
+			const auto it = base && base->data.castingType == RE::MagicSystem::CastingType::kConstantEffect ?
+			                    gTargetOf.find(const_cast<RE::EffectSetting*>(base)) :
+			                    gTargetOf.end();
+			if (it != gTargetOf.end() && Worn(gTargets[it->second])) {
+				return gTargets[it->second].row;
+			}
+		}
+		return kRows;
 	}
 
 	std::size_t RowOfModel(std::string_view a_model)
