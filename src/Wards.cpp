@@ -291,10 +291,10 @@ namespace Plugin
 		// No magnitude known (0): Novice, as its minimum skill 0 would give
 		std::size_t PowerRow(float a_power)
 		{
-			return a_power >= 100.0f ? 4 : a_power >= 90.0f ? 3 :
-			                           a_power >= 70.0f     ? 2 :
-			                           a_power >= 50.0f     ? 1 :
-			                                                  0;
+			return a_power >= 100.0f ? 4 : a_power > 80.0f ? 3 :
+			                           a_power > 60.0f     ? 2 :
+			                           a_power > 40.0f     ? 1 :
+			                                                 0;
 		}
 
 		float StrongestWard(const RE::EffectSetting* a_effect, const std::unordered_map<const RE::EffectSetting*, float>& a_carriers)
@@ -571,7 +571,7 @@ namespace Plugin
 		std::unordered_map<const RE::EffectSetting*, float> carriers;
 		auto                                                note = [&](RE::MagicItem* a_item) {
 			for (auto* e : a_item->effects) {
-				if (e && e->baseEffect) {
+				if (e && e->baseEffect && e->baseEffect->data.castingType == RE::MagicSystem::CastingType::kConstantEffect) {
 					auto& m = carriers[e->baseEffect];
 					m = (std::max)(m, e->effectItem.magnitude);
 				}
@@ -598,11 +598,10 @@ namespace Plugin
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
 				t.why = "ShieldConcSelf, silent";
-			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !d.enchantEffectArt && !power &&
-			                                                   d.archetype == RE::EffectSetting::Archetype::kScript) {
-				// a table ward another mod made into a script effect - no art at all, no Ward Power (Reliquary of Myth does this to
-				// vanilla Spellbreaker's ward and raises the ward from its own ability, in the table too): dressed, it would add a
-				// second dome over the real one (3.4)
+			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !power) {
+				// a table ward another mod made into something else - no hand art, no dome, no Ward Power (Reliquary of Myth turns
+				// vanilla Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too):
+				// dressed, it would add a second dome over the real one (3.4)
 				++skipped;
 				SKSE::log::info("[WARD] left alone: {} (in the table, but another mod took its art and Ward Power away)", Where(eff));
 				continue;
@@ -628,8 +627,10 @@ namespace Plugin
 				// an ALWAYS-ON ward (a constant effect: an item's ward while it is held or worn) is ranked by its Ward Power on the
 				// vanilla wards' scale (PowerRow), never by its minimum skill - an item's effect says 0 there: Reliquary of Myth's
 				// Staff of Magnus (999 Ward Power) wore the Novice row's white (3.4, a user report)
-				const bool always = d.castingType == RE::MagicSystem::CastingType::kConstantEffect;
 				const char* by = (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power";
+				// (its magnitude is Ward Power only when that is its value; one effect shared by a weak and a strong item takes the
+				// strong one's rank - nothing says which carrier is up)
+				const bool  always = d.castingType == RE::MagicSystem::CastingType::kConstantEffect && power;
 				const float most = always ? StrongestWard(eff, carriers) : 0.0f;
 				t.row = always ? PowerRow(most) : RankRow(d.minimumSkill);
 				t.why = always ? std::format("found by {}; always on, {:.0f} Ward Power = {}", by, most, kTokens[t.row]) :
@@ -1009,9 +1010,10 @@ namespace Plugin
 	}
 
 	// The row of an always-on ward of ours that is up on the actor - what a drawn staff's hand light wears (DomeLights.cpp
-	// CastingRow; Reliquary of Myth's Staff of Magnus raises its ward as an ability while held, so no cast names it). Not a
-	// shield row (a shield's ward never lights a staff hand) and only a ward that wears ward art (one found by Ward Power alone
-	// shows nothing). Nothing links an ability to the staff that gave it, so a ring's always-on ward lights a staff hand too.
+	// CastingRow; Reliquary of Myth's Staff of Magnus raises its ward as an ability while held, so no cast names it). The
+	// strongest of them; only the five rank rows (a shield's or the vampire ward never lights a staff hand) and only a ward that
+	// wears ward art (one found by Ward Power alone shows nothing). Nothing links an ability to the staff that gave it, so a
+	// ring's always-on ward lights a staff hand too.
 	// LOCK ORDER: called with DomeLights.cpp's lock held; takes this file's lock, then Settings' (Worn -> ModOn). Nothing here
 	// may call into DomeLights.cpp while holding this lock.
 	std::size_t AlwaysOnWardRow(RE::Actor* a_actor)
@@ -1021,6 +1023,7 @@ namespace Plugin
 			return kRows;
 		}
 		std::scoped_lock l{ gLock };
+		std::size_t      best = kRows;
 		for (auto* ae : *list) {
 			const auto* base = ae && ae->effect && !ae->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled) ?
 			                       ae->GetBaseObject() :
@@ -1033,11 +1036,11 @@ namespace Plugin
 			}
 			const auto& t = gTargets[it->second];
 			const bool  art = t.how == How::kTable || t.castWard || t.hitWard || t.enchWard;
-			if (art && std::ranges::find(kShieldRows, t.row) == kShieldRows.end() && Worn(t)) {
-				return t.row;
+			if (art && t.row < kRanks && Worn(t) && (best == kRows || t.row > best)) {
+				best = t.row;  // the strongest, whatever the list's order
 			}
 		}
-		return kRows;
+		return best;
 	}
 
 	std::size_t RowOfModel(std::string_view a_model)
