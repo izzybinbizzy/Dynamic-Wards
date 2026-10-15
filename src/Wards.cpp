@@ -571,7 +571,8 @@ namespace Plugin
 		std::unordered_map<const RE::EffectSetting*, float> carriers;
 		auto                                                note = [&](RE::MagicItem* a_item) {
 			for (auto* e : a_item->effects) {
-				if (e && e->baseEffect && e->baseEffect->data.castingType == RE::MagicSystem::CastingType::kConstantEffect) {
+				if (e && e->baseEffect && e->baseEffect->data.castingType == RE::MagicSystem::CastingType::kConstantEffect &&
+					e->baseEffect->data.primaryAV == RE::ActorValue::kWardPower) {
 					auto& m = carriers[e->baseEffect];
 					m = (std::max)(m, e->effectItem.magnitude);
 				}
@@ -598,8 +599,8 @@ namespace Plugin
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
 				t.why = "ShieldConcSelf, silent";
-			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !power) {
-				// a table ward another mod made into something else - no hand art, no dome, no Ward Power (Reliquary of Myth turns
+			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !d.enchantEffectArt && !power) {
+				// a table ward another mod made into something else - no art of any kind, no Ward Power (Reliquary of Myth turns
 				// vanilla Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too):
 				// dressed, it would add a second dome over the real one (3.4)
 				++skipped;
@@ -1036,8 +1037,11 @@ namespace Plugin
 			}
 			const auto& t = gTargets[it->second];
 			const bool  art = t.how == How::kTable || t.castWard || t.hitWard || t.enchWard;
-			if (art && t.row < kRanks && Worn(t) && (best == kRows || t.row > best)) {
-				best = t.row;  // the strongest, whatever the list's order
+			if (art && t.row < kRanks && Worn(t)) {
+				best = best == kRows ? t.row : (std::max)(best, t.row);  // the strongest, whatever the list's order
+				if (best == kRanks - 1) {
+					break;
+				}
 			}
 		}
 		return best;
