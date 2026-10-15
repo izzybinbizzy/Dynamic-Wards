@@ -24,7 +24,8 @@ namespace Plugin
 		constexpr const char*   kHandName = "DWHand1st";
 		constexpr float         kK = 3918.88f;  // the build's cutoff constant: cutoff = kK * fade / (reach^2 + size^2)
 		constexpr std::uint32_t kIslFlag = 1u << 10;
-		constexpr float         kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
+		constexpr std::uint32_t kInitialisedFlag = 1u << 8;  // Light Limit Fix: the light's flags are set
+		constexpr float         kAmbientRatio = 0.1f;        // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto          kTick = std::chrono::milliseconds(100);
 		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
 		constexpr float       kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
@@ -155,6 +156,9 @@ namespace Plugin
 				data.fade = a_fade * dim;
 				data.radius = { a_reach, a_reach, a_size };
 			}
+			// it writes the first two of the words below, so it goes first (before 3.4 a dome light got it after this, and every
+			// later tick ORed the flag onto the attenuation's float - which could read as Light Limit Fix's Disabled bit)
+			a_light->SetLightAttenuation(data.radius.x);
 			if (!isl) {
 				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
 				// NiPointLight starts with a WHITE ambient. With inverse square lighting these words carry its flag and cutoff
@@ -163,10 +167,16 @@ namespace Plugin
 				gLastAmbient = data.ambient;
 			}
 			if (isl) {
-				// Community Shaders' inverse square lighting: a flag and the cutoff in the two words before the color
-				auto* words = reinterpret_cast<std::uint32_t*>(&data);
-				words[0] |= kIslFlag;
-				words[1] = std::bit_cast<std::uint32_t>(std::clamp(kK * a_fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f));
+				// Community Shaders' inverse square lighting: its flags, the cutoff and a light record's FormID in the three words
+				// before the color (LLFCommon::RuntimeLightDataExt). A light of our own, never made by the game's GenDynamic, so
+				// Community Shaders set none of them: the words are ours whole, never ORed onto what was there (written as bytes,
+				// as RELight - Spell Addon 2.2 does). Initialised as Light Limit Fix marks its own lights (else it re-marks and
+				// logs ours each frame); no record - the clone's ambient blue (1.0) would read as a FormID
+				// The cutoff follows the DIMMED fade (as RELight - Spell Addon's CutoffFor): the reach holds while the light dims;
+				// off the undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
+				const std::array<std::uint32_t, 3> words{ kIslFlag | kInitialisedFlag,
+					std::bit_cast<std::uint32_t>(std::clamp(kK * data.fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
+				std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 			}
 		}
 
@@ -217,7 +227,6 @@ namespace Plugin
 				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
 				light->name = kLightName;
 				light->local.translate = at;
-				light->SetLightAttenuation(light->GetLightRuntimeData().radius.x);
 				parent->AttachChild(light, true);
 				RE::NiUpdateData update{};
 				light->Update(update);
@@ -256,7 +265,10 @@ namespace Plugin
 		// the hand's ward: while it is cast (charging, ready, held) the caster's spell; while it is only readied in that hand
 		// (the casting art shows, nothing cast yet - his catch 2026-10-05, "im talking about the casting art too") the spell
 		// equipped there, hands drawn
-		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot)
+		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
+		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
+		// above found no ward, so firing the staff keeps the light; read once per actor and tick (a_alwaysOn)
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
 			const RE::MagicItem* spell = nullptr;
@@ -267,17 +279,24 @@ namespace Plugin
 					spell = caster->currentSpell;
 				}
 			}
-			if (!spell && a_actor->AsActorState()->IsWeaponDrawn()) {
-				spell = skyrim_cast<RE::SpellItem*>(a_actor->GetEquippedObject(a_slot == 0));
-			}
+			const bool drawn = a_actor->AsActorState()->IsWeaponDrawn();
+			auto*      held = drawn ? a_actor->GetEquippedObject(a_slot == 0) : nullptr;
 			if (!spell) {
-				return kRows;
+				spell = skyrim_cast<RE::SpellItem*>(held);
 			}
-			for (auto* e : spell->effects) {
-				const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-				if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
-					return row;
+			if (spell) {
+				for (auto* e : spell->effects) {
+					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
+					if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
+						return row;
+					}
 				}
+			}
+			if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
+				if (!a_alwaysOn) {
+					a_alwaysOn = AlwaysOnWardRow(a_actor);
+				}
+				return *a_alwaysOn;
 			}
 			return kRows;
 		}
@@ -293,9 +312,10 @@ namespace Plugin
 		// one actor's two hands: a light on each hand casting one of our wards, under that hand's magic node
 		void TickActor(RE::Actor* a_actor, RE::NiAVObject* a_body, ActorHands& a_hands, RE::ShadowSceneNode* a_scene)
 		{
+			std::optional<std::size_t> alwaysOn;  // AlwaysOnWardRow, read at most once for both hands
 			for (std::size_t slot = 0; slot < 2; ++slot) {
 				auto&      h = a_hands.h[slot];
-				const auto row = a_body ? CastingRow(a_actor, slot) : kRows;
+				const auto row = a_body ? CastingRow(a_actor, slot, alwaysOn) : kRows;
 				const auto color = row < kRows ? RowColor(row) : std::nullopt;
 				auto*      node = color ? a_body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot])) : nullptr;
 				auto*      parent = node ? node->AsNode() : nullptr;

@@ -18,6 +18,8 @@
 
 #include "Plugin.h"
 
+#include <cmath>
+
 namespace Plugin
 {
 	namespace
@@ -36,6 +38,7 @@ namespace Plugin
 		bool                                         gPickRead = false;
 		bool                                         gE11 = false;
 		bool                                         gIsl = false;
+		bool                                         gCs = false;  // CommunityShaders.dll loaded (read with gIsl)
 		const RE::TESObjectLIGH*                     gGame = nullptr;
 		std::array<RE::TESObjectLIGH*, kRows>        gHand{};
 		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
@@ -46,10 +49,19 @@ namespace Plugin
 		constexpr std::uint32_t kPlainRadius = 178;
 		constexpr float         kPlainFade = 1.14f;
 
+		// Community Shaders (or a fork that keeps its DLL name - Bottled Shaders) is running. Its Light Limit Fix reads the
+		// first three words of EVERY light as its own flags, cutoff and record (LLFCommon::RuntimeLightDataExt), whether or not a shader
+		// file says so: an ambient color written there is read as flags - a red of 81-122 sets bit 9, Disabled (RELight -
+		// Spell Addon 2.1's user report 2026-10-14, Bottled Shaders: the frost and shock hands lit nothing)
+		bool CommunityShadersLoaded()
+		{
+			return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr;
+		}
+
 		bool IslInstalled()
 		{
 			std::error_code ec;
-			if (std::filesystem::exists(kIslShader, ec)) {
+			if (CommunityShadersLoaded() || std::filesystem::exists(kIslShader, ec)) {
 				return true;
 			}
 			std::ifstream     in(kLlfAttenuation, std::ios::binary);
@@ -104,9 +116,11 @@ namespace Plugin
 		gPick = ReadPick();
 		gE11 = std::filesystem::exists(kEffects11);
 		gIsl = IslInstalled();
+		gCs = CommunityShadersLoaded();
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
-		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {}", kNames[static_cast<int>(gPick.load())],
-			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off");
+		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {} (CommunityShaders.dll {})", kNames[static_cast<int>(gPick.load())],
+			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off",
+			gCs ? "loaded" : "not loaded");
 	}
 
 	void MakeHandLights()
@@ -216,7 +230,7 @@ namespace Plugin
 	std::string LightingReport()
 	{
 		std::scoped_lock l{ gLock };
-		return std::format(R"({{"pick":{},"fromInstaller":{},"effects11":{},"inverseSquare":{},"handLights":{}}})", static_cast<int>(gPick.load()),
-			gPickRead, gE11, gIsl, gOurs.size());
+		return std::format(R"({{"pick":{},"fromInstaller":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"handLights":{}}})",
+			static_cast<int>(gPick.load()), gPickRead, gE11, gIsl, gCs, gOurs.size());
 	}
 }

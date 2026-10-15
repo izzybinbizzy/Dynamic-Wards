@@ -19,11 +19,13 @@
 #include <cstdlib>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>

@@ -119,8 +119,9 @@ namespace Plugin
 	std::size_t                                      FoundCount();
 	std::string                                      WardsReport();
 	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect);
-	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player
+	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
 	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
+	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
@@ -202,7 +203,7 @@ namespace Plugin
 	bool               OwnLights();                       // this plugin makes the hand and dome lights (every pick since 2026-10-06)
 	bool               Effects11();                       // Community Shaders' Effects 11 is installed
 	bool               HandLight1st();                    // the first-person hand light: every pick (his order 2026-10-05)
-	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed
+	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
 	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
 	void               ColorHandLights();                 // after a color change: each row's light in its color
 	RE::TESObjectLIGH* HandLightFor(std::size_t a_row);

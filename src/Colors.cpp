@@ -25,6 +25,8 @@
 
 #include "Plugin.h"
 
+#include <cmath>
+
 namespace Plugin
 {
 	namespace

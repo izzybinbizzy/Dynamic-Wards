@@ -42,6 +42,8 @@ namespace Plugin
 			{ "Reman", "LegacyoftheDragonborn.esm", 0x124E5B },
 			{ "Spellbreaker", "Artificer.esp", 0x00094C },
 			{ "Spellbreaker", "Artificer.esp", 0x00094D },
+			// Reliquary of Myth's Spellbreaker (its own ability ward, 100 Ward Power, the game's ward art) - as Artificer's (3.4)
+			{ "Spellbreaker", "Reliquary of Myth.esp", 0x051867 },
 			{ "Vampire", "Better Vampires.esp", 0x47179D },
 			{ "Vampire", "Better Vampires.esp", 0x4717A0 },
 			{ "Vampire", "Better Vampire NPCs.esp", 0x074F60 },
@@ -74,6 +76,12 @@ namespace Plugin
 			RE::BGSArtObject*       dome = nullptr;  // the vanilla-shaped dome; also the 360 dome while it is locked
 			RE::BGSArtObject*       dome360 = nullptr;
 			RE::BGSReferenceEffect* flash = nullptr;
+			// a rank row's looping copies (the build's `worn` meshes, on Magic\BeginLoopEnd.hkx) for an always-on ward: the cast
+			// meshes' graph waits for a cast an item's constant effect never makes, so only the idle centre showed and the outer
+			// layers were missing - the shields' old bug (his report on the Staff of Magnus, 3.4). The shield rows' own meshes
+			// are already looping copies.
+			RE::BGSArtObject* wornHand = nullptr;
+			RE::BGSArtObject* wornDome = nullptr;
 		};
 
 		enum class How
@@ -95,7 +103,8 @@ namespace Plugin
 			RE::TESObjectLIGH* ownLight;
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
-			std::string        plugin;  // the file that adds the effect: its line on the Compatibility page
+			std::string        plugin;            // the file that adds the effect: its line on the Compatibility page
+			bool               constant = false;  // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
 		};
 
 		struct Changes
@@ -168,6 +177,57 @@ namespace Plugin
 			const bool shield = std::ranges::find(kShieldRows, a_row) != kShieldRows.end();
 			const bool want360 = shield ? ShieldDomeOf(a_row) == ShieldDome::k360 : Dome360();
 			return (gHas360 && want360 && gUnlocked && a_art->dome360) ? a_art->dome360 : a_art->dome;
+		}
+
+		// what one ward wears: with a_worn (WearsWorn) its row's looping copies where the row has them (the 360 dome loops
+		// already)
+		RE::BGSArtObject* HandOf(bool a_worn, const Art* a_art)
+		{
+			return a_worn && a_art->wornHand ? a_art->wornHand : a_art->hand;
+		}
+
+		// DomeOf, with a_worn its looping copy in place of the normal dome where the row has one
+		RE::BGSArtObject* WornDomeOf(std::size_t a_row, bool a_worn, const Art* a_art)
+		{
+			auto* dome = DomeOf(a_row, a_art);
+			return dome == a_art->dome && a_worn && a_art->wornDome ? a_art->wornDome : dome;
+		}
+
+		// an always-on ward of a rank row that wears ward art (one found by Ward Power alone is dressed with nothing): the
+		// one test for wearing a row's worn copies (AlwaysOnWardRow's too)
+		bool WearsWorn(const Target& a_t)
+		{
+			return a_t.constant && a_t.row < kRanks && (a_t.how == How::kTable || a_t.castWard || a_t.hitWard || a_t.enchWard);
+		}
+
+		// the art a dressed ward wears in each of its three slots (nullptr: that slot is not ours to dress) - ApplyAll puts it
+		// on and WatchArt checks it, so the two never disagree
+		struct Dress
+		{
+			RE::BGSArtObject* cast = nullptr;
+			RE::BGSArtObject* hit = nullptr;
+			RE::BGSArtObject* ench = nullptr;
+		};
+
+		Dress DressOf(const Target& a_t, const Art* a_art)
+		{
+			const bool  worn = WearsWorn(a_t);
+			auto* const dome = WornDomeOf(a_t.row, worn, a_art);
+			const bool  table = a_t.how == How::kTable;
+			Dress       d;
+			if (table || a_t.castWard) {
+				d.cast = HandOf(worn, a_art);
+			}
+			if (table || a_t.hitWard) {
+				d.hit = dome;
+			}
+			// the enchantment slot: where the hit slot already carries ours it keeps what it wore before 3.4 (the cast-graph dome,
+			// or the 360 dome on that pick), so the worn copy never adds a second full dome; a ward whose only dome is this slot
+			// wears the hit slot's choice
+			if (!table && a_t.enchWard) {
+				d.ench = a_t.hitWard ? DomeOf(a_t.row, a_art) : dome;
+			}
+			return d;
 		}
 
 		// the ward a shield-row entry raises now: the ward, or its inert copy while that shield's switch is off
@@ -282,6 +342,29 @@ namespace Plugin
 			                        a_skill >= 50     ? 2 :
 			                        a_skill >= 25     ? 1 :
 			                                            0;
+		}
+
+		// an always-on ward's rank by its Ward Power, on the vanilla wards' own scale: Lesser Ward 40 (Novice), Steadfast Ward 60
+		// (Apprentice), Greater Ward 80 (Adept); past them Expert, and 100 and up Master (Reliquary of Myth's Magnus ward, 999).
+		// No magnitude known (0): Novice, as its minimum skill 0 would give
+		std::size_t PowerRow(float a_power)
+		{
+			return a_power >= 100.0f ? 4 : a_power > 80.0f ? 3 :
+			                           a_power > 60.0f     ? 2 :
+			                           a_power > 40.0f     ? 1 :
+			                                                 0;
+		}
+
+		// an always-on ward ranked by its strength: a constant effect whose value is Ward Power (an item's ward while held or worn)
+		bool AlwaysOnPower(const RE::EffectSetting& a_effect)
+		{
+			return a_effect.data.castingType == RE::MagicSystem::CastingType::kConstantEffect && a_effect.data.primaryAV == RE::ActorValue::kWardPower;
+		}
+
+		float StrongestWard(const RE::EffectSetting* a_effect, const std::unordered_map<const RE::EffectSetting*, float>& a_carriers)
+		{
+			const auto it = a_carriers.find(a_effect);
+			return it == a_carriers.end() ? 0.0f : it->second;
 		}
 
 		bool Unlocked()
@@ -492,7 +575,7 @@ namespace Plugin
 		gLightsGlobal = MakeGlobal(kLightsGlobal);
 		gHandGlobal = MakeGlobal(kHandGlobal);
 		gPresentGlobal = MakeGlobal(kPresentGlobal);
-		std::size_t made = 0, missing = 0;
+		std::size_t made = 0, missing = 0, worn = 0;
 		for (std::size_t row = 0; row < kRows; ++row) {
 			const auto hand = ModelName("wardinhandfx", row);
 			const auto dome = ModelName("wardbodyfx", row);
@@ -506,6 +589,22 @@ namespace Plugin
 				a.dome360 = MakeArtObject(d360);
 				models.push_back(d360);
 			}
+			// both looping copies or neither (each rank row's; the build writes them in pairs), colored with the row (ten small
+			// meshes; the devbench preview plays them in the rank rows). Half a pair is named: the row's always-on wards would
+			// fall back to the cast meshes and their missing outer layers
+			const auto wh = ModelName("wardinhandfx worn", row), wd = ModelName("wardbodyfx worn", row);
+			const bool rank = row < kRanks;  // the build ships them for the five ranks only (wardgen WORN3_ROWS)
+			const bool hasHand = rank && MeshExists(wh), hasDome = rank && MeshExists(wd);
+			if (hasHand && hasDome) {
+				a.wornHand = MakeArtObject(wh);
+				a.wornDome = MakeArtObject(wd);
+				models.push_back(wh);
+				models.push_back(wd);
+				++worn;
+			} else if (hasHand != hasDome) {
+				SKSE::log::warn("art: {} has only one of its worn copies ({} is missing) - its always-on wards wear the cast meshes", kTokens[row],
+					hasHand ? wd : wh);
+			}
 			if (const auto hit = ModelName("wardshieldhitfx", row); MeshExists(hit)) {
 				a.flash = makeFlash(MakeArtObject(hit));
 				models.push_back(hit);
@@ -514,9 +613,9 @@ namespace Plugin
 			RegisterRowModels(row, std::move(models));
 			++made;
 		}
-		SKSE::log::info("art: {} row(s) made, {} missing; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made, missing,
-			gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
-																 "not loaded",
+		SKSE::log::info("art: {} row(s) made, {} missing, {} with worn copies; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made,
+			missing, worn, gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
+																				"not loaded",
 			gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
@@ -548,6 +647,26 @@ namespace Plugin
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
 		std::vector<Target> found;
 		std::size_t         skipped = 0;
+		// each always-on Ward Power effect's strongest magnitude on any spell or enchantment (its rank - PowerRow)
+		std::unordered_map<const RE::EffectSetting*, float> carriers;
+		auto                                                note = [&](RE::MagicItem* a_item) {
+			for (auto* e : a_item->effects) {
+				if (e && e->baseEffect && AlwaysOnPower(*e->baseEffect)) {
+					auto& m = carriers[e->baseEffect];
+					m = (std::max)(m, e->effectItem.magnitude);
+				}
+			}
+		};
+		for (auto* s : dh->GetFormArray<RE::SpellItem>()) {
+			if (s) {
+				note(s);
+			}
+		}
+		for (auto* en : dh->GetFormArray<RE::EnchantmentItem>()) {
+			if (en) {
+				note(en);
+			}
+		}
 		for (auto* eff : dh->GetFormArray<RE::EffectSetting>()) {
 			if (!eff) {
 				continue;
@@ -556,10 +675,18 @@ namespace Plugin
 			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
 				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
+			t.constant = d.castingType == RE::MagicSystem::CastingType::kConstantEffect;
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
 				t.why = "ShieldConcSelf, silent";
-			} else if (auto it = table.find(eff->GetFormID()); it != table.end()) {
+			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !t.castWard && !t.hitWard && !t.enchWard && !power) {
+				// a table ward another mod made into something else - no ward art left, no Ward Power (Reliquary of Myth turns
+				// vanilla Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too):
+				// dressed, it would add a second dome over the real one (3.4)
+				++skipped;
+				SKSE::log::info("[WARD] left alone: {} (in the table, but another mod took its art and Ward Power away)", Where(eff));
+				continue;
+			} else if (it != table.end()) {
 				t.how = How::kTable;
 				t.row = it->second;
 				t.why = std::format("1.0 table: {}", kTokens[t.row]);
@@ -578,9 +705,17 @@ namespace Plugin
 				if (const auto* file = eff->GetFile(0)) {
 					t.plugin = std::string(file->GetFilename());
 				}
-				t.row = RankRow(d.minimumSkill);
-				t.why = std::format("found by {}; minimum skill {} = {}", (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power",
-					d.minimumSkill, kTokens[t.row]);
+				// an ALWAYS-ON ward (a constant effect: an item's ward while it is held or worn) is ranked by its Ward Power on the
+				// vanilla wards' scale (PowerRow), never by its minimum skill - an item's effect says 0 there: Reliquary of Myth's
+				// Staff of Magnus (999 Ward Power) wore the Novice row's white (3.4, a user report)
+				const char* by = (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power";
+				// (its magnitude is Ward Power only when that is its value; one effect shared by a weak and a strong item takes the
+				// strong one's rank - nothing says which carrier is up)
+				const bool  always = AlwaysOnPower(*eff);
+				const float most = always ? StrongestWard(eff, carriers) : 0.0f;
+				t.row = always ? PowerRow(most) : RankRow(d.minimumSkill);
+				t.why = always ? std::format("found by {}; always on, {:.0f} Ward Power = {}", by, most, kTokens[t.row]) :
+				                 std::format("found by {}; minimum skill {} = {}", by, d.minimumSkill, kTokens[t.row]);
 			}
 			found.push_back(std::move(t));
 		}
@@ -648,8 +783,12 @@ namespace Plugin
 		gSkipped = skipped;
 		gShields = std::move(shields);
 		gCrusaderEnch = ench;
-		SKSE::log::info("wards: {} found ({} from the 1.0 table), {} left alone; Legacy Crusader shields {}", gTargets.size(),
-			std::ranges::count_if(gTargets, [](const Target& a) { return a.how == How::kTable; }), gSkipped,
+		// (counted before ApplyAll decides who is dressed: a ward whose mod is unticked or whose row is Vanilla wears its own art;
+		// one in a row without worn copies wears the cast meshes - MakeArt's line says how many rows have them)
+		const auto always = std::ranges::count_if(gTargets, WearsWorn);
+		const auto noCopy = std::ranges::count_if(gTargets, [](const Target& a) { return WearsWorn(a) && gArt[a.row].hand && !gArt[a.row].wornDome; });
+		SKSE::log::info("wards: {} found ({} from the 1.0 table), {} left alone, {} always on with ward art ({} in a row without worn copies); Legacy Crusader shields {}",
+			gTargets.size(), std::ranges::count_if(gTargets, [](const Target& a) { return a.how == How::kTable; }), gSkipped, always, noCopy,
 			gShields.empty() ? "not in this load order" : std::format("{} found", gShields.size()));
 	}
 
@@ -679,9 +818,9 @@ namespace Plugin
 							if (!a) {
 								continue;
 							}
-							const auto* dome = DomeOf(t.row, a);
-							const bool  table = t.how == How::kTable;
-							if (((table || t.castWard) && t.effect->data.castingArt != a->hand) || ((table || t.hitWard) && t.effect->data.hitEffectArt != dome)) {
+							const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
+							const auto& e = t.effect->data;
+							if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
 								++swapped;
 							}
 						}
@@ -723,22 +862,17 @@ namespace Plugin
 				Restore(d.enchantEffectArt, t.ownEnch, c.art);
 				continue;
 			}
-			RE::BGSArtObject* dome = DomeOf(t.row, a);
-			const bool        table = t.how == How::kTable;
-			bool              put = false;
-			if (table || t.castWard) {
-				Put(d.castingArt, a->hand, c.art);
-				put = true;
+			const auto w = DressOf(t, a);
+			if (w.cast) {
+				Put(d.castingArt, w.cast, c.art);
 			}
-			if (table || t.hitWard) {
-				Put(d.hitEffectArt, dome, c.art);
-				put = true;
+			if (w.hit) {
+				Put(d.hitEffectArt, w.hit, c.art);
 			}
-			if (!table && t.enchWard) {
-				Put(d.enchantEffectArt, dome, c.art);
-				put = true;
+			if (w.ench) {
+				Put(d.enchantEffectArt, w.ench, c.art);
 			}
-			if (put) {
+			if (w.cast || w.hit || w.ench) {
 				++dressed;
 			}
 		}
@@ -951,8 +1085,46 @@ namespace Plugin
 		if (!player || !a) {
 			return false;
 		}
-		auto* dome = DomeOf(a_row, a);
+		// the looping copy where the row has one: put on as plain art, the cast dome waits in its idle state for a cast and
+		// shows next to nothing (the 2026-10-14 preview pictures had no dome while its light was lit)
+		auto* dome = WornDomeOf(a_row, a_row < kRanks, a);
 		return player->ApplyArtObject(dome, a_seconds) != nullptr;
+	}
+
+	// The row of an always-on ward of ours that is up on the actor - what a drawn staff's hand light wears (DomeLights.cpp
+	// CastingRow; Reliquary of Myth's Staff of Magnus raises its ward as an ability while held, so no cast names it). The
+	// strongest of them; only the five rank rows (a shield's or the vampire ward never lights a staff hand) and only a ward that
+	// wears ward art (one found by Ward Power alone shows nothing). Nothing links an ability to the staff that gave it, so a
+	// ring's always-on ward lights a staff hand too.
+	// LOCK ORDER: called with DomeLights.cpp's lock held; takes this file's lock, then Settings' (Worn -> ModOn). Nothing here
+	// may call into DomeLights.cpp while holding this lock.
+	std::size_t AlwaysOnWardRow(RE::Actor* a_actor)
+	{
+		auto* list = a_actor ? a_actor->AsMagicTarget()->GetActiveEffectList() : nullptr;
+		if (!list) {
+			return kRows;
+		}
+		std::scoped_lock l{ gLock };
+		std::size_t      best = kRows;
+		for (auto* ae : *list) {
+			const auto* base = ae && ae->effect && !ae->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled) ?
+			                       ae->GetBaseObject() :
+			                       nullptr;
+			const auto  it = base && base->data.castingType == RE::MagicSystem::CastingType::kConstantEffect ?
+			                     gTargetOf.find(const_cast<RE::EffectSetting*>(base)) :
+			                     gTargetOf.end();
+			if (it == gTargetOf.end()) {
+				continue;
+			}
+			const auto& t = gTargets[it->second];
+			if (WearsWorn(t) && Worn(t)) {
+				best = best == kRows ? t.row : (std::max)(best, t.row);  // the strongest, whatever the list's order
+				if (best == kRanks - 1) {
+					break;
+				}
+			}
+		}
+		return best;
 	}
 
 	std::size_t RowOfModel(std::string_view a_model)
