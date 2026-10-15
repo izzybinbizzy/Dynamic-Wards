@@ -24,6 +24,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <mutex>
 #include <set>
 #include <string>

@@ -265,7 +265,10 @@ namespace Plugin
 		// the hand's ward: while it is cast (charging, ready, held) the caster's spell; while it is only readied in that hand
 		// (the casting art shows, nothing cast yet - his catch 2026-10-05, "im talking about the casting art too") the spell
 		// equipped there, hands drawn
-		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot)
+		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
+		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
+		// above found no ward, so firing the staff keeps the light; read once per actor and tick (a_alwaysOn)
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
 			const RE::MagicItem* spell = nullptr;
@@ -276,24 +279,24 @@ namespace Plugin
 					spell = caster->currentSpell;
 				}
 			}
-			if (!spell && a_actor->AsActorState()->IsWeaponDrawn()) {
-				auto* held = a_actor->GetEquippedObject(a_slot == 0);
-				spell = skyrim_cast<RE::SpellItem*>(held);
-				// a STAFF drawn in this hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its
-				// ward as an ability while held): that ward's row - no spell is cast, so nothing above finds it (3.4, a user
-				// report: no light in first person)
-				if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
-					return AlwaysOnWardRow(a_actor);
-				}
-			}
+			const bool drawn = a_actor->AsActorState()->IsWeaponDrawn();
+			auto*      held = drawn ? a_actor->GetEquippedObject(a_slot == 0) : nullptr;
 			if (!spell) {
-				return kRows;
+				spell = skyrim_cast<RE::SpellItem*>(held);
 			}
-			for (auto* e : spell->effects) {
-				const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-				if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
-					return row;
+			if (spell) {
+				for (auto* e : spell->effects) {
+					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
+					if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
+						return row;
+					}
 				}
+			}
+			if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
+				if (!a_alwaysOn) {
+					a_alwaysOn = AlwaysOnWardRow(a_actor);
+				}
+				return *a_alwaysOn;
 			}
 			return kRows;
 		}
@@ -309,9 +312,10 @@ namespace Plugin
 		// one actor's two hands: a light on each hand casting one of our wards, under that hand's magic node
 		void TickActor(RE::Actor* a_actor, RE::NiAVObject* a_body, ActorHands& a_hands, RE::ShadowSceneNode* a_scene)
 		{
+			std::optional<std::size_t> alwaysOn;  // AlwaysOnWardRow, read at most once for both hands
 			for (std::size_t slot = 0; slot < 2; ++slot) {
 				auto&      h = a_hands.h[slot];
-				const auto row = a_body ? CastingRow(a_actor, slot) : kRows;
+				const auto row = a_body ? CastingRow(a_actor, slot, alwaysOn) : kRows;
 				const auto color = row < kRows ? RowColor(row) : std::nullopt;
 				auto*      node = color ? a_body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot])) : nullptr;
 				auto*      parent = node ? node->AsNode() : nullptr;
