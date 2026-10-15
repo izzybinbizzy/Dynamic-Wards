@@ -119,7 +119,7 @@ namespace Plugin
 	std::size_t                                      FoundCount();
 	std::string                                      WardsReport();
 	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect);
-	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player
+	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
 	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::vector<std::pair<std::string, std::string>> WardPerks();

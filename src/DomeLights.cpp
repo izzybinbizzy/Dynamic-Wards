@@ -25,7 +25,7 @@ namespace Plugin
 		constexpr float         kK = 3918.88f;  // the build's cutoff constant: cutoff = kK * fade / (reach^2 + size^2)
 		constexpr std::uint32_t kIslFlag = 1u << 10;
 		constexpr std::uint32_t kInitialisedFlag = 1u << 8;  // Light Limit Fix: the light's flags are set
-		constexpr float         kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
+		constexpr float         kAmbientRatio = 0.1f;        // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto          kTick = std::chrono::milliseconds(100);
 		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
 		constexpr float       kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
