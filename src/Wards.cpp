@@ -297,6 +297,12 @@ namespace Plugin
 			                                                 0;
 		}
 
+		// an always-on ward ranked by its strength: a constant effect whose value is Ward Power (an item's ward while held or worn)
+		bool AlwaysOnPower(const RE::EffectSetting& a_effect)
+		{
+			return a_effect.data.castingType == RE::MagicSystem::CastingType::kConstantEffect && a_effect.data.primaryAV == RE::ActorValue::kWardPower;
+		}
+
 		float StrongestWard(const RE::EffectSetting* a_effect, const std::unordered_map<const RE::EffectSetting*, float>& a_carriers)
 		{
 			const auto it = a_carriers.find(a_effect);
@@ -567,12 +573,11 @@ namespace Plugin
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
 		std::vector<Target> found;
 		std::size_t         skipped = 0;
-		// every effect's strongest magnitude on any spell or enchantment (an always-on ward is ranked by it - PowerRow)
+		// each always-on Ward Power effect's strongest magnitude on any spell or enchantment (its rank - PowerRow)
 		std::unordered_map<const RE::EffectSetting*, float> carriers;
 		auto                                                note = [&](RE::MagicItem* a_item) {
 			for (auto* e : a_item->effects) {
-				if (e && e->baseEffect && e->baseEffect->data.castingType == RE::MagicSystem::CastingType::kConstantEffect &&
-					e->baseEffect->data.primaryAV == RE::ActorValue::kWardPower) {
+				if (e && e->baseEffect && AlwaysOnPower(*e->baseEffect)) {
 					auto& m = carriers[e->baseEffect];
 					m = (std::max)(m, e->effectItem.magnitude);
 				}
@@ -599,8 +604,8 @@ namespace Plugin
 			if (eff->GetFormID() == silentId) {
 				t.how = How::kSilent;
 				t.why = "ShieldConcSelf, silent";
-			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !d.castingArt && !d.hitEffectArt && !d.enchantEffectArt && !power) {
-				// a table ward another mod made into something else - no art of any kind, no Ward Power (Reliquary of Myth turns
+			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !t.castWard && !t.hitWard && !t.enchWard && !power) {
+				// a table ward another mod made into something else - no ward art left, no Ward Power (Reliquary of Myth turns
 				// vanilla Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too):
 				// dressed, it would add a second dome over the real one (3.4)
 				++skipped;
@@ -631,7 +636,7 @@ namespace Plugin
 				const char* by = (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power";
 				// (its magnitude is Ward Power only when that is its value; one effect shared by a weak and a strong item takes the
 				// strong one's rank - nothing says which carrier is up)
-				const bool  always = d.castingType == RE::MagicSystem::CastingType::kConstantEffect && power;
+				const bool  always = AlwaysOnPower(*eff);
 				const float most = always ? StrongestWard(eff, carriers) : 0.0f;
 				t.row = always ? PowerRow(most) : RankRow(d.minimumSkill);
 				t.why = always ? std::format("found by {}; always on, {:.0f} Ward Power = {}", by, most, kTokens[t.row]) :
