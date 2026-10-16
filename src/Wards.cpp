@@ -817,7 +817,7 @@ namespace Plugin
 					if (queued.exchange(true)) {
 						return;
 					}
-					Later("art watch", []() {
+					const bool sent = Later("art watch", []() {
 						queued = false;
 						std::size_t swapped = 0;
 						{
@@ -839,6 +839,9 @@ namespace Plugin
 							ApplyAll("art swapped by another mod");
 						}
 					});
+					if (!sent) {
+						queued = false;  // nothing queued: the next round tries again
+					}
 				});
 			}
 		}).detach();  // never joined: a join from a DLL's static destructor at exit can hang on the loader lock

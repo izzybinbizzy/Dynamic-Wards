@@ -666,10 +666,12 @@ namespace Plugin
 			return;
 		}
 		gLiveLast = now;
-		Later("live recolor", []() {
-			gLiveQueued = false;
-			ApplyColors(true);
-		});
+		if (!Later("live recolor", []() {
+				gLiveQueued = false;
+				ApplyColors(true);
+			})) {
+			gLiveQueued = false;  // nothing queued: the next frame of the drag tries again
+		}
 	}
 
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models)

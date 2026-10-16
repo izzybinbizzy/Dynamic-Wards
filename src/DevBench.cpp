@@ -163,13 +163,14 @@ namespace Plugin
 			return a_key;
 		}
 
-		// the save and the re-dress on the game's main thread, as the menu's (Menu.cpp Changed)
+		// saved here, before the reply (SaveSettings is safe on any thread), so a caller that reads DynamicWards.ini next reads
+		// the new value; the re-dress on the game's main thread
 		json ApplyAndRead(bool a_save)
 		{
-			auto now = DevBenchGlue::OnMainThread([a_save]() {
-				if (a_save) {
-					SaveSettings();
-				}
+			if (a_save) {
+				SaveSettings();
+			}
+			auto now = DevBenchGlue::OnMainThread([]() {
 				ApplyAll("devbench");
 				return StateNow();
 			});
@@ -237,12 +238,10 @@ namespace Plugin
 					DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("unknown setting", SettingNames()));
 					return;
 				}
-				Later("devbench setter", [saved]() {
-					if (saved) {
-						SaveSettings();
-					}
-					ApplyAll("devbench");
-				});
+				if (saved) {
+					SaveSettings();  // before the reply, as ApplyAndRead
+				}
+				Later("devbench setter", []() { ApplyAll("devbench"); });
 				DevBenchGlue::Reply(a_sink, a_write, json{ { "queued", true } });
 			} catch (...) {
 				DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("Dynamic Wards could not handle that"));

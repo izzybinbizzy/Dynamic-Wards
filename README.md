@@ -12,12 +12,12 @@ The plugin of Dynamic Wards; it ships with the mod and is required by it.
 - A pick for each shield that raises a ward (Spellbreaker, the Shield of the Crusader, the Shield of Reman Cyrodiil):
   off (no ward), the normal dome or the 360 dome.
 
-## Settings
-SKSE Menu Framework > Dynamic Wards, saved to `DynamicWards.ini` at once.
-
 ## Requires
 SKSE and Address Library for SKSE Plugins; SKSE Menu Framework for the menu. The 360 dome needs 360 Ward and
 360 Ward Universal Patch SKSE.
+
+## Settings
+SKSE Menu Framework > Dynamic Wards, saved to `DynamicWards.ini` at once.
 
 ## Third-party files
 `src/DevBenchAPI.h` and `src/DevBenchAPI.cpp` are devbench's own interface files, MIT licensed by

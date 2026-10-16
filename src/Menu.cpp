@@ -57,16 +57,15 @@ namespace Plugin
 			if (queued.exchange(true)) {
 				return;
 			}
-			if (!SKSE::GetTaskInterface()) {
-				queued = false;
-				SKSE::log::warn("menu: no SKSE task interface - the change is kept for this session but not saved or applied");
-				return;
-			}
-			Later("menu change", []() {
+			const bool sent = Later("menu change", []() {
 				queued = false;
 				SaveSettings();
 				ApplyAll("menu");
 			});
+			if (!sent) {
+				queued = false;
+				SKSE::log::warn("menu: the change could not reach the main thread - it is kept for this session but not saved or applied");
+			}
 		}
 
 		ImVec4 Vec(Color a_c, float a_alpha = 1.0f)

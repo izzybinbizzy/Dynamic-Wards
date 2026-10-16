@@ -462,8 +462,8 @@ namespace Plugin
 						std::scoped_lock l{ gLock };
 						active = Wanted() || !gLit.empty() || !gHands.empty() || HandLight1st();
 					}
-					if (active && !gQueued.exchange(true)) {
-						Later("dome and hand lights", Tick);
+					if (active && !gQueued.exchange(true) && !Later("dome and hand lights", Tick)) {
+						gQueued = false;  // nothing queued: the next round tries again
 					}
 				});
 			}

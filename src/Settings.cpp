@@ -277,24 +277,25 @@ namespace Plugin
 		}
 	}
 
-	// On the game's main thread (the menu and DevBench queue it there). The text is made under the settings lock, then written
-	// beside the file and moved over it, as RELight - Spell Addon and Illuminated save theirs: a crash or a full disk mid-write
-	// leaves the old file, never half of one.
+	// Any thread (the menu queues it onto the main thread; DevBench saves on its own). Written beside the file and moved over
+	// it, as RELight - Spell Addon and Illuminated save theirs: a crash or a full disk mid-write leaves the old file, never half
+	// of one. One save at a time, and each takes its snapshot inside that turn, so the last file written holds the newest settings
 	void SaveSettings()
 	{
+		static std::mutex  writing;
+		std::scoped_lock   w{ writing };
 		std::ostringstream out;
 		{
 			std::scoped_lock l{ gLock };
 			WriteSettingsText(out);
 		}
-		static std::mutex writing;  // one writer of the file at a time, whichever thread asks
-		std::scoped_lock  w{ writing };
 		const std::string tmp = std::string(kPath) + ".tmp";
 		std::error_code   ec;
 		{
 			std::ofstream file(tmp, std::ios::trunc);
 			file << out.str();
-			if (!file.flush()) {
+			file.close();
+			if (!file) {
 				SKSE::log::warn("settings: {} could not be written", kPath);
 				std::filesystem::remove(tmp, ec);
 				return;

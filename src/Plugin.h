@@ -261,12 +261,18 @@ namespace Plugin
 	}
 
 	// a_job onto the game's main thread (the menu draws off it; DevBench and our two threads call from their own), run there
-	// inside Guarded under a_where - one flag per caller, as each caller's job is its own type
+	// inside Guarded under a_where - one flag per caller, as each caller's job is its own type. False when nothing was queued
+	// (no task interface, or no memory for the task): a caller that raised a "queued" flag lowers it again, or it would stay up
 	template <class F>
-	void Later(const char* a_where, F&& a_job)
+	bool Later(const char* a_where, F&& a_job) noexcept
 	{
-		if (auto* tasks = SKSE::GetTaskInterface()) {
-			tasks->AddTask([a_where, job = std::forward<F>(a_job)]() { Guarded(a_where, job); });
+		try {
+			if (auto* tasks = SKSE::GetTaskInterface()) {
+				tasks->AddTask([a_where, job = std::forward<F>(a_job)]() { Guarded(a_where, job); });
+				return true;
+			}
+		} catch (...) {
 		}
+		return false;
 	}
 }
