@@ -27,9 +27,13 @@ namespace
 				}
 				const std::string_view name{ a_event->menuName.c_str() };
 				if (name == RE::LoadingMenu::MENU_NAME) {
-					Later("loading screen closed", []() { ApplyAll("loading screen closed"); });
+					if (!Later("loading screen closed", []() { ApplyAll("loading screen closed"); })) {
+						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task)");
+					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
-					Later("a menu closed", []() { CheckUnlock("a menu closed"); });
+					if (!Later("a menu closed", []() { CheckUnlock("a menu closed"); })) {
+						SKSE::log::warn("a menu closed: the 360 unlock could not be re-checked (no main-thread task)");
+					}
 				}
 			});
 			return RE::BSEventNotifyControl::kContinue;

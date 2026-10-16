@@ -22,6 +22,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -86,13 +87,15 @@ namespace DevBenchGlue
 
 	// Runs a_fn on the main thread through SKSE's task interface and waits for what it returns, so a reply carries what
 	// the game holds after the change. nullopt when the game did not run it in time (a loading screen, a paused game): the
-	// task still runs later. a_fn must return json and must not touch anything the listener thread owns.
+	// task still runs later (NotRunYet says so). Throws when nothing could be queued at all - no task interface - so the
+	// handler's catch replies with a refusal instead of "it runs on the next frame"; every caller is a handler that catches.
+	// a_fn must return json and must not touch anything the listener thread owns.
 	template <class F>
 	std::optional<json> OnMainThread(F&& a_fn, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(3000))
 	{
 		auto* tasks = SKSE::GetTaskInterface();
 		if (!tasks)
-			return std::nullopt;
+			throw std::runtime_error("no SKSE task interface - nothing was queued");
 		auto promise = std::make_shared<std::promise<json>>();
 		auto result = promise->get_future();
 		tasks->AddTask([promise, fn = std::forward<F>(a_fn)]() mutable {

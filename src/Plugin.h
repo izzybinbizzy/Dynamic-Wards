@@ -262,9 +262,10 @@ namespace Plugin
 
 	// a_job onto the game's main thread (the menu draws off it; DevBench and our two threads call from their own), run there
 	// inside Guarded under a_where - one flag per caller, as each caller's job is its own type. False when nothing was queued
-	// (no task interface, or no memory for the task): a caller that raised a "queued" flag lowers it again, or it would stay up
+	// (no task interface, or no memory for the task): a caller that raised a "queued" flag lowers it again, or it would stay up,
+	// and a caller that reports to someone (DevBench) says it did not happen - so the result is never dropped
 	template <class F>
-	bool Later(const char* a_where, F&& a_job) noexcept
+	[[nodiscard]] bool Later(const char* a_where, F&& a_job) noexcept
 	{
 		try {
 			if (auto* tasks = SKSE::GetTaskInterface()) {

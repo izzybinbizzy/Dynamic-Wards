@@ -186,7 +186,9 @@ namespace Plugin
 			if (!row) {
 				return DevBenchGlue::Refusal("unknown row '" + a_row + "'", RowNames());
 			}
-			Later("devbench preview", [i = *row, a_seconds]() { PreviewRow(i, static_cast<float>(a_seconds)); });
+			if (!Later("devbench preview", [i = *row, a_seconds]() { PreviewRow(i, static_cast<float>(a_seconds)); })) {
+				return DevBenchGlue::Refusal("the preview could not be queued on the main thread");
+			}
 			return json{ { "ok", true }, { "preview", a_row }, { "seconds", a_seconds } };
 		}
 
@@ -241,8 +243,8 @@ namespace Plugin
 				if (saved) {
 					SaveSettings();  // before the reply, as ApplyAndRead
 				}
-				Later("devbench setter", []() { ApplyAll("devbench"); });
-				DevBenchGlue::Reply(a_sink, a_write, json{ { "queued", true } });
+				const bool sent = Later("devbench setter", []() { ApplyAll("devbench"); });
+				DevBenchGlue::Reply(a_sink, a_write, json{ { "queued", sent } });
 			} catch (...) {
 				DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("Dynamic Wards could not handle that"));
 			}
