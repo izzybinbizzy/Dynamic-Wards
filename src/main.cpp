@@ -26,13 +26,16 @@ namespace
 					return;
 				}
 				const std::string_view name{ a_event->menuName.c_str() };
+				// a job that could not be queued is said once per place (as Guarded does), not at every menu close
+				static std::atomic<bool> toldLoad{ false };
+				static std::atomic<bool> toldMenu{ false };
 				if (name == RE::LoadingMenu::MENU_NAME) {
-					if (!Later("loading screen closed", []() { ApplyAll("loading screen closed"); })) {
-						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task)");
+					if (!Later("loading screen closed", []() { ApplyAll("loading screen closed"); }) && !toldLoad.exchange(true)) {
+						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
-					if (!Later("a menu closed", []() { CheckUnlock("a menu closed"); })) {
-						SKSE::log::warn("a menu closed: the 360 unlock could not be re-checked (no main-thread task)");
+					if (!Later("a menu closed", []() { CheckUnlock("a menu closed"); }) && !toldMenu.exchange(true)) {
+						SKSE::log::warn("a menu closed: the 360 unlock could not be re-checked (no main-thread task); later ones are not logged");
 					}
 				}
 			});

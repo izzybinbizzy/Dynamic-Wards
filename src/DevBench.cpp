@@ -45,7 +45,7 @@ namespace Plugin
 				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + "}";
 				a_write(a_sink, report.c_str());
 			} catch (...) {
-				a_write(a_sink, R"({"error":"Dynamic Wards could not make its report"})");
+				a_write(a_sink, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");  // a plain string: raw ones are descriptors (glue check)
 			}
 		}
 
@@ -177,6 +177,9 @@ namespace Plugin
 			if (!now) {
 				return DevBenchGlue::NotRunYet();
 			}
+			if (DevBenchGlue::Refused(*now)) {
+				return *now;  // nothing was queued: the setting is stored (and saved, when asked) but not applied
+			}
 			return json{ { "ok", true }, { "now", *now } };
 		}
 
@@ -243,8 +246,13 @@ namespace Plugin
 				if (saved) {
 					SaveSettings();  // before the reply, as ApplyAndRead
 				}
-				const bool sent = Later("devbench setter", []() { ApplyAll("devbench"); });
-				DevBenchGlue::Reply(a_sink, a_write, json{ { "queued", sent } });
+				if (!Later("devbench setter", []() { ApplyAll("devbench"); })) {
+					auto refused = DevBenchGlue::NotQueued();
+					refused["saved"] = saved;  // the value is stored (and saved) - only its re-apply could not be queued
+					DevBenchGlue::Reply(a_sink, a_write, refused);
+					return;
+				}
+				DevBenchGlue::Reply(a_sink, a_write, json{ { "ok", true }, { "queued", true } });
 			} catch (...) {
 				DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("Dynamic Wards could not handle that"));
 			}
