@@ -77,7 +77,7 @@ namespace Plugin
 		std::size_t RowIndex(std::string_view a_token)
 		{
 			for (std::size_t i = 0; i < kRows; ++i) {
-				if (kTokens[i] == a_token) {
+				if (SameText(kTokens[i], a_token)) {
 					return i;
 				}
 			}
@@ -150,7 +150,7 @@ namespace Plugin
 				continue;
 			}
 			if (line.front() == '[' && line.back() == ']') {
-				section = line.substr(1, line.size() - 2);
+				section = Trim(line.substr(1, line.size() - 2));
 				continue;
 			}
 			const auto eq = line.find('=');
@@ -162,58 +162,62 @@ namespace Plugin
 			int        v = 0;
 			const auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), v);
 			++read;
+			// sections and keys in any case, as RELight - Spell Addon and Illuminated read theirs (a hand edit of "[settings]"
+			// or "opacity=" counts)
+			auto       is = [&key](std::string_view a_name) { return SameText(key, a_name); };
+			const bool settings = SameText(section, "Settings");
 			// a hand-edited number that does not read keeps its default instead of falling to the slider's floor
 			const bool number = ec == std::errc{} && end == val.data() + val.size();
-			if (section == "Settings" && !number && key != "LadderColor" && key != "Unlock360Perk") {
+			if (settings && !number && !is("LadderColor") && !is("Unlock360Perk")) {
 				continue;
 			}
-			if (section == "Settings") {
-				if (key == "WardLight") {
+			if (settings) {
+				if (is("WardLight")) {
 					gLight = v != 0;
-				} else if (key == "ColoredLights") {
+				} else if (is("ColoredLights")) {
 					gColoredLights = v != 0;
-				} else if (key == "LadderColor") {
+				} else if (is("LadderColor")) {
 					gLadder = ParseColor(val).value_or(gLadder);
-				} else if (key == "Ladder") {  // 2.x: 0-4 blue red gold green purple
+				} else if (is("Ladder")) {  // 2.x: 0-4 blue red gold green purple
 					constexpr Color kOld[] = { 0x2468FF, 0xFF3648, 0xFFBE5A, 0x2DC846, 0x9646FF };
 					gLadder = kOld[std::clamp(v, 0, 4)];
 					old = true;
-				} else if (key == "LadderStages") {
+				} else if (is("LadderStages")) {
 					gStages = std::clamp(v, kMinStages, kMaxStages);
-				} else if (key == "LadderReversed") {
+				} else if (is("LadderReversed")) {
 					gReversed = v != 0;
-				} else if (key == "Opacity") {
+				} else if (is("Opacity")) {
 					gOpacity = std::clamp(v, kOpacityMin, 100);
-				} else if (key == "Transparency") {
+				} else if (is("Transparency")) {
 					gTransparency = std::clamp(v, 0, kTransparencyMax);
-				} else if (key == "Brightness") {
+				} else if (is("Brightness")) {
 					gBrightness = std::clamp(v, kBrightnessMin, kBrightnessMax);
-				} else if (key == "CastingGlow") {
+				} else if (is("CastingGlow")) {
 					gCastingGlow = std::clamp(v, kBrightnessMin, kBrightnessMax);
-				} else if (key == "Dome") {
+				} else if (is("Dome")) {
 					gDome = std::clamp(v, 0, 1);
-				} else if (key == "Unlock360") {
+				} else if (is("Unlock360")) {
 					gUnlock = static_cast<Unlock>(std::clamp(v, 0, 4));
-				} else if (key == "Unlock360Perk") {
+				} else if (is("Unlock360Perk")) {
 					gPerk = val;
-				} else if (key == "CrusaderShields") {
+				} else if (is("CrusaderShields")) {
 					gCrusader = v != 0;
-				} else if (key == "EveryWard") {
+				} else if (is("EveryWard")) {
 					gEvery = v != 0;
-				} else if (key == "KeepStrangeRunesWards") {
+				} else if (is("KeepStrangeRunesWards")) {
 					gKeepRunes = v != 0;
 				} else {
 					for (const auto row : kShieldRows) {
-						if (key == ShieldKey(row)) {
+						if (is(ShieldKey(row))) {
 							oldSwitch[ShieldIndex(row)] = v != 0 ? 1 : 0;
-						} else if (key == ShieldDomeKey(row)) {
+						} else if (is(ShieldDomeKey(row))) {
 							gShieldDome[ShieldIndex(row)] = std::clamp(v, 0, 2);
 						}
 					}
 				}
-			} else if (section == "Compatibility") {
+			} else if (SameText(section, "Compatibility")) {
 				gMods[Lower(key)] = v != 0;
-			} else if (const auto row = RowIndex(key); row < kRows && section == "Colors") {
+			} else if (const auto row = RowIndex(key); row < kRows && SameText(section, "Colors")) {
 				if (Lower(val) == "vanilla") {
 					gRows[row] = { RowMode::kVanilla, gRows[row].color };
 				} else if (Lower(val) == "default") {
@@ -242,36 +246,63 @@ namespace Plugin
 			ShieldDomeName(gShieldDome[1]), ShieldDomeName(gShieldDome[2]), read, old ? "; a 2.x file, carried over" : "");
 	}
 
+	namespace
+	{
+		// every setting as DynamicWards.ini carries it; gLock held
+		void WriteSettingsText(std::ostream& a_out)
+		{
+			a_out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
+				  << "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
+				  << "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nBrightness=" << gBrightness << "\nCastingGlow=" << gCastingGlow << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
+				  << "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
+				  << "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
+				  << "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0);
+			for (const auto row : kShieldRows) {
+				// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
+				a_out << "\n"
+					  << ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)] << "\n"
+					  << ShieldKey(row) << "=" << (gShieldDome[ShieldIndex(row)] != static_cast<int>(ShieldDome::kOff) ? 1 : 0);
+			}
+			a_out << "\n[Colors]\n";
+			for (std::size_t i = 0; i < kRows; ++i) {
+				const auto& r = gRows[i];
+				a_out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
+																																	HexColor(r.color))
+					  << "\n";
+			}
+			a_out << "[Compatibility]\n";
+			for (const auto& [plugin, on] : gMods) {
+				a_out << plugin << "=" << (on ? 1 : 0) << "\n";
+			}
+		}
+	}
+
+	// On the game's main thread (the menu and DevBench queue it there). The text is made under the settings lock, then written
+	// beside the file and moved over it, as RELight - Spell Addon and Illuminated save theirs: a crash or a full disk mid-write
+	// leaves the old file, never half of one.
 	void SaveSettings()
 	{
-		std::scoped_lock l{ gLock };
-		std::ofstream    out(kPath, std::ios::trunc);
-		if (!out) {
-			SKSE::log::warn("settings: {} could not be written", kPath);
-			return;
+		std::ostringstream out;
+		{
+			std::scoped_lock l{ gLock };
+			WriteSettingsText(out);
 		}
-		out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
-			<< "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
-			<< "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nBrightness=" << gBrightness << "\nCastingGlow=" << gCastingGlow << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
-			<< "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
-			<< "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
-			<< "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0);
-		for (const auto row : kShieldRows) {
-			// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
-			out << "\n"
-				<< ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)] << "\n"
-				<< ShieldKey(row) << "=" << (gShieldDome[ShieldIndex(row)] != static_cast<int>(ShieldDome::kOff) ? 1 : 0);
+		static std::mutex writing;  // one writer of the file at a time, whichever thread asks
+		std::scoped_lock  w{ writing };
+		const std::string tmp = std::string(kPath) + ".tmp";
+		std::error_code   ec;
+		{
+			std::ofstream file(tmp, std::ios::trunc);
+			file << out.str();
+			if (!file.flush()) {
+				SKSE::log::warn("settings: {} could not be written", kPath);
+				std::filesystem::remove(tmp, ec);
+				return;
+			}
 		}
-		out << "\n[Colors]\n";
-		for (std::size_t i = 0; i < kRows; ++i) {
-			const auto& r = gRows[i];
-			out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
-																															  HexColor(r.color))
-				<< "\n";
-		}
-		out << "[Compatibility]\n";
-		for (const auto& [plugin, on] : gMods) {
-			out << plugin << "=" << (on ? 1 : 0) << "\n";
+		if (std::filesystem::rename(tmp, kPath, ec); ec) {
+			SKSE::log::warn("settings: {} could not be replaced ({})", kPath, ec.message());
+			std::filesystem::remove(tmp, ec);  // nothing left behind when the move failed
 		}
 	}
 

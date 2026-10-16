@@ -237,5 +237,36 @@ namespace Plugin
 	std::string          HexColor(Color a_color);  // "2468FF"
 	std::optional<Color> ParseColor(std::string_view a_text);
 	Color                Mix(Color a_from, Color a_to, int a_percent);
-	void                 Later(std::function<void()> a_job);  // onto the game's main thread (the menu draws off it)
+	bool                 SameText(std::string_view a_a, std::string_view a_b);  // equal, ignoring ASCII case
+
+	// Runs a_work and lets no exception out: inside a game callback, a task or one of our threads one would end the game (his
+	// C++ rule; Illuminated's LightKit::Guarded, the same code). The first failure at each place is logged, later ones there
+	// are skipped quietly. One flag per call site - each a_work is a lambda of its own type, so each call site has its own
+	// instance of this function.
+	template <class F>
+	inline void Guarded(const char* a_where, F&& a_work) noexcept
+	{
+		static std::atomic<bool> told{ false };
+		try {
+			std::forward<F>(a_work)();
+		} catch (const std::exception& e) {
+			if (!told.exchange(true)) {
+				SKSE::log::error("{}: stopped by an error ({}); later ones here are skipped quietly", a_where, e.what());
+			}
+		} catch (...) {
+			if (!told.exchange(true)) {
+				SKSE::log::error("{}: stopped by an unknown error; later ones here are skipped quietly", a_where);
+			}
+		}
+	}
+
+	// a_job onto the game's main thread (the menu draws off it; DevBench and our two threads call from their own), run there
+	// inside Guarded under a_where - one flag per caller, as each caller's job is its own type
+	template <class F>
+	void Later(const char* a_where, F&& a_job)
+	{
+		if (auto* tasks = SKSE::GetTaskInterface()) {
+			tasks->AddTask([a_where, job = std::forward<F>(a_job)]() { Guarded(a_where, job); });
+		}
+	}
 }

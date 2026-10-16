@@ -666,7 +666,7 @@ namespace Plugin
 			return;
 		}
 		gLiveLast = now;
-		Later([]() {
+		Later("live recolor", []() {
 			gLiveQueued = false;
 			ApplyColors(true);
 		});

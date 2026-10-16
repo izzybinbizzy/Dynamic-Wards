@@ -451,18 +451,21 @@ namespace Plugin
 															  "off",
 			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" :
 													 "on");
-		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock
+		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock. Nothing thrown in it
+		// may leave the thread (that ends the game): each round is guarded, and so is the tick on the main thread
 		std::thread([]() {
 			for (;;) {
 				std::this_thread::sleep_for(kTick);
-				bool active = false;
-				{
-					std::scoped_lock l{ gLock };
-					active = Wanted() || !gLit.empty() || !gHands.empty() || HandLight1st();
-				}
-				if (active && !gQueued.exchange(true)) {
-					Later(Tick);
-				}
+				Guarded("dome lights thread", []() {
+					bool active = false;
+					{
+						std::scoped_lock l{ gLock };
+						active = Wanted() || !gLit.empty() || !gHands.empty() || HandLight1st();
+					}
+					if (active && !gQueued.exchange(true)) {
+						Later("dome and hand lights", Tick);
+					}
+				});
 			}
 		}).detach();
 	}

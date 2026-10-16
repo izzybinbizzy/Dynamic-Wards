@@ -7,7 +7,8 @@
 // is applied when the pick is let go (a drag does not rebuild palettes every frame). The HUD swatch is gone (his call 2026-10-03).
 // His layout 2026-10-05: a Colors page first (presets, then the ladder and every ward, the rankless ones with their mod
 // named), then Settings (Lights, Dome, Opacity - Transparency right below Opacity, greyed out without 360 Ward), then
-// Compatibility. Every change is saved the moment it is made (a slider when it is let go), so closing the menu loses nothing.
+// Compatibility. Every change is saved the moment it is made (a slider when it is let go), so closing the menu loses nothing -
+// on the game's main thread, in one task with the re-dress (Changed).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -48,10 +49,24 @@ namespace Plugin
 			TR_MARK("Visage of Reman"), TR_MARK("Vampire ward") };
 		static_assert(std::size(kRowLabel) == kRows);
 
+		// The menu draws on the RENDER thread: the file and the wards are the main thread's, so they follow in ONE task there -
+		// changes made before it runs ride the same task (Illuminated's SetSetting); the setters above already hold the value
 		void Changed()
 		{
-			SaveSettings();
-			Later([]() { ApplyAll("menu"); });
+			static std::atomic<bool> queued{ false };
+			if (queued.exchange(true)) {
+				return;
+			}
+			if (!SKSE::GetTaskInterface()) {
+				queued = false;
+				SKSE::log::warn("menu: no SKSE task interface - the change is kept for this session but not saved or applied");
+				return;
+			}
+			Later("menu change", []() {
+				queued = false;
+				SaveSettings();
+				ApplyAll("menu");
+			});
 		}
 
 		ImVec4 Vec(Color a_c, float a_alpha = 1.0f)

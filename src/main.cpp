@@ -21,14 +21,17 @@ namespace
 	{
 		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 		{
-			if (a_event && !a_event->opening) {
+			Guarded("menu watch", [a_event]() {
+				if (!a_event || a_event->opening) {
+					return;
+				}
 				const std::string_view name{ a_event->menuName.c_str() };
 				if (name == RE::LoadingMenu::MENU_NAME) {
-					Later([]() { ApplyAll("loading screen closed"); });
+					Later("loading screen closed", []() { ApplyAll("loading screen closed"); });
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
-					Later([]() { CheckUnlock("a menu closed"); });
+					Later("a menu closed", []() { CheckUnlock("a menu closed"); });
 				}
-			}
+			});
 			return RE::BSEventNotifyControl::kContinue;
 		}
 		static MenuWatch* Get()
@@ -38,34 +41,46 @@ namespace
 		}
 	};
 
-	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
+	// the order of the data-load work: the settings and the lighting first, the art and the wards, then what runs from then on
+	void LoadEverything()
 	{
-		if (!a_msg) {
-			return;
+		const auto started = std::chrono::steady_clock::now();
+		LoadSettings();
+		ReadLighting();
+		MakeHandLights();
+		MakeArt();
+		FindWards();
+		ApplyAll("data loaded");
+		StartDomeLights();
+		WatchArt();
+		SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
+		RegisterMenu();
+		if (auto* ui = RE::UI::GetSingleton()) {
+			ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuWatch::Get());
 		}
+		SKSE::log::info("ready in {:.1f} ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+	}
+
+	// an exception never leaves into the game: one thrown by the load work (a file it cannot read, memory) is logged, and the
+	// steps before it keep what they did (Illuminated's OnDataLoaded)
+	void OnDataLoaded()
+	{
+		try {
+			LoadEverything();
+		} catch (const std::exception& e) {
+			SKSE::log::critical("the data-load work stopped part way: {} - the steps before it keep their work, the rest is not done this session",
+				e.what());
+		}
+	}
+
+	void Handle(SKSE::MessagingInterface::Message* a_msg)
+	{
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
 			OfferToDevBench();
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:
-			{
-				const auto started = std::chrono::steady_clock::now();
-				LoadSettings();
-				ReadLighting();
-				MakeHandLights();
-				MakeArt();
-				FindWards();
-				ApplyAll("data loaded");
-				StartDomeLights();
-				WatchArt();
-				SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
-				RegisterMenu();
-				if (auto* ui = RE::UI::GetSingleton()) {
-					ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuWatch::Get());
-				}
-				SKSE::log::info("ready in {:.1f} ms",
-					std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
-			}
+			OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
 			ApplyAll("game loaded");
@@ -75,6 +90,14 @@ namespace
 			break;
 		default:
 			break;
+		}
+	}
+
+	// an exception never leaves into the game from any message either (kDataLoaded's work has its own, more telling, guard)
+	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
+	{
+		if (a_msg) {
+			Guarded("SKSE message", [a_msg]() { Handle(a_msg); });
 		}
 	}
 }
@@ -167,11 +190,9 @@ namespace Plugin
 		return std::format("0x{:X}~{}", local, file->GetFilename());
 	}
 
-	void Later(std::function<void()> a_job)
+	bool SameText(std::string_view a_a, std::string_view a_b)
 	{
-		if (auto* tasks = SKSE::GetTaskInterface()) {
-			tasks->AddTask(std::move(a_job));
-		}
+		return std::ranges::equal(a_a, a_b, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
 	}
 }
 
