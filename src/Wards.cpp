@@ -499,9 +499,12 @@ namespace Plugin
 			explicit AfterCall(std::function<void()> a_next) : next(std::move(a_next)) {}
 			void operator()(RE::BSScript::Variable) override
 			{
-				if (next) {
-					next();
-				}
+				// called by the Papyrus machine when the call has returned: nothing thrown may leave into it
+				Guarded("hand refresh", [this]() {
+					if (next) {
+						next();
+					}
+				});
 			}
 			void SetObject(const RE::BSTSmartPointer<RE::BSScript::Object>&) override {}
 		};
@@ -806,28 +809,38 @@ namespace Plugin
 	// are never touched here, so two mods never fight over one.
 	void WatchArt()
 	{
+		static std::atomic<bool> queued{ false };  // one check waiting at a time: a long load would queue one every 2 s
 		std::thread([]() {
 			for (;;) {
 				std::this_thread::sleep_for(std::chrono::seconds(2));
-				Later([]() {
-					std::size_t swapped = 0;
-					{
-						std::scoped_lock l{ gLock };
-						for (const auto& t : gTargets) {
-							const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
-							if (!a) {
-								continue;
-							}
-							const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
-							const auto& e = t.effect->data;
-							if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
-								++swapped;
+				Guarded("art watch thread", []() {  // nothing thrown may leave the thread (that ends the game)
+					if (queued.exchange(true)) {
+						return;
+					}
+					const bool sent = Later("art watch", []() {
+						queued = false;
+						std::size_t swapped = 0;
+						{
+							std::scoped_lock l{ gLock };
+							for (const auto& t : gTargets) {
+								const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
+								if (!a) {
+									continue;
+								}
+								const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
+								const auto& e = t.effect->data;
+								if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
+									++swapped;
+								}
 							}
 						}
-					}
-					if (swapped) {
-						SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
-						ApplyAll("art swapped by another mod");
+						if (swapped) {
+							SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
+							ApplyAll("art swapped by another mod");
+						}
+					});
+					if (!sent) {
+						queued = false;  // nothing queued: the next round tries again
 					}
 				});
 			}
