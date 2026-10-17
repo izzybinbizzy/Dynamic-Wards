@@ -69,6 +69,9 @@ namespace Plugin
 		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";   // the hand light (Ward casting light)
 		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";  // always 1: the light mods' ward lights step down
 		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight - Spell Addon: casting art moved, find the hand lights again
+		// the two applies made in the background (WatchArt's round), named once: ApplyAll keeps the hands' look for the menu
+		constexpr const char* kWhyArtSwapped = "art swapped by another mod";
+		constexpr const char* kWhyUnlock = "the 360 unlock changed";
 
 		struct Art
 		{
@@ -834,12 +837,12 @@ namespace Plugin
 						}
 						if (swapped) {
 							SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
-							ApplyAll("art swapped by another mod");
+							ApplyAll(kWhyArtSwapped);
 						} else {
 							// the 360 unlock follows the skill (or the perk) within 2 s: until 3.5 it was read again only when a
 							// menu closed, so a Restoration level-up mid-fight changed nothing (the outside review). Cheap: one
 							// actor value read; ApplyAll runs only when the answer changed
-							CheckUnlock("the 360 unlock changed");
+							CheckUnlock(kWhyUnlock);
 						}
 					});
 					if (!sent) {
@@ -896,14 +899,19 @@ namespace Plugin
 		}
 		// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
 		ApplyColors();
-		const auto handRows = TakeHandLookChanges();  // taken on every apply, so a load's colors are the ones the hands are seen in
+		// the hand looks are taken on every apply but the two background ones (the 2 s re-dress after another mod swapped the art,
+		// the 360 unlock check): one of those landing during a color drag would mark the dragged color as seen, and the menu's
+		// apply when the drag ends would then re-equip nothing (the 3.5 code review)
+		const std::string_view why = a_why ? a_why : "";
+		const bool             background = why == kWhyArtSwapped || why == kWhyUnlock;
+		const auto             handRows = background ? std::array<bool, kRows>{} : TakeHandLookChanges();
 		if (c.art) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
 		}
 		// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
 		// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
 		std::size_t refreshed = 0;
-		if (a_why && (std::string_view(a_why) == "menu" || std::string_view(a_why) == "devbench")) {
+		if (why == "menu" || why == "devbench") {
 			refreshed = RefreshHands(handRows, castChanged);
 		}
 		const bool ownHand = OwnLights();

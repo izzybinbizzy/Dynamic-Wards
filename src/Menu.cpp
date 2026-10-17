@@ -112,6 +112,8 @@ namespace Plugin
 		// drag was never saved before 3.5. Until 3.5 the ladder's picker also stopped re-reading the stored color after its first
 		// frame and put its own back over a color set elsewhere (DevBench's setter) - the outside review's "the ladder picker
 		// re-reads / saves mid-drag". True when an edit ended (the caller saves and applies it: Changed).
+		std::atomic<bool> gHeldEdit{ false };  // a color is held (changed live, not saved yet) - FlushHeldColor saves it
+
 		template <class Set>
 		bool EditColor(const char* a_id, std::optional<Color>& a_held, Color a_stored, const Set& a_set)
 		{
@@ -121,9 +123,11 @@ namespace Plugin
 				a_held = c;
 				a_set(c);
 				LiveRecolor();
+				gHeldEdit = true;
 			}
 			if (a_held && (done || !IsAnyItemActive())) {
 				a_held.reset();
+				gHeldEdit = false;
 				return true;
 			}
 			return false;
@@ -440,6 +444,16 @@ namespace Plugin
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					  "also take that ward's strength instead of Spellbreaker's."));
 			}
+		}
+	}
+
+	// a menu closed (main.cpp's watch): a color still held then - the menu shut mid-drag - is saved and applied now, not only
+	// the next time the Colors page is drawn (the 3.5 code review). The page then finds the stored color equal to its own and
+	// lets go of it at once
+	void FlushHeldColor()
+	{
+		if (gHeldEdit.exchange(false)) {
+			Changed();
 		}
 	}
 

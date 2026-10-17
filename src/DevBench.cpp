@@ -66,12 +66,8 @@ namespace Plugin
 
 		std::optional<std::size_t> RowIndex(std::string_view a_token)
 		{
-			for (std::size_t i = 0; i < kRows; ++i) {
-				if (kTokens[i] == a_token) {
-					return i;
-				}
-			}
-			return std::nullopt;
+			const auto row = RowOfToken(a_token);  // WardMath.h, the ini reader's lookup: any case
+			return row < kRows ? std::optional<std::size_t>(row) : std::nullopt;
 		}
 
 		// the part of the ward report a setting can move, read after the change was applied

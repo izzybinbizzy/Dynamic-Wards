@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 227;  // 2026-10-16: the first run's count
+	constexpr int kFloor = 228;  // 2026-10-16: the run's count after the code review
 
 	using namespace Plugin;
 
@@ -338,7 +338,8 @@ namespace
 		CHECK(c.rows[2].mode == RowMode::kVanilla);
 		CHECK(c.rows[5].mode == RowMode::kCustom && c.rows[5].color == Color{ 0xFF0000 });
 		CHECK(c.rows[6].mode == RowMode::kDefault);
-		CHECK(c.mods.size() == 2);
+		CHECK(c.mods.size() == 3);
+		CHECK(c.mods.contains("bad.esp") && !c.mods.at("bad.esp"));  // a word reads as off, as before 3.5
 		CHECK(c.mods.contains("my mod.esp") && !c.mods.at("my mod.esp"));
 		CHECK(c.mods.contains("other.esp") && c.mods.at("other.esp"));
 

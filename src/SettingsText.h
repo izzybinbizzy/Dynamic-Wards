@@ -176,9 +176,7 @@ namespace Plugin
 					}
 				}
 			} else if (SameText(section, "Compatibility")) {
-				if (number) {
-					a_out.mods[Lower(key)] = v != 0;
-				}
+				a_out.mods[Lower(key)] = number && v != 0;  // a word ("off") reads as off, as it always did
 			} else if (const auto row = RowOfToken(key); row < kRows && SameText(section, "Colors")) {
 				auto& r = a_out.rows[row];
 				if (SameText(val, "vanilla")) {

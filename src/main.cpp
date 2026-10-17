@@ -49,6 +49,7 @@ namespace
 						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
+					FlushHeldColor();
 					if (!Later("a menu closed", []() { CheckUnlock("a menu closed"); }) && !toldMenu.exchange(true)) {
 						SKSE::log::warn("a menu closed: the 360 unlock could not be re-checked (no main-thread task); later ones are not logged");
 					}

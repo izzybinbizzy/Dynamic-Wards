@@ -170,6 +170,7 @@ namespace Plugin
 	std::string DomeLightsReport();
 
 	void RegisterMenu();
+	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
