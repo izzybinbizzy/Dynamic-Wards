@@ -5,6 +5,8 @@
 #pragma once
 
 #include "PCH.h"
+#include "SettingsText.h"
+#include "WardMath.h"
 
 namespace Plugin
 {
@@ -15,28 +17,6 @@ namespace Plugin
 		return factory ? factory->Create() : nullptr;
 	}
 
-	// a row: five ranks, three worn shield wards, the vampire ward - one set of neutral meshes each (3.0)
-	inline constexpr std::string_view kTokens[] = { "Novice", "Apprentice", "Adept", "Expert", "Master", "Spellbreaker",
-		"Crusader", "Reman", "Vampire" };
-	inline constexpr std::size_t      kRows = std::size(kTokens);
-	inline constexpr std::size_t      kRanks = 5;
-	// the rows a worn shield raises (Spellbreaker, the Crusader shields, Reman's): each has its own pick - off, the normal dome
-	// or the 360 dome (ShieldDome; his order 2026-10-08 made it on / off, his yes 2026-10-12 added the dome)
-	inline constexpr std::array<std::size_t, 3> kShieldRows{ 5, 6, 7 };
-
-	// colors are 0xRRGGBB; the ladder runs from white to one color
-	using Color = std::uint32_t;
-	inline constexpr Color kWhite = 0xFFFFFF;
-	struct Preset
-	{
-		const char* name;
-		Color       color;
-	};
-	// the five colors of 2.x, as quick picks (and how a 2.x settings file's numbers read)
-	inline constexpr Preset kPresets[] = { { "Blue", 0x2468FF }, { "Red", 0xFF3648 }, { "Gold", 0xFFBE5A }, { "Green", 0x2DC846 },
-		{ "Purple", 0x9646FF }, { "White", kWhite } };
-	// what a rankless row wears on its default
-	inline constexpr Color kRowDefault[] = { 0, 0, 0, 0, 0, 0xFFBE5A, kWhite, kWhite, 0xFF3648 };
 	// the mod each rankless row comes from, named beside it in the menu (his ask 2026-10-05); a rank has none
 	inline constexpr const char* kRowFrom[] = { "", "", "", "", "", "Skyrim", "Knights of the Nine", "Legacy of the Dragonborn", "Better Vampires" };
 
@@ -71,46 +51,14 @@ namespace Plugin
 	};
 	void ApplyScheme(const Scheme& a_scheme);  // Settings.cpp; the caller saves and applies
 
-	// a ladder's stops, in percent of the way from white to its color
-	inline constexpr std::array<int, 3> kStages3{ 0, 55, 100 };
-	inline constexpr std::array<int, 4> kStages4{ 0, 33, 67, 100 };
-	inline constexpr std::array<int, 5> kStages5{ 0, 25, 50, 75, 100 };
-	inline constexpr int                kMinStages = 3;
-	inline constexpr int                kMaxStages = 5;
-
-	enum class RowMode : int
-	{
-		kDefault = 0,  // a rank follows the ladder; a rankless row wears its own default
-		kCustom = 1,   // a color of its own
-		kVanilla = 2,  // the game's own (or another mod's) art
-	};
-
-	enum class Unlock : int
-	{
-		kAlways = 0,
-		kSkill50 = 1,
-		kSkill75 = 2,
-		kSkill100 = 3,
-		kPerk = 4,
-	};
-
-	// what one shield's ward does (his yes 2026-10-12, a user report: the Spellbreaker ward should not have to wear the 360
-	// sphere while the spell wards do): no ward, the normal dome, or the 360 dome (needs 360 Ward + its Universal Patch, and
-	// the 360 unlock) - each in that shield's color. Was an on / off switch (2026-10-08).
-	enum class ShieldDome : int
-	{
-		kOff = 0,
-		kNormal = 1,
-		k360 = 2,
-	};
-
 	// Wards.cpp: which effects are wards, and what each wears
 	void                                             MakeArt();                       // data load: each row's neutral art, in memory
 	void                                             FindWards();                     // data load: every ward, by the 1.0 table and by what it is
 	void                                             ApplyAll(const char* a_why);     // every dressed ward to what the settings ask for (main thread)
 	void                                             CheckUnlock(const char* a_why);  // re-reads the player's skill or perk; re-applies when it changed
-	bool                                             Has360Ward();                    // 360 Ward.esp loaded and 360 Ward Universal Patch SKSE present
+	bool                                             Has360Ward();                    // the 360 dome can be worn: 360 Ward.esp loaded, 360 Ward Universal Patch SKSE present AND our 360 domes installed
 	bool                                             Missing360Patch();               // 360 Ward.esp loaded, its Universal Patch not
+	bool                                             Missing360Meshes();              // 360 Ward and its patch loaded, but our 360 domes not installed (the installer puts them in only with 360 Ward.esp in the plugin list)
 	bool                                             LightPlacerLoaded();
 	bool                                             Unlocked360();
 	bool                                             CrusaderAvailable();
@@ -126,29 +74,24 @@ namespace Plugin
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
-	void                 LoadSettings();
-	void                 SaveSettings();
-	RowMode              RowModeOf(std::size_t a_row);
-	Color                RowCustom(std::size_t a_row);
-	void                 SetRow(std::size_t a_row, RowMode a_mode, Color a_color);
-	Color                LadderColor();
-	void                 SetLadderColor(Color a_color);
-	int                  LadderStages();
-	void                 SetLadderStages(int a_stages);
-	bool                 LadderReversed();
-	void                 SetLadderReversed(bool a_on);
-	inline constexpr int kOpacityMin = 25;  // lower reads as nearly invisible
-	int                  Opacity();         // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
-	void                 SetOpacity(int a_percent);
-	inline constexpr int kTransparencyDefault = 0;  // his default 2026-10-06 (was 25, 2026-10-03): "transparency 0, opacity 100"
-	inline constexpr int kTransparencyMax = 90;     // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
-	int                  Transparency();            // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
-	void                 SetTransparency(int a_percent);
-	inline constexpr int kBrightnessMin = 25;  // the range is centred on 100 (as built): the slider starts in the middle (his call)
-	inline constexpr int kBrightnessMax = 175;
-	int                  Brightness();  // kBrightnessMin-kBrightnessMax, percent: the wards' glow AND their lights (100 = as built)
-	void                 SetBrightness(int a_percent);
-	float                LightDim();  // what a dome / hit light's strength is multiplied by: opacity x brightness
+	void    LoadSettings();
+	void    SaveSettings();
+	RowMode RowModeOf(std::size_t a_row);
+	Color   RowCustom(std::size_t a_row);
+	void    SetRow(std::size_t a_row, RowMode a_mode, Color a_color);
+	Color   LadderColor();
+	void    SetLadderColor(Color a_color);
+	int     LadderStages();
+	void    SetLadderStages(int a_stages);
+	bool    LadderReversed();
+	void    SetLadderReversed(bool a_on);
+	int     Opacity();  // kOpacityMin-100, percent: the ward art AND its lights (not the casting art - CastingGlow)
+	void    SetOpacity(int a_percent);
+	int     Transparency();  // 0-kTransparencyMax, percent: how much of the domes' facing fill is taken away (0 = as built)
+	void    SetTransparency(int a_percent);
+	int     Brightness();  // kBrightnessMin-kBrightnessMax, percent: the wards' glow AND their lights (100 = as built)
+	void    SetBrightness(int a_percent);
+	float   LightDim();  // what a dome / hit light's strength is multiplied by: opacity x brightness
 	// the casting art (the ward in the hands) and its light have their own slider and nothing else touches them - his rule
 	// 2026-10-05: "opacity should not be affecting casting art brightness, neither should ward brightness ... make it the sole
 	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
@@ -184,10 +127,13 @@ namespace Plugin
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
 	// cached model every copy is cloned from
-	void        RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
-	bool        ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
-	void        LiveRecolor();                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
-	std::string ColorsReport();
+	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
+	bool ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
+	void LiveRecolor();
+	// the rows whose ward-in-the-hand look (its color or Hand Brightness) changed since the last call: a ward already in a hand
+	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
+	std::array<bool, kRows> TakeHandLookChanges();
+	std::string             ColorsReport();
 
 	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
 	enum class Lighting : int
@@ -228,16 +174,11 @@ namespace Plugin
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
 
-	std::string          Lower(std::string_view a_text);
-	bool                 Contains(std::string_view a_haystack, std::string_view a_needle);
-	std::string          Where(const RE::TESForm* a_form);
-	std::string          JsonEscape(std::string_view a_text);
-	RE::TESForm*         ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
-	std::string          FormText(const RE::TESForm* a_form);
-	std::string          HexColor(Color a_color);  // "2468FF"
-	std::optional<Color> ParseColor(std::string_view a_text);
-	Color                Mix(Color a_from, Color a_to, int a_percent);
-	bool                 SameText(std::string_view a_a, std::string_view a_b);  // equal, ignoring ASCII case
+	// Text.cpp (the game-free text helpers - Lower, SameText, HexColor, ParseColor, Mix ... - are in WardMath.h)
+	std::string  Where(const RE::TESForm* a_form);
+	std::string  JsonEscape(std::string_view a_text);
+	RE::TESForm* ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
+	std::string  FormText(const RE::TESForm* a_form);
 
 	// Runs a_work and lets no exception out: inside a game callback, a task or one of our threads one would end the game (his
 	// C++ rule; Illuminated's LightKit::Guarded, the same code). The first failure at each place is logged, later ones there

@@ -25,6 +25,7 @@ add_requires("nlohmann_json v3.12.0")
 target("DynamicWards", function()
     add_deps("commonlibsse-ng")
     add_packages("nlohmann_json")
+    add_defines("NOMINMAX")  -- windows.h min/max macros break std::min/max and numeric_limits::max
     add_rules("commonlibsse-ng.plugin", {
         name = "DynamicWards",
         author = "izzydoingit",
@@ -35,5 +36,15 @@ target("DynamicWards", function()
     add_includedirs("src")
     set_pcxxheader("src/PCH.h")
     -- every warning in OUR files is an error (his C++ standard, 2026-10-07: "/W4 /WX ... fix all warnings")
+    set_warnings("allextra", "error")
+end)
+
+-- the game-free parts (src/WardMath.h, src/SettingsText.h), tested without the game: xmake build testwards && xmake run testwards
+-- (PC Runner\plugin build.py dw builds and runs it, then again under clang's address + undefined-behavior checkers)
+target("testwards", function()
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/testwards.cpp")
+    add_includedirs("src")
     set_warnings("allextra", "error")
 end)
