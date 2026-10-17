@@ -7,11 +7,15 @@
 // is applied when the pick is let go (a drag does not rebuild palettes every frame). The HUD swatch is gone (his call 2026-10-03).
 // His layout 2026-10-05: a Colors page first (presets, then the ladder and every ward, the rankless ones with their mod
 // named), then Settings (Lights, Dome, Opacity - Transparency right below Opacity, greyed out without 360 Ward), then
-// Compatibility. Every change is saved the moment it is made (a slider when it is let go), so closing the menu loses nothing -
-// on the game's main thread, in one task with the re-dress (Changed).
+// Compatibility. Every change is saved the moment it is made (a slider or a color when it is let go), so closing the menu loses
+// nothing - on the game's main thread, in one task with the re-dress (Changed).
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#ifndef WIN32_LEAN_AND_MEAN
+#	define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#	define NOMINMAX  // the build defines it too (xmake.lua)
+#endif
 #include "Plugin.h"
 
 #include <cmath>
@@ -101,6 +105,34 @@ namespace Plugin
 			return done;
 		}
 
+		// One color being edited (Illuminated's rule for its sliders: the control shows the stored value, and its own only while it
+		// is being changed). While it is held the wards follow the drag live, in memory only (his ask 2026-10-06 - LiveRecolor; no
+		// save, no re-equip); the edit is saved and the wards re-dressed ONCE when it ends: the picker's own "done", or the first
+		// frame nothing on the page is held - ImGui never reports the end of a drag inside the color picker's pop-up, so such a
+		// drag was never saved before 3.5. Until 3.5 the ladder's picker also stopped re-reading the stored color after its first
+		// frame and put its own back over a color set elsewhere (DevBench's setter) - the outside review's "the ladder picker
+		// re-reads / saves mid-drag". True when an edit ended (the caller saves and applies it: Changed).
+		std::atomic<bool> gHeldEdit{ false };  // a color is held (changed live, not saved yet) - FlushHeldColor saves it
+
+		template <class Set>
+		bool EditColor(const char* a_id, std::optional<Color>& a_held, Color a_stored, const Set& a_set)
+		{
+			Color      c = a_held.value_or(a_stored);
+			const bool done = ColorChooser(a_id, c);
+			if (c != a_held.value_or(a_stored)) {
+				a_held = c;
+				a_set(c);
+				LiveRecolor();
+				gHeldEdit = true;
+			}
+			if (a_held && (done || !IsAnyItemActive())) {
+				a_held.reset();
+				gHeldEdit = false;
+				return true;
+			}
+			return false;
+		}
+
 		// the five ranks as they will look, white end to color end
 		void LadderSwatches()
 		{
@@ -122,8 +154,8 @@ namespace Plugin
 		{
 			MenuStyle::Page page;
 
-			static Color ladder = LadderColor();
-			static bool  editingLadder = false;
+			static std::optional<Color>                    heldLadder;  // the ladder's picker while it is dragged (EditColor)
+			static std::array<std::optional<Color>, kRows> heldRow;     // each ward's own color picker while it is dragged
 			Header(Icon::kStar, T("Presets"));
 			TextColored(kMuted, "%s", T("Sets the colors only - the stages and Reverse stay as you set them."));
 			for (std::size_t s = 0; s < std::size(kSchemes); ++s) {
@@ -135,27 +167,19 @@ namespace Plugin
 				if (Button(T(sc.name))) {
 					ApplyScheme(sc);
 					Changed();
-					editingLadder = false;  // the picker shows the preset's ladder, not the one before it
+					heldLadder.reset();  // the pickers show the preset's colors, not a drag before it
+					heldRow = {};
 				}
 				SetItemTooltip("%s", T(sc.tip));
 				PopID();
 			}
 
 			Header(Icon::kPalette, T("Colors"));
-			if (!editingLadder) {
-				ladder = LadderColor();
-			}
 			TextColored(kMuted, "%s", T("The ladder runs from white at the lowest rank to this color at the highest."));
-			editingLadder = true;
-			if (ColorChooser("ladder", ladder)) {
-				SetLadderColor(ladder);
+			// dragged (the color bar, the picker's hue): the wards follow live - his ask 2026-10-06, "slide the mouse across the
+			// slider ... to make the ward just skim through the color spectrum". Saved when let go.
+			if (EditColor("ladder", heldLadder, LadderColor(), [](Color a_c) { SetLadderColor(a_c); })) {
 				Changed();
-				editingLadder = false;
-			} else if (ladder != LadderColor()) {
-				// dragged (the color bar, the picker's hue): the wards follow live - his ask 2026-10-06, "slide the mouse
-				// across the slider ... to make the ward just skim through the color spectrum". Saved when let go.
-				SetLadderColor(ladder);
-				LiveRecolor();
 			}
 			int         stages = LadderStages() - kMinStages;
 			const char* stageNames[] = { T("3 stages"), T("4 stages"), T("5 stages") };
@@ -189,6 +213,7 @@ namespace Plugin
 					SetNextItemWidth(150.0f);
 					if (Combo(T(kRowLabel[i]), &mode, modes, 3)) {
 						SetRow(i, static_cast<RowMode>(mode), mode == 1 && RowModeOf(i) != RowMode::kCustom ? shown.value_or(kWhite) : RowCustom(i));
+						heldRow[i].reset();
 						Changed();
 					}
 					SetItemTooltip("%s", T("Vanilla leaves that ward exactly as the game or your other mods have it."));
@@ -198,13 +223,9 @@ namespace Plugin
 					}
 					if (RowModeOf(i) == RowMode::kCustom) {
 						Indent(26.0f);
-						Color c = RowCustom(i);
-						if (ColorChooser("own", c)) {
-							SetRow(i, RowMode::kCustom, c);
+						// the ward follows the drag live; saved when let go
+						if (EditColor("own", heldRow[i], RowCustom(i), [i](Color a_c) { SetRow(i, RowMode::kCustom, a_c); })) {
 							Changed();
-						} else if (c != RowCustom(i)) {
-							SetRow(i, RowMode::kCustom, c);  // the ward follows the drag live; saved when let go
-							LiveRecolor();
 						}
 						Unindent(26.0f);
 					}
@@ -285,6 +306,13 @@ namespace Plugin
 			} else if (Missing360Patch()) {
 				Header(Icon::kShield, T("Dome"));
 				TextColored(kMuted, "%s", T("The 360 dome needs 360 Ward Universal Patch SKSE as well as 360 Ward."));
+			} else if (Missing360Meshes()) {
+				// 360 Ward and its patch are there, but our 360 domes are not: the installer puts them in only when 360 Ward is in
+				// the load order, so the pick would change nothing (the outside review) - say how to get them instead
+				Header(Icon::kShield, T("Dome"));
+				TextColored(kMuted, "%s",
+					T("The 360 dome's files are not installed: Dynamic Wards installs them only when 360 Ward is in your load order. "
+					  "Install Dynamic Wards again to get them."));
 			}
 
 			Header(Icon::kEye, T("Opacity"));
@@ -313,7 +341,7 @@ namespace Plugin
 			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
 			EndDisabled();
 			if (!has360) {
-				TextColored(kMuted, "%s", T("Needs 360 Ward."));
+				TextColored(kMuted, "%s", Missing360Meshes() ? T("Needs the 360 dome's files (install Dynamic Wards again).") : T("Needs 360 Ward."));
 			}
 
 			// his order 2026-10-06: Ward brightness moves down under the old "Casting art" heading, now "Brightness", and
@@ -392,7 +420,9 @@ namespace Plugin
 				// all three always shown, so the stored pick is what the menu shows (the code review of 2026-10-12: a 360 pick shown
 				// as Normal without 360 Ward could not be changed to Normal); without 360 Ward the 360 pick wears the normal dome
 				int         pick = static_cast<int>(ShieldDomeOf(row));
-				const char* picks[] = { T("Off"), T("Normal dome"), Has360Ward() ? T("360 dome") : T("360 dome (needs 360 Ward)") };
+				const char* picks[] = { T("Off"), T("Normal dome"), Has360Ward() ? T("360 dome") : Missing360Meshes() ? T("360 dome (needs its files)") :
+																							   Missing360Patch()      ? T("360 dome (needs the Universal Patch)") :
+																														T("360 dome (needs 360 Ward)") };
 				SetNextItemWidth(220.0f);
 				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, 3)) {
 					SetShieldDome(row, static_cast<ShieldDome>(pick));
@@ -414,6 +444,16 @@ namespace Plugin
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					  "also take that ward's strength instead of Spellbreaker's."));
 			}
+		}
+	}
+
+	// a menu closed (main.cpp's watch): a color still held then - the menu shut mid-drag - is saved and applied now, not only
+	// the next time the Colors page is drawn (the 3.5 code review). The page then finds the stored color equal to its own and
+	// lets go of it at once
+	void FlushHeldColor()
+	{
+		if (gHeldEdit.exchange(false)) {
+			Changed();
 		}
 	}
 

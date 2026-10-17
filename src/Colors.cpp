@@ -31,11 +31,9 @@ namespace Plugin
 {
 	namespace
 	{
-		constexpr const char*   kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
-		constexpr float         kSatFloor = 0.25f;             // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
-		constexpr float         kHueHold = 0.50f;              // wardgen HUE_HOLD: green and blue keep at least this much hue
-		constexpr std::uint64_t kMaxPalettePixels = 1u << 20;  // 64x the largest shipped palette
-		constexpr float         kSpriteSat = 0.75f;            // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
+		// (the palette recolor itself - wardgen.pal_retint's curve, the file checks - is game-free, in WardMath.h, and tested)
+		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
+		constexpr float       kSpriteSat = 0.75f;  // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward IN THE HAND: every texel at least this far toward the ward's colour, so its centre is not a white-hot core
 		// (his call 2026-10-03, "fix that" - the 2.x ramp kept each gradient's white end; the domes keep theirs)
 		constexpr float kHandCore = 1.0f;
@@ -49,10 +47,9 @@ namespace Plugin
 
 		struct Source
 		{
-			int                       w = 0, h = 0;
-			std::vector<std::uint8_t> bgra;  // mip 0 only
-			float                     sref = 0.0f;
-			bool                      ok = false;
+			PaletteImage image;  // mip 0 only
+			bool         ok = false;
+			bool         failed = false;  // read once and refused: not read again
 		};
 
 		struct Palette
@@ -109,6 +106,10 @@ namespace Plugin
 			int                      appliedTransparency = -1;
 			int                      appliedBrightness = -1;
 			int                      appliedCastingGlow = -1;
+			// the hand look the hands were last seen in (TakeHandLookChanges): a ward in the hand is re-equipped only when its row's
+			// own look moved - never for a dome-only setting or another row
+			Color handSeen = 0xFFFFFFFF;
+			int   handGlowSeen = -1;
 		};
 
 		struct Grave
@@ -131,26 +132,11 @@ namespace Plugin
 		bool                               gGoldVapourTried = false;
 		std::size_t                        gGoldVapourBlocks = 0;
 
-		float Sat(float a_b, float a_g, float a_r)
-		{
-			const float m = (std::max)({ a_b, a_g, a_r });
-			return m <= 0.0f ? 0.0f : (m - (std::min)({ a_b, a_g, a_r })) / m;
-		}
-
-		// a gold or orange ward (hue 15-60 degrees, at least 35% saturated): the hues whose vapour spikes Community Shaders
-		// shades cream (Aedric FFC420 and Ember FF6A10, his report 2026-10-06; violet, frost, green, pink were fine)
+		// a gold or orange ward on Community Shaders (WardMath.h GoldHue): ENB and Vanilla show the palette layer in its true
+		// color (measured 2026-10-06)
 		bool GoldVapour(Color a_c)
 		{
-			if (LightingPick() != Lighting::kShaders) {
-				return false;  // ENB and Vanilla show the palette layer in its true color (measured 2026-10-06)
-			}
-			const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
-			const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), d = mx - mn;
-			if (mx <= 0.0f || d / mx < 0.35f || mx != r) {
-				return false;
-			}
-			const float hue = 60.0f * (g - b) / d;  // red is the largest channel: the hue sits between -60 and 60
-			return hue >= 15.0f && hue <= 60.0f;
+			return LightingPick() == Lighting::kShaders && GoldHue(a_c);
 		}
 
 		RE::NiSourceTexture* GoldVapourTexture()
@@ -167,97 +153,23 @@ namespace Plugin
 			return gGoldVapour.get();
 		}
 
-		bool HoldsHue(Color a_c)
-		{
-			const int r = (a_c >> 16) & 0xFF, g = (a_c >> 8) & 0xFF, b = a_c & 0xFF;
-			if ((std::max)({ r, g, b }) - (std::min)({ r, g, b }) <= 8) {
-				return false;  // white: no hue to hold
-			}
-			return (std::max)(g, b) > r;
-		}
-
 		Source& LoadSource(const std::string& a_stem)
 		{
 			auto& s = gSources[Lower(a_stem)];
-			if (s.ok || s.w < 0) {
+			if (s.ok || s.failed) {
 				return s;
 			}
 			std::ifstream             in(std::string(kPaletteDir) + a_stem + ".dds", std::ios::binary);
 			std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-			if (raw.size() < 128 || std::memcmp(raw.data(), "DDS ", 4) != 0) {
-				s.w = -1;
-				gLastProblem = std::format("palette source {} is missing or not a DDS", a_stem);
-				return s;
+			std::string               why;
+			if (auto image = PaletteFromDds(raw, why)) {
+				s.image = std::move(*image);
+				s.ok = true;
+			} else {
+				s.failed = true;
+				gLastProblem = std::format("palette source {}: {}", a_stem, why);
 			}
-			std::uint32_t h = 0, w = 0, bits = 0;
-			std::memcpy(&h, raw.data() + 12, 4);
-			std::memcpy(&w, raw.data() + 16, 4);
-			std::memcpy(&bits, raw.data() + 88, 4);
-			// a palette is a small ramp: no zero side (the mip chain would read an empty buffer) and nothing past the
-			// graphics card's 16384 limit (which also keeps w * h * 4 far from overflowing)
-			if (w == 0 || h == 0 || w > 16384 || h > 16384) {
-				s.w = -1;
-				gLastProblem = std::format("palette source {} has an unusable size {}x{}", a_stem, w, h);
-				return s;
-			}
-			// and no more pixels than a ramp could need (CodeRabbit, PR #3: a 16384x16384 file passed the side check and
-			// would cost gigabytes here). The shipped palettes are 16384 pixels at most (128x128, 256x64, 512x32).
-			if (static_cast<std::uint64_t>(w) * h > kMaxPalettePixels) {
-				s.w = -1;
-				gLastProblem = std::format("palette source {} is too large for a palette ({}x{})", a_stem, w, h);
-				return s;
-			}
-			if (bits != 32 || raw.size() < 128 + static_cast<std::size_t>(w) * h * 4) {
-				s.w = -1;
-				gLastProblem = std::format("palette source {} is not uncompressed 32-bit", a_stem);
-				return s;
-			}
-			s.w = static_cast<int>(w);
-			s.h = static_cast<int>(h);
-			s.bgra.assign(raw.begin() + 128, raw.begin() + 128 + static_cast<std::ptrdiff_t>(w) * h * 4);
-			std::vector<float> sats;
-			for (std::size_t i = 0; i + 3 < s.bgra.size(); i += 4) {
-				const auto b = s.bgra[i], g = s.bgra[i + 1], r = s.bgra[i + 2];
-				if ((std::max)({ b, g, r }) >= 32) {
-					sats.push_back(Sat(b, g, r));
-				}
-			}
-			std::ranges::sort(sats);
-			s.sref = sats.empty() ? 0.0f : sats[static_cast<std::size_t>(sats.size() * 0.95)];
-			s.ok = true;
 			return s;
-		}
-
-		// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's
-		std::vector<std::uint8_t> Retint(const Source& a_s, Color a_c, float a_floor)
-		{
-			const float               m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
-			const float               tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
-			const bool                curve = a_s.sref >= kSatFloor;
-			const float               tsat = Sat(static_cast<float>(a_c & 0xFF), static_cast<float>((a_c >> 8) & 0xFF), static_cast<float>((a_c >> 16) & 0xFF));
-			const bool                hold = HoldsHue(a_c);
-			std::vector<std::uint8_t> out(a_s.bgra.size());
-			for (std::size_t i = 0; i + 3 < a_s.bgra.size(); i += 4) {
-				const float b = a_s.bgra[i], g = a_s.bgra[i + 1], r = a_s.bgra[i + 2];
-				const float v = (std::max)({ b, g, r });
-				float       cb = tb, cg = tg, cr = tr;
-				const float pb = cb, pg = cg, pr = cr;  // the target this texel tints toward
-				if (curve) {
-					float k = tsat <= 0.0f ? 1.0f : (std::min)(1.0f, Sat(b, g, r) / tsat);
-					if (hold) {
-						k = (std::max)(k, kHueHold);
-					}
-					k = (std::max)(k, a_floor);
-					cb = 1.0f + k * (pb - 1.0f);
-					cg = 1.0f + k * (pg - 1.0f);
-					cr = 1.0f + k * (pr - 1.0f);
-				}
-				out[i] = static_cast<std::uint8_t>(std::clamp(std::lround(cb * v), 0L, 255L));
-				out[i + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(cg * v), 0L, 255L));
-				out[i + 2] = static_cast<std::uint8_t>(std::clamp(std::lround(cr * v), 0L, 255L));
-				out[i + 3] = a_s.bgra[i + 3];
-			}
-			return out;
 		}
 
 		// the palette's texture on the graphics card, swapped for one in the ward's color (old objects released later)
@@ -273,8 +185,8 @@ namespace Plugin
 			const float                            core = a_p.hand ? kHandCore : a_p.normalDome                   ? kNormalDomeCore :
 			                                                                 LightingPick() == Lighting::kVanilla ? kDomeCoreVanilla :
 			                                                                                                        0.0f;
-			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s, a_c, core) };
-			std::vector<std::pair<int, int>>       sizes{ { a_s.w, a_s.h } };
+			std::vector<std::vector<std::uint8_t>> mips{ Retint(a_s.image, a_c, core) };
+			std::vector<std::pair<int, int>>       sizes{ { a_s.image.w, a_s.image.h } };
 			while (sizes.back().first > 1 || sizes.back().second > 1) {
 				const auto [pw, ph] = sizes.back();
 				const int                 w = (std::max)(1, pw / 2), h = (std::max)(1, ph / 2);
@@ -305,8 +217,8 @@ namespace Plugin
 				init[i].sysMemSlicePitch = 0;
 			}
 			REX::W32::D3D11_TEXTURE2D_DESC d{};
-			d.width = static_cast<std::uint32_t>(a_s.w);
-			d.height = static_cast<std::uint32_t>(a_s.h);
+			d.width = static_cast<std::uint32_t>(a_s.image.w);
+			d.height = static_cast<std::uint32_t>(a_s.image.h);
 			d.mipLevels = static_cast<std::uint32_t>(mips.size());
 			d.arraySize = 1;
 			d.format = REX::W32::DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -672,6 +584,22 @@ namespace Plugin
 			})) {
 			gLiveQueued = false;  // nothing queued: the next frame of the drag tries again
 		}
+	}
+
+	std::array<bool, kRows> TakeHandLookChanges()
+	{
+		std::scoped_lock        l{ gLock };
+		std::array<bool, kRows> out{};
+		for (std::size_t i = 0; i < kRows; ++i) {
+			auto& r = gRows[i];
+			if (r.applied == 0xFFFFFFFF) {
+				continue;  // not painted (a Vanilla row, or not loaded): our hand art is not what that row's hands wear
+			}
+			out[i] = r.applied != r.handSeen || r.appliedCastingGlow != r.handGlowSeen;
+			r.handSeen = r.applied;
+			r.handGlowSeen = r.appliedCastingGlow;
+		}
+		return out;
 	}
 
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models)

@@ -2,8 +2,8 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// DynamicWards.ini, written by the menu. 3.0 stores colors as RRGGBB; a 2.x file (numbered ladders and picks) is read
-// and carried over, then written back in the new form.
+// DynamicWards.ini, written by the menu: the live settings table (SettingsText.h's SettingsValues - one table, read and
+// written by the game-free reader and writer the off-game tests run) under one lock, and its accessors.
 
 #include "Plugin.h"
 
@@ -13,268 +13,29 @@ namespace Plugin
 	{
 		constexpr const char* kPath = "Data/SKSE/Plugins/DynamicWards.ini";
 
-		struct Row
-		{
-			RowMode mode = RowMode::kDefault;
-			Color   color = kWhite;
-		};
-
-		std::mutex                               gLock;
-		std::array<Row, kRows>                   gRows{};
-		Color                                    gLadder = kPresets[0].color;
-		int                                      gStages = kMinStages;
-		bool                                     gReversed = false;
-		int                                      gOpacity = 100;
-		int                                      gTransparency = kTransparencyDefault;
-		int                                      gBrightness = 100;
-		int                                      gCastingGlow = 100;
-		int                                      gDome = 0;
-		bool                                     gLight = true;
-		bool                                     gColoredLights = true;
-		Unlock                                   gUnlock = Unlock::kSkill75;
-		std::string                              gPerk;
-		bool                                     gCrusader = true;
-		bool                                     gEvery = true;
-		bool                                     gKeepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
-		std::map<std::string, bool, std::less<>> gMods;               // [Compatibility] plugin=0/1, lowercased; missing = gEvery
-		// his order 2026-10-08: one switch per shield; off = that shield raises no ward at all (Spellbreaker, Crusader, Reman).
-		// His yes 2026-10-12: the switch became a pick - off, the normal dome, the 360 dome. -1 = not in the file: LoadSettings
-		// gives it what the old switch meant (on = the dome the spell wards wear).
-		std::array<int, kShieldRows.size()> gShieldDome{ -1, -1, -1 };
+		std::mutex     gLock;
+		SettingsValues gS;  // under gLock
 
 		const char* ShieldDomeName(int a_dome)
 		{
 			return a_dome == static_cast<int>(ShieldDome::kOff) ? "off" : a_dome == static_cast<int>(ShieldDome::k360) ? "360 dome" :
 			                                                                                                             "normal dome";
 		}
-
-		std::size_t ShieldIndex(std::size_t a_row)
-		{
-			const auto it = std::ranges::find(kShieldRows, a_row);
-			return static_cast<std::size_t>(it - kShieldRows.begin());
-		}
-		std::string ShieldKey(std::size_t a_row)
-		{
-			return std::format("{}Ward", kTokens[a_row]);  // SpellbreakerWard, CrusaderWard, RemanWard: the 2026-10-08 on / off (kept for older versions)
-		}
-		std::string ShieldDomeKey(std::size_t a_row)
-		{
-			return std::format("{}Dome", kTokens[a_row]);  // SpellbreakerDome, CrusaderDome, RemanDome: 0 off, 1 normal dome, 2 360 dome
-		}
-
-		std::string Trim(std::string s)
-		{
-			while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
-				s.pop_back();
-			}
-			std::size_t i = 0;
-			while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
-				++i;
-			}
-			return s.substr(i);
-		}
-
-		std::size_t RowIndex(std::string_view a_token)
-		{
-			for (std::size_t i = 0; i < kRows; ++i) {
-				if (SameText(kTokens[i], a_token)) {
-					return i;
-				}
-			}
-			return kRows;
-		}
-
-		// 2.x's numbered picks: 0 ladder/default, 1-5 blue red gold green white, 6 vanilla, 7 purple
-		Row FromOldPick(int a_pick)
-		{
-			constexpr Color kOld[] = { 0x2468FF, 0xFF3648, 0xFFBE5A, 0x2DC846, kWhite };
-			if (a_pick >= 1 && a_pick <= 5) {
-				return { RowMode::kCustom, kOld[a_pick - 1] };
-			}
-			if (a_pick == 6) {
-				return { RowMode::kVanilla, kWhite };
-			}
-			if (a_pick == 7) {
-				return { RowMode::kCustom, 0x9646FF };
-			}
-			return {};
-		}
-	}
-
-	std::string HexColor(Color a_color)
-	{
-		return std::format("{:06X}", a_color & 0xFFFFFF);
-	}
-
-	std::optional<Color> ParseColor(std::string_view a_text)
-	{
-		while (!a_text.empty() && (a_text.front() == '#' || a_text.front() == ' ')) {
-			a_text.remove_prefix(1);
-		}
-		if (a_text.starts_with("0x") || a_text.starts_with("0X")) {
-			a_text.remove_prefix(2);
-		}
-		Color       v = 0;
-		const auto* end = a_text.data() + a_text.size();
-		if (a_text.size() != 6) {
-			return std::nullopt;
-		}
-		if (const auto [stop, ec] = std::from_chars(a_text.data(), end, v, 16); ec != std::errc{} || stop != end) {
-			return std::nullopt;
-		}
-		return v;
-	}
-
-	Color Mix(Color a_from, Color a_to, int a_percent)
-	{
-		const int k = std::clamp(a_percent, 0, 100);
-		auto      ch = [&](int a_shift) {
-			const int a = (a_from >> a_shift) & 0xFF;
-			const int b = (a_to >> a_shift) & 0xFF;
-			return static_cast<Color>(std::clamp(a + ((b - a) * k + 50) / 100, 0, 255)) << a_shift;
-		};
-		return ch(16) | ch(8) | ch(0);
 	}
 
 	void LoadSettings()
 	{
-		std::ifstream                       in(kPath);
-		std::string                         line, section;
-		std::size_t                         read = 0;
-		bool                                old = false;
-		std::array<int, kShieldRows.size()> oldSwitch{ -1, -1, -1 };  // the 2026-10-08 on / off keys, when the file still has them
-		std::scoped_lock                    l{ gLock };
-		while (in && std::getline(in, line)) {
-			line = Trim(line);
-			if (line.empty() || line[0] == ';' || line[0] == '#') {
-				continue;
-			}
-			if (line.front() == '[' && line.back() == ']') {
-				section = Trim(line.substr(1, line.size() - 2));
-				continue;
-			}
-			const auto eq = line.find('=');
-			if (eq == std::string::npos) {
-				continue;
-			}
-			const auto key = Trim(line.substr(0, eq));
-			const auto val = Trim(line.substr(eq + 1));
-			int        v = 0;
-			const auto [end, ec] = std::from_chars(val.data(), val.data() + val.size(), v);
-			++read;
-			// sections and keys in any case, as RELight - Spell Addon and Illuminated read theirs (a hand edit of "[settings]"
-			// or "opacity=" counts)
-			auto       is = [&key](std::string_view a_name) { return SameText(key, a_name); };
-			const bool settings = SameText(section, "Settings");
-			// a hand-edited number that does not read keeps its default instead of falling to the slider's floor
-			const bool number = ec == std::errc{} && end == val.data() + val.size();
-			if (settings && !number && !is("LadderColor") && !is("Unlock360Perk")) {
-				continue;
-			}
-			if (settings) {
-				if (is("WardLight")) {
-					gLight = v != 0;
-				} else if (is("ColoredLights")) {
-					gColoredLights = v != 0;
-				} else if (is("LadderColor")) {
-					gLadder = ParseColor(val).value_or(gLadder);
-				} else if (is("Ladder")) {  // 2.x: 0-4 blue red gold green purple
-					constexpr Color kOld[] = { 0x2468FF, 0xFF3648, 0xFFBE5A, 0x2DC846, 0x9646FF };
-					gLadder = kOld[std::clamp(v, 0, 4)];
-					old = true;
-				} else if (is("LadderStages")) {
-					gStages = std::clamp(v, kMinStages, kMaxStages);
-				} else if (is("LadderReversed")) {
-					gReversed = v != 0;
-				} else if (is("Opacity")) {
-					gOpacity = std::clamp(v, kOpacityMin, 100);
-				} else if (is("Transparency")) {
-					gTransparency = std::clamp(v, 0, kTransparencyMax);
-				} else if (is("Brightness")) {
-					gBrightness = std::clamp(v, kBrightnessMin, kBrightnessMax);
-				} else if (is("CastingGlow")) {
-					gCastingGlow = std::clamp(v, kBrightnessMin, kBrightnessMax);
-				} else if (is("Dome")) {
-					gDome = std::clamp(v, 0, 1);
-				} else if (is("Unlock360")) {
-					gUnlock = static_cast<Unlock>(std::clamp(v, 0, 4));
-				} else if (is("Unlock360Perk")) {
-					gPerk = val;
-				} else if (is("CrusaderShields")) {
-					gCrusader = v != 0;
-				} else if (is("EveryWard")) {
-					gEvery = v != 0;
-				} else if (is("KeepStrangeRunesWards")) {
-					gKeepRunes = v != 0;
-				} else {
-					for (const auto row : kShieldRows) {
-						if (is(ShieldKey(row))) {
-							oldSwitch[ShieldIndex(row)] = v != 0 ? 1 : 0;
-						} else if (is(ShieldDomeKey(row))) {
-							gShieldDome[ShieldIndex(row)] = std::clamp(v, 0, 2);
-						}
-					}
-				}
-			} else if (SameText(section, "Compatibility")) {
-				gMods[Lower(key)] = v != 0;
-			} else if (const auto row = RowIndex(key); row < kRows && SameText(section, "Colors")) {
-				if (Lower(val) == "vanilla") {
-					gRows[row] = { RowMode::kVanilla, gRows[row].color };
-				} else if (Lower(val) == "default") {
-					gRows[row] = { RowMode::kDefault, gRows[row].color };
-				} else if (const auto c = ParseColor(val)) {
-					gRows[row] = { RowMode::kCustom, *c };
-				} else {
-					gRows[row] = FromOldPick(v);
-					old = true;
-				}
-			}
-		}
-		// a shield with no pick in the file keeps what its old switch did: off stays off, on (or no line) wears the dome the spell
-		// wards wear
-		for (std::size_t i = 0; i < gShieldDome.size(); ++i) {
-			if (gShieldDome[i] < 0) {
-				gShieldDome[i] = static_cast<int>(oldSwitch[i] == 0 ? ShieldDome::kOff : gDome == 0 ? ShieldDome::k360 :
-																									  ShieldDome::kNormal);
-			}
-		}
+		std::ifstream    in(kPath);
+		std::scoped_lock l{ gLock };
+		const auto       read = ReadSettingsText(in, gS);
 		SKSE::log::info(
 			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 			"Crusader shields {}, every ward {}, shield wards Spellbreaker {} Crusader {} Reman {} ({} line(s) read{})",
-			HexColor(gLadder), gStages, gReversed ? ", reversed" : "", gOpacity, gTransparency, gBrightness, gCastingGlow, gDome, gLight ? "on" : "off", gColoredLights ? "on" : "off",
-			static_cast<int>(gUnlock), gPerk.empty() ? "" : " " + gPerk, gCrusader ? "on" : "off", gEvery ? "on" : "off", ShieldDomeName(gShieldDome[0]),
-			ShieldDomeName(gShieldDome[1]), ShieldDomeName(gShieldDome[2]), read, old ? "; a 2.x file, carried over" : "");
-	}
-
-	namespace
-	{
-		// every setting as DynamicWards.ini carries it; gLock held
-		void WriteSettingsText(std::ostream& a_out)
-		{
-			a_out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
-				  << "[Settings]\nLadderColor=" << HexColor(gLadder) << "\nLadderStages=" << gStages << "\nLadderReversed=" << (gReversed ? 1 : 0)
-				  << "\nOpacity=" << gOpacity << "\nTransparency=" << gTransparency << "\nBrightness=" << gBrightness << "\nCastingGlow=" << gCastingGlow << "\nDome=" << gDome << "\nWardLight=" << (gLight ? 1 : 0)
-				  << "\nColoredLights=" << (gColoredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(gUnlock) << "\nUnlock360Perk=" << gPerk
-				  << "\nCrusaderShields=" << (gCrusader ? 1 : 0) << "\nEveryWard=" << (gEvery ? 1 : 0)
-				  << "\nKeepStrangeRunesWards=" << (gKeepRunes ? 1 : 0);
-			for (const auto row : kShieldRows) {
-				// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
-				a_out << "\n"
-					  << ShieldDomeKey(row) << "=" << gShieldDome[ShieldIndex(row)] << "\n"
-					  << ShieldKey(row) << "=" << (gShieldDome[ShieldIndex(row)] != static_cast<int>(ShieldDome::kOff) ? 1 : 0);
-			}
-			a_out << "\n[Colors]\n";
-			for (std::size_t i = 0; i < kRows; ++i) {
-				const auto& r = gRows[i];
-				a_out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
-																																	HexColor(r.color))
-					  << "\n";
-			}
-			a_out << "[Compatibility]\n";
-			for (const auto& [plugin, on] : gMods) {
-				a_out << plugin << "=" << (on ? 1 : 0) << "\n";
-			}
-		}
+			HexColor(gS.ladder), gS.stages, gS.reversed ? ", reversed" : "", gS.opacity, gS.transparency, gS.brightness, gS.castingGlow, gS.dome,
+			gS.light ? "on" : "off", gS.coloredLights ? "on" : "off", static_cast<int>(gS.unlock), gS.perk.empty() ? "" : " " + gS.perk,
+			gS.crusader ? "on" : "off", gS.every ? "on" : "off", ShieldDomeName(SettingsText::ShieldPick(gS, 0)),
+			ShieldDomeName(SettingsText::ShieldPick(gS, 1)), ShieldDomeName(SettingsText::ShieldPick(gS, 2)), read.lines,
+			read.old ? "; a 2.x file, carried over" : "");
 	}
 
 	// Any thread (the menu queues it onto the main thread; DevBench saves on its own). Written beside the file and moved over
@@ -287,7 +48,7 @@ namespace Plugin
 		std::ostringstream out;
 		{
 			std::scoped_lock l{ gLock };
-			WriteSettingsText(out);
+			WriteSettingsText(gS, out);
 		}
 		const std::string tmp = std::string(kPath) + ".tmp";
 		std::error_code   ec;
@@ -310,182 +71,181 @@ namespace Plugin
 	RowMode RowModeOf(std::size_t a_row)
 	{
 		std::scoped_lock l{ gLock };
-		return a_row < kRows ? gRows[a_row].mode : RowMode::kDefault;
+		return a_row < kRows ? gS.rows[a_row].mode : RowMode::kDefault;
 	}
 	Color RowCustom(std::size_t a_row)
 	{
 		std::scoped_lock l{ gLock };
-		return a_row < kRows ? gRows[a_row].color : kWhite;
+		return a_row < kRows ? gS.rows[a_row].color : kWhite;
 	}
 	void SetRow(std::size_t a_row, RowMode a_mode, Color a_color)
 	{
 		std::scoped_lock l{ gLock };
 		if (a_row < kRows) {
-			gRows[a_row] = { a_mode, a_color & 0xFFFFFF };
+			gS.rows[a_row] = { a_mode, a_color & 0xFFFFFF };
 		}
 	}
 	Color LadderColor()
 	{
 		std::scoped_lock l{ gLock };
-		return gLadder;
+		return gS.ladder;
 	}
 	void SetLadderColor(Color a_color)
 	{
 		std::scoped_lock l{ gLock };
-		gLadder = a_color & 0xFFFFFF;
+		gS.ladder = a_color & 0xFFFFFF;
 	}
 	int LadderStages()
 	{
 		std::scoped_lock l{ gLock };
-		return gStages;
+		return gS.stages;
 	}
 	void SetLadderStages(int a_stages)
 	{
 		std::scoped_lock l{ gLock };
-		gStages = std::clamp(a_stages, kMinStages, kMaxStages);
+		gS.stages = std::clamp(a_stages, kMinStages, kMaxStages);
 	}
 	bool LadderReversed()
 	{
 		std::scoped_lock l{ gLock };
-		return gReversed;
+		return gS.reversed;
 	}
 	void SetLadderReversed(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gReversed = a_on;
+		gS.reversed = a_on;
 	}
 	int Opacity()
 	{
 		std::scoped_lock l{ gLock };
-		return gOpacity;
+		return gS.opacity;
 	}
 	void SetOpacity(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gOpacity = std::clamp(a_percent, kOpacityMin, 100);
+		gS.opacity = std::clamp(a_percent, kOpacityMin, 100);
 	}
 	int Brightness()
 	{
 		std::scoped_lock l{ gLock };
-		return gBrightness;
+		return gS.brightness;
 	}
 	void SetBrightness(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gBrightness = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+		gS.brightness = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
 	}
 	float LightDim()
 	{
 		std::scoped_lock l{ gLock };
-		return gOpacity / 100.0f * gBrightness / 100.0f;
+		return gS.opacity / 100.0f * gS.brightness / 100.0f;
 	}
 	int CastingGlow()
 	{
 		std::scoped_lock l{ gLock };
-		return gCastingGlow;
+		return gS.castingGlow;
 	}
 	void SetCastingGlow(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gCastingGlow = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+		gS.castingGlow = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
 	}
 	float HandDim()
 	{
 		std::scoped_lock l{ gLock };
-		return gCastingGlow / 100.0f;
+		return gS.castingGlow / 100.0f;
 	}
 	int Transparency()
 	{
 		std::scoped_lock l{ gLock };
-		return gTransparency;
+		return gS.transparency;
 	}
 	void SetTransparency(int a_percent)
 	{
 		std::scoped_lock l{ gLock };
-		gTransparency = std::clamp(a_percent, 0, kTransparencyMax);
+		gS.transparency = std::clamp(a_percent, 0, kTransparencyMax);
 	}
 	bool Dome360()
 	{
 		std::scoped_lock l{ gLock };
-		return gDome == 0;
+		return gS.dome == 0;
 	}
 	void SetDome360(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gDome = a_on ? 0 : 1;
+		gS.dome = a_on ? 0 : 1;
 	}
 	bool WardLightOn()
 	{
 		std::scoped_lock l{ gLock };
-		return gLight;
+		return gS.light;
 	}
 	void SetWardLightOn(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gLight = a_on;
+		gS.light = a_on;
 	}
 	bool ColoredLightsOn()
 	{
 		std::scoped_lock l{ gLock };
-		return gColoredLights;
+		return gS.coloredLights;
 	}
 	void SetColoredLightsOn(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gColoredLights = a_on;
+		gS.coloredLights = a_on;
 	}
 	Unlock UnlockRule()
 	{
 		std::scoped_lock l{ gLock };
-		return gUnlock;
+		return gS.unlock;
 	}
 	void SetUnlockRule(Unlock a_rule)
 	{
 		std::scoped_lock l{ gLock };
-		gUnlock = a_rule;
+		gS.unlock = a_rule;
 	}
 	std::string UnlockPerk()
 	{
 		std::scoped_lock l{ gLock };
-		return gPerk;
+		return gS.perk;
 	}
 	void SetUnlockPerk(std::string a_perk)
 	{
 		std::scoped_lock l{ gLock };
-		gPerk = std::move(a_perk);
+		gS.perk = std::move(a_perk);
 	}
 	bool CrusaderOn()
 	{
 		std::scoped_lock l{ gLock };
-		return gCrusader;
+		return gS.crusader;
 	}
 	void SetCrusaderOn(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gCrusader = a_on;
+		gS.crusader = a_on;
 	}
 	bool EveryWard()
 	{
 		std::scoped_lock l{ gLock };
-		return gEvery;
+		return gS.every;
 	}
 	void SetEveryWard(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gEvery = a_on;
-		for (auto& [plugin, on] : gMods) {
+		gS.every = a_on;
+		for (auto& [plugin, on] : gS.mods) {
 			on = a_on;
 		}
 	}
 	ShieldDome ShieldDomeOf(std::size_t a_row)
 	{
 		std::scoped_lock l{ gLock };
-		const auto       i = ShieldIndex(a_row);
-		if (i >= gShieldDome.size()) {
+		const auto       i = SettingsText::ShieldIndex(a_row);
+		if (i >= gS.shieldDome.size()) {
 			return ShieldDome::kNormal;  // not a shield row
 		}
-		const int d = gShieldDome[i] >= 0 ? gShieldDome[i] : (gDome == 0 ? static_cast<int>(ShieldDome::k360) : static_cast<int>(ShieldDome::kNormal));
-		return static_cast<ShieldDome>(d);
+		return static_cast<ShieldDome>(SettingsText::ShieldPick(gS, i));
 	}
 	bool Any360Wanted()
 	{
@@ -498,81 +258,53 @@ namespace Plugin
 	void SetShieldDome(std::size_t a_row, ShieldDome a_dome)
 	{
 		std::scoped_lock l{ gLock };
-		if (const auto i = ShieldIndex(a_row); i < gShieldDome.size()) {
-			gShieldDome[i] = std::clamp(static_cast<int>(a_dome), 0, 2);
+		if (const auto i = SettingsText::ShieldIndex(a_row); i < gS.shieldDome.size()) {
+			gS.shieldDome[i] = std::clamp(static_cast<int>(a_dome), 0, 2);
 		}
 	}
 	bool KeepStrangeRunes()
 	{
 		std::scoped_lock l{ gLock };
-		return gKeepRunes;
+		return gS.keepRunes;
 	}
 	void SetKeepStrangeRunes(bool a_on)
 	{
 		std::scoped_lock l{ gLock };
-		gKeepRunes = a_on;
+		gS.keepRunes = a_on;
 	}
 	bool ModOn(std::string_view a_plugin)
 	{
 		const auto       k = Lower(a_plugin);
 		std::scoped_lock l{ gLock };
-		const auto       it = gMods.find(k);
-		return it == gMods.end() ? gEvery : it->second;
+		const auto       it = gS.mods.find(k);
+		return it == gS.mods.end() ? gS.every : it->second;
 	}
 	void SetModOn(std::string_view a_plugin, bool a_on)
 	{
 		const auto       k = Lower(a_plugin);
 		std::scoped_lock l{ gLock };
-		gMods[k] = a_on;
+		gS.mods[k] = a_on;
 	}
 
 	void ApplyScheme(const Scheme& a_scheme)
 	{
 		std::scoped_lock l{ gLock };
-		gLadder = a_scheme.ladder & 0xFFFFFF;  // colors only - gStages and gReversed are the player's (his rule 2026-10-05)
+		gS.ladder = a_scheme.ladder & 0xFFFFFF;  // colors only - stages and Reverse are the player's (his rule 2026-10-05)
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const Color c = a_scheme.rows[i];
-			gRows[i] = c ? Row{ RowMode::kCustom, c & 0xFFFFFF } : Row{ RowMode::kDefault, gRows[i].color };
+			gS.rows[i] = c ? RowPick{ RowMode::kCustom, c & 0xFFFFFF } : RowPick{ RowMode::kDefault, gS.rows[i].color };
 		}
 	}
 
 	int StopPercent(std::size_t a_rank)
 	{
-		int  stages = 0;
-		bool rev = false;
-		{
-			std::scoped_lock l{ gLock };
-			stages = gStages;
-			rev = gReversed;
-		}
-		auto pick = [&](const auto& a_stops) {
-			const auto n = a_stops.size();
-			const auto pos = (std::min)(a_rank, n - 1);  // ranks past the ladder hold its last stop
-			return a_stops[rev ? n - 1 - pos : pos];
-		};
-		return stages == 5 ? pick(kStages5) : stages == 4 ? pick(kStages4) :
-		                                                    pick(kStages3);
+		std::scoped_lock l{ gLock };
+		return StopPercentOf(gS.stages, gS.reversed, a_rank);
 	}
 
 	std::optional<Color> RowColor(std::size_t a_row)
 	{
-		if (a_row >= kRows) {
-			return std::nullopt;
-		}
-		Row   r;
-		Color ladder;
-		{
-			std::scoped_lock l{ gLock };
-			r = gRows[a_row];
-			ladder = gLadder;
-		}
-		switch (r.mode) {
-		case RowMode::kVanilla:
-			return std::nullopt;
-		case RowMode::kCustom:
-			return r.color;
-		default:
-			return a_row >= kRanks ? kRowDefault[a_row] : Mix(kWhite, ladder, StopPercent(a_row));
-		}
+		std::scoped_lock l{ gLock };
+		return RowColorOf(gS, a_row);
 	}
 }

@@ -1,0 +1,350 @@
+// Dynamic Wards - SKSE plugin
+// Copyright (C) 2026 izzydoingit
+// GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
+//
+// The game-free parts of the plugin (no CommonLib here - tests\test_wards.cpp builds and runs them without the game, the way
+// Illuminated tests its LightMath.h and ConfigText.h): the rows and their colors, the ladder, a ward's rank, the palette
+// recolor (wardgen.pal_retint) and the palette file's checks. Plugin.h includes it; every file of the plugin sees it.
+
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <charconv>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <format>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <vector>
+
+namespace Plugin
+{
+	// a row: five ranks, three worn shield wards, the vampire ward - one set of neutral meshes each (3.0)
+	inline constexpr std::string_view kTokens[] = { "Novice", "Apprentice", "Adept", "Expert", "Master", "Spellbreaker",
+		"Crusader", "Reman", "Vampire" };
+	inline constexpr std::size_t      kRows = std::size(kTokens);
+	inline constexpr std::size_t      kRanks = 5;
+	// the rows a worn shield raises (Spellbreaker, the Crusader shields, Reman's): each has its own pick - off, the normal dome
+	// or the 360 dome (ShieldDome; his order 2026-10-08 made it on / off, his yes 2026-10-12 added the dome)
+	inline constexpr std::array<std::size_t, 3> kShieldRows{ 5, 6, 7 };
+
+	// colors are 0xRRGGBB; the ladder runs from white to one color
+	using Color = std::uint32_t;
+	inline constexpr Color kWhite = 0xFFFFFF;
+	struct Preset
+	{
+		const char* name;
+		Color       color;
+	};
+	// the five colors of 2.x, as quick picks (and how a 2.x settings file's numbers read)
+	inline constexpr Preset kPresets[] = { { "Blue", 0x2468FF }, { "Red", 0xFF3648 }, { "Gold", 0xFFBE5A }, { "Green", 0x2DC846 },
+		{ "Purple", 0x9646FF }, { "White", kWhite } };
+	// what a rankless row wears on its default
+	inline constexpr Color kRowDefault[] = { 0, 0, 0, 0, 0, 0xFFBE5A, kWhite, kWhite, 0xFF3648 };
+	static_assert(std::size(kRowDefault) == kRows);
+
+	// a ladder's stops, in percent of the way from white to its color (wardgen STAGES2, the same numbers)
+	inline constexpr std::array<int, 3> kStages3{ 0, 55, 100 };
+	inline constexpr std::array<int, 4> kStages4{ 0, 33, 67, 100 };
+	inline constexpr std::array<int, 5> kStages5{ 0, 25, 50, 75, 100 };
+	inline constexpr int                kMinStages = 3;
+	inline constexpr int                kMaxStages = 5;
+
+	enum class RowMode : int
+	{
+		kDefault = 0,  // a rank follows the ladder; a rankless row wears its own default
+		kCustom = 1,   // a color of its own
+		kVanilla = 2,  // the game's own (or another mod's) art
+	};
+
+	enum class Unlock : int
+	{
+		kAlways = 0,
+		kSkill50 = 1,
+		kSkill75 = 2,
+		kSkill100 = 3,
+		kPerk = 4,
+	};
+
+	// what one shield's ward does (his yes 2026-10-12, a user report: the Spellbreaker ward should not have to wear the 360
+	// sphere while the spell wards do): no ward, the normal dome, or the 360 dome (needs 360 Ward + its Universal Patch, and
+	// the 360 unlock) - each in that shield's color. Was an on / off switch (2026-10-08).
+	enum class ShieldDome : int
+	{
+		kOff = 0,
+		kNormal = 1,
+		k360 = 2,
+	};
+
+	inline constexpr int kOpacityMin = 25;          // lower reads as nearly invisible
+	inline constexpr int kTransparencyDefault = 0;  // his default 2026-10-06 (was 25, 2026-10-03): "transparency 0, opacity 100"
+	inline constexpr int kTransparencyMax = 90;     // the dome's fill facing you keeps at least a tenth: the rim alone reads as no ward
+	inline constexpr int kBrightnessMin = 25;       // the range is centred on 100 (as built): the slider starts in the middle (his call)
+	inline constexpr int kBrightnessMax = 175;
+
+	// ------------------------------------------------------------------ text
+
+	inline std::string Lower(std::string_view a_text)
+	{
+		std::string out(a_text);
+		std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return out;
+	}
+
+	// equal, ignoring ASCII case
+	inline bool SameText(std::string_view a_a, std::string_view a_b)
+	{
+		return std::ranges::equal(a_a, a_b, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+	}
+
+	inline bool Contains(std::string_view a_haystack, std::string_view a_needle)
+	{
+		return !a_needle.empty() && a_haystack.find(a_needle) != std::string_view::npos;
+	}
+
+	inline std::string Trim(std::string_view a_text)
+	{
+		const auto first = a_text.find_first_not_of(" \t\r\n\f\v");
+		if (first == std::string_view::npos) {
+			return {};
+		}
+		const auto last = a_text.find_last_not_of(" \t\r\n\f\v");
+		return std::string(a_text.substr(first, last - first + 1));
+	}
+
+	// "2468FF"
+	inline std::string HexColor(Color a_color)
+	{
+		return std::format("{:06X}", a_color & 0xFFFFFF);
+	}
+
+	// "2468FF", "#2468FF" or "0x2468FF" -> the color; anything else (a wrong length, a stray letter) -> nothing
+	inline std::optional<Color> ParseColor(std::string_view a_text)
+	{
+		while (!a_text.empty() && (a_text.front() == '#' || a_text.front() == ' ')) {
+			a_text.remove_prefix(1);
+		}
+		if (a_text.starts_with("0x") || a_text.starts_with("0X")) {
+			a_text.remove_prefix(2);
+		}
+		if (a_text.size() != 6) {
+			return std::nullopt;
+		}
+		Color       v = 0;
+		const auto* end = a_text.data() + a_text.size();
+		if (const auto [stop, ec] = std::from_chars(a_text.data(), end, v, 16); ec != std::errc{} || stop != end) {
+			return std::nullopt;
+		}
+		return v;
+	}
+
+	// the row of a token ("Adept" -> 2), any case; kRows when it is none
+	inline std::size_t RowOfToken(std::string_view a_token)
+	{
+		for (std::size_t i = 0; i < kRows; ++i) {
+			if (SameText(kTokens[i], a_token)) {
+				return i;
+			}
+		}
+		return kRows;
+	}
+
+	// ------------------------------------------------------------------ the ladder
+
+	// a_percent of the way from a_from to a_to, each channel rounded to the nearest unit - half to even, as wardgen's
+	// ladder_stop rounds (Python's round). Until 3.5 a channel that went DOWN (white toward a color: every ladder) truncated
+	// toward zero after adding a half, so it landed one unit off wardgen's own stop (the outside review's 1-unit rounding):
+	// Blue's ladder at 25% read DA where wardgen has D9 in green (217.25), C9 for C8 in red (200.25)
+	inline Color Mix(Color a_from, Color a_to, int a_percent)
+	{
+		const int k = std::clamp(a_percent, 0, 100);
+		auto      ch = [&](int a_shift) {
+			const int a = static_cast<int>((a_from >> a_shift) & 0xFF);
+			const int b = static_cast<int>((a_to >> a_shift) & 0xFF);
+			const int n = a * 100 + (b - a) * k;  // the channel x 100, exactly: always 0 - 25500
+			int       q = n / 100;
+			const int r = n % 100;
+			if (r > 50 || (r == 50 && (q & 1))) {
+				++q;
+			}
+			return static_cast<Color>(std::clamp(q, 0, 255)) << a_shift;
+		};
+		return ch(16) | ch(8) | ch(0);
+	}
+
+	// where a rank sits on a ladder of a_stages stops, 0 white - 100 the color; ranks past the ladder hold its last stop
+	inline int StopPercentOf(int a_stages, bool a_reversed, std::size_t a_rank)
+	{
+		auto pick = [&](const auto& a_stops) {
+			const auto n = a_stops.size();
+			const auto pos = (std::min)(a_rank, n - 1);
+			return a_stops[a_reversed ? n - 1 - pos : pos];
+		};
+		return a_stages >= 5 ? pick(kStages5) : a_stages == 4 ? pick(kStages4) :
+		                                                        pick(kStages3);
+	}
+
+	// ------------------------------------------------------------------ a ward's rank
+
+	// a ward found by what it is, ranked by its minimum skill (Novice 0, Apprentice 25, Adept 50, Expert 75, Master 100)
+	inline std::size_t RankRow(std::int32_t a_skill)
+	{
+		return a_skill >= 100 ? 4 : a_skill >= 75 ? 3 :
+		                        a_skill >= 50     ? 2 :
+		                        a_skill >= 25     ? 1 :
+		                                            0;
+	}
+
+	// an always-on ward's rank by its Ward Power, on the vanilla wards' own scale: Lesser Ward 40 (Novice), Steadfast Ward 60
+	// (Apprentice), Greater Ward 80 (Adept); past them Expert, and 100 and up Master (Reliquary of Myth's Magnus ward, 999).
+	// No magnitude known (0): Novice, as its minimum skill 0 would give
+	inline std::size_t PowerRow(float a_power)
+	{
+		return a_power >= 100.0f ? 4 : a_power > 80.0f ? 3 :
+		                           a_power > 60.0f     ? 2 :
+		                           a_power > 40.0f     ? 1 :
+		                                                 0;
+	}
+
+	// the Restoration skill a 360 unlock rule asks for; nothing for the perk rule (a perk decides it)
+	inline std::optional<float> UnlockSkill(Unlock a_rule)
+	{
+		switch (a_rule) {
+		case Unlock::kAlways:
+			return 0.0f;
+		case Unlock::kSkill50:
+			return 50.0f;
+		case Unlock::kSkill75:
+			return 75.0f;
+		case Unlock::kSkill100:
+			return 100.0f;
+		default:
+			return std::nullopt;
+		}
+	}
+
+	// ------------------------------------------------------------------ the palettes (Colors.cpp)
+
+	inline constexpr float         kSatFloor = 0.25f;             // wardgen SAT_FLOOR: a ramp with less color of its own is tinted flat
+	inline constexpr float         kHueHold = 0.50f;              // wardgen HUE_HOLD: green and blue keep at least this much hue
+	inline constexpr std::uint64_t kMaxPalettePixels = 1u << 20;  // 64x the largest shipped palette
+
+	inline float Sat(float a_b, float a_g, float a_r)
+	{
+		const float m = (std::max)({ a_b, a_g, a_r });
+		return m <= 0.0f ? 0.0f : (m - (std::min)({ a_b, a_g, a_r })) / m;
+	}
+
+	// a color whose green or blue leads its red holds part of its hue however pale the texel (white has no hue to hold)
+	inline bool HoldsHue(Color a_c)
+	{
+		const int r = (a_c >> 16) & 0xFF, g = (a_c >> 8) & 0xFF, b = a_c & 0xFF;
+		if ((std::max)({ r, g, b }) - (std::min)({ r, g, b }) <= 8) {
+			return false;
+		}
+		return (std::max)(g, b) > r;
+	}
+
+	// a gold or orange hue (15-60 degrees, at least 35% saturated): the hues whose vapour spikes Community Shaders shades cream
+	// (Aedric FFC420 and Ember FF6A10, his report 2026-10-06; violet, frost, green, pink were fine) - Colors.cpp GoldVapour adds
+	// the lighting pick
+	inline bool GoldHue(Color a_c)
+	{
+		const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
+		const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), d = mx - mn;
+		if (mx <= 0.0f || d / mx < 0.35f || mx != r) {
+			return false;
+		}
+		const float hue = 60.0f * (g - b) / d;  // red is the largest channel: the hue sits between -60 and 60
+		return hue >= 15.0f && hue <= 60.0f;
+	}
+
+	// one palette's neutral source, mip 0 (BGRA)
+	struct PaletteImage
+	{
+		int                       w = 0, h = 0;
+		std::vector<std::uint8_t> bgra;
+		float                     sref = 0.0f;  // the ramp's own saturation (its 95th percentile of lit texels)
+	};
+
+	// a DDS file's bytes -> its palette image; nothing (and a_why says why) when it is not a small uncompressed 32-bit ramp
+	inline std::optional<PaletteImage> PaletteFromDds(const std::vector<std::uint8_t>& a_raw, std::string& a_why)
+	{
+		if (a_raw.size() < 128 || std::memcmp(a_raw.data(), "DDS ", 4) != 0) {
+			a_why = "missing or not a DDS";
+			return std::nullopt;
+		}
+		std::uint32_t h = 0, w = 0, bits = 0;
+		std::memcpy(&h, a_raw.data() + 12, 4);
+		std::memcpy(&w, a_raw.data() + 16, 4);
+		std::memcpy(&bits, a_raw.data() + 88, 4);
+		// a palette is a small ramp: no zero side (the mip chain would read an empty buffer) and nothing past the graphics
+		// card's 16384 limit (which also keeps w * h * 4 far from overflowing)
+		if (w == 0 || h == 0 || w > 16384 || h > 16384) {
+			a_why = std::format("an unusable size {}x{}", w, h);
+			return std::nullopt;
+		}
+		// and no more pixels than a ramp could need (CodeRabbit, PR #3: a 16384x16384 file passed the side check and would cost
+		// gigabytes here). The shipped palettes are 16384 pixels at most (128x128, 256x64, 512x32).
+		if (static_cast<std::uint64_t>(w) * h > kMaxPalettePixels) {
+			a_why = std::format("too large for a palette ({}x{})", w, h);
+			return std::nullopt;
+		}
+		if (bits != 32 || a_raw.size() < 128 + static_cast<std::size_t>(w) * h * 4) {
+			a_why = "not uncompressed 32-bit";
+			return std::nullopt;
+		}
+		PaletteImage p;
+		p.w = static_cast<int>(w);
+		p.h = static_cast<int>(h);
+		p.bgra.assign(a_raw.begin() + 128, a_raw.begin() + 128 + static_cast<std::ptrdiff_t>(w) * h * 4);
+		std::vector<float> sats;
+		for (std::size_t i = 0; i + 3 < p.bgra.size(); i += 4) {
+			const auto b = p.bgra[i], g = p.bgra[i + 1], r = p.bgra[i + 2];
+			if ((std::max)({ b, g, r }) >= 32) {
+				sats.push_back(Sat(b, g, r));
+			}
+		}
+		std::ranges::sort(sats);
+		p.sref = sats.empty() ? 0.0f : sats[static_cast<std::size_t>(static_cast<double>(sats.size()) * 0.95)];
+		return p;
+	}
+
+	// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's.
+	// a_floor: every texel at least this far toward the color (the hand and the domes' cores - Colors.cpp)
+	inline std::vector<std::uint8_t> Retint(const PaletteImage& a_s, Color a_c, float a_floor)
+	{
+		const float               m = static_cast<float>((std::max)({ (a_c >> 16) & 0xFF, (a_c >> 8) & 0xFF, a_c & 0xFF, 1u }));
+		const float               tr = ((a_c >> 16) & 0xFF) / m, tg = ((a_c >> 8) & 0xFF) / m, tb = (a_c & 0xFF) / m;
+		const bool                curve = a_s.sref >= kSatFloor;
+		const float               tsat = Sat(static_cast<float>(a_c & 0xFF), static_cast<float>((a_c >> 8) & 0xFF), static_cast<float>((a_c >> 16) & 0xFF));
+		const bool                hold = HoldsHue(a_c);
+		std::vector<std::uint8_t> out(a_s.bgra.size());
+		for (std::size_t i = 0; i + 3 < a_s.bgra.size(); i += 4) {
+			const float b = a_s.bgra[i], g = a_s.bgra[i + 1], r = a_s.bgra[i + 2];
+			const float v = (std::max)({ b, g, r });
+			float       cb = tb, cg = tg, cr = tr;
+			if (curve) {
+				float k = tsat <= 0.0f ? 1.0f : (std::min)(1.0f, Sat(b, g, r) / tsat);
+				if (hold) {
+					k = (std::max)(k, kHueHold);
+				}
+				k = (std::max)(k, a_floor);
+				cb = 1.0f + k * (tb - 1.0f);
+				cg = 1.0f + k * (tg - 1.0f);
+				cr = 1.0f + k * (tr - 1.0f);
+			}
+			out[i] = static_cast<std::uint8_t>(std::clamp(std::lround(cb * v), 0L, 255L));
+			out[i + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(cg * v), 0L, 255L));
+			out[i + 2] = static_cast<std::uint8_t>(std::clamp(std::lround(cr * v), 0L, 255L));
+			out[i + 3] = a_s.bgra[i + 3];
+		}
+		return out;
+	}
+}

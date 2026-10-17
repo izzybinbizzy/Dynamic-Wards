@@ -8,6 +8,21 @@
 //
 // Dynamic Wards (since 3.0): one neutral set of ward meshes per rank, colored in memory (any color, any opacity). No plugin file; one Papyrus native
 // (DynamicWards.FlashFor, for 360 Ward's rebuilt SphereWard script); settings live in DynamicWards.ini, nothing goes in the save.
+//
+// THE FILES, AND WHAT EACH ONE IS FOR (laid out as Illuminated's and RELight - Spell Addon's)
+//   main.cpp           this file - the order of the data-load work, and the SKSE messages
+//   Plugin.h           what the files share; PCH.h what every file includes
+//   WardMath.h         game-free: the rows, the ladder, a ward's rank, the palette recolor - tested off the game
+//   SettingsText.h     game-free: DynamicWards.ini as one table, its reader and writer - tested off the game
+//   Settings.cpp       the live settings table and its accessors, the file read at load and saved after each change
+//   Wards.cpp          which effects are wards, what each wears, the shields' switches, the 360 unlock, the hand refresh
+//   Colors.cpp         each row's color made in memory: palettes on the graphics card, glow on the cached model
+//   Lighting.cpp       the installer's lighting pick and the hand-light records      DomeLights.cpp  the lights we hang
+//   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
+//   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, JSON text, form lookups
+//   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h are the master
+//                      copies the other plugins carry word for word
+//   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
 
 #include "Plugin.h"
 #include "Translation.h"
@@ -34,6 +49,7 @@ namespace
 						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
+					FlushHeldColor();
 					if (!Later("a menu closed", []() { CheckUnlock("a menu closed"); }) && !toldMenu.exchange(true)) {
 						SKSE::log::warn("a menu closed: the 360 unlock could not be re-checked (no main-thread task); later ones are not logged");
 					}
@@ -106,100 +122,6 @@ namespace
 		if (a_msg) {
 			Guarded("SKSE message", [a_msg]() { Handle(a_msg); });
 		}
-	}
-}
-
-namespace Plugin
-{
-	std::string Lower(std::string_view a_text)
-	{
-		std::string out(a_text);
-		std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-		return out;
-	}
-
-	bool Contains(std::string_view a_haystack, std::string_view a_needle)
-	{
-		return !a_needle.empty() && a_haystack.find(a_needle) != std::string_view::npos;
-	}
-
-	std::string Where(const RE::TESForm* a_form)
-	{
-		if (!a_form) {
-			return "(none)";
-		}
-		const char* id = a_form->GetFormEditorID();
-		const auto* file = a_form->GetFile(0);
-		return std::format("{} | {:08X} | {}", id && *id ? id : "(no editor ID)", a_form->GetFormID(),
-			file ? file->GetFilename() : "(created)");
-	}
-
-	std::string JsonEscape(std::string_view a_text)
-	{
-		std::string out;
-		out.reserve(a_text.size() + 8);
-		for (const unsigned char c : a_text) {
-			switch (c) {
-			case '"':
-				out += "\\\"";
-				break;
-			case '\\':
-				out += "\\\\";
-				break;
-			case '\n':
-				out += "\\n";
-				break;
-			case '\r':
-				out += "\\r";
-				break;
-			case '\t':
-				out += "\\t";
-				break;
-			default:
-				if (c < 0x20) {
-					out += std::format("\\u{:04x}", static_cast<unsigned>(c));
-				} else {
-					out += static_cast<char>(c);
-				}
-				break;
-			}
-		}
-		return out;
-	}
-
-	RE::TESForm* ResolveForm(std::string_view a_text)
-	{
-		const auto tilde = a_text.find('~');
-		if (tilde == std::string_view::npos || tilde == 0) {
-			return nullptr;
-		}
-		std::uint32_t local = 0;
-		auto          hex = a_text.substr(0, tilde);
-		if (hex.starts_with("0x") || hex.starts_with("0X")) {
-			hex.remove_prefix(2);
-		}
-		const auto* end = hex.data() + hex.size();
-		if (const auto [stop, ec] = std::from_chars(hex.data(), end, local, 16); ec != std::errc{} || stop != end) {
-			return nullptr;  // all of it a number: "0x1G~X.esp" is no form
-		}
-		auto* dh = RE::TESDataHandler::GetSingleton();
-		return dh ? dh->LookupForm(local, a_text.substr(tilde + 1)) : nullptr;
-	}
-
-	std::string FormText(const RE::TESForm* a_form)
-	{
-		const auto* file = a_form ? a_form->GetFile(0) : nullptr;
-		if (!file) {
-			return {};
-		}
-		const auto id = a_form->GetFormID();
-		const auto local = file->IsLight() ? (id & 0xFFF) : (id & 0xFFFFFF);
-		return std::format("0x{:X}~{}", local, file->GetFilename());
-	}
-
-	bool SameText(std::string_view a_a, std::string_view a_b)
-	{
-		return std::ranges::equal(a_a, a_b, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
 	}
 }
 

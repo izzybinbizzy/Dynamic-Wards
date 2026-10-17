@@ -69,6 +69,9 @@ namespace Plugin
 		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";   // the hand light (Ward casting light)
 		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";  // always 1: the light mods' ward lights step down
 		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight - Spell Addon: casting art moved, find the hand lights again
+		// the two applies made in the background (WatchArt's round), named once: ApplyAll keeps the hands' look for the menu
+		constexpr const char* kWhyArtSwapped = "art swapped by another mod";
+		constexpr const char* kWhyUnlock = "the 360 unlock changed";
 
 		struct Art
 		{
@@ -112,18 +115,22 @@ namespace Plugin
 			std::size_t art = 0, light = 0, shield = 0;
 		};
 
-		std::mutex                                                       gLock;
-		std::array<Art, kRows>                                           gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
-		RE::TESGlobal*                                                   gLightsGlobal = nullptr;
-		RE::TESGlobal*                                                   gHandGlobal = nullptr;
-		RE::TESGlobal*                                                   gPresentGlobal = nullptr;
-		bool                                                             gLightPlacer = false;
-		RE::BGSArtObject*                                                gEmpty = nullptr;
-		RE::BGSReferenceEffect*                                          gNoFlash = nullptr;
-		std::vector<Target>                                              gTargets;
-		std::size_t                                                      gSkipped = 0;
-		bool                                                             gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch: the only way the 360 dome is used
-		bool                                                             gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
+		std::mutex              gLock;
+		std::array<Art, kRows>  gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
+		RE::TESGlobal*          gLightsGlobal = nullptr;
+		RE::TESGlobal*          gHandGlobal = nullptr;
+		RE::TESGlobal*          gPresentGlobal = nullptr;
+		bool                    gLightPlacer = false;
+		RE::BGSArtObject*       gEmpty = nullptr;
+		RE::BGSReferenceEffect* gNoFlash = nullptr;
+		std::vector<Target>     gTargets;
+		std::size_t             gSkipped = 0;
+		bool                    gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch
+		bool                    gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
+		// our 360 domes are installed (any row's): the installer puts them in only when 360 Ward.esp was in the plugin list, so a
+		// player who adds 360 Ward later has the plugin and the patch but no 360 dome to wear - the outside review's "360 menu choice
+		// shown without the 360 meshes" (3.5: the menu then says how to get them, and never offers a choice that changes nothing)
+		bool                                                             gHas360Meshes = false;
 		bool                                                             gUnlocked = true;
 		std::size_t                                                      gDressed = 0;
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> gShields;
@@ -168,6 +175,12 @@ namespace Plugin
 			return e;
 		}
 
+		// the 360 dome can be worn at all: 360 Ward, its Universal Patch and our 360 domes. gLock held
+		bool Can360()
+		{
+			return gHas360 && gHas360Meshes;
+		}
+
 		// The dome a row wears now: the 360 dome where the player wants it (the Dome pick for the spell wards, each shield's own
 		// pick for the shield rows - his yes 2026-10-12 after a user report: Spellbreaker kept the 360 sphere while he wanted it
 		// only on his spell wards) and 360 Ward + its Universal Patch are loaded and the 360 dome is unlocked; else the normal
@@ -176,7 +189,7 @@ namespace Plugin
 		{
 			const bool shield = std::ranges::find(kShieldRows, a_row) != kShieldRows.end();
 			const bool want360 = shield ? ShieldDomeOf(a_row) == ShieldDome::k360 : Dome360();
-			return (gHas360 && want360 && gUnlocked && a_art->dome360) ? a_art->dome360 : a_art->dome;
+			return (Can360() && want360 && gUnlocked && a_art->dome360) ? a_art->dome360 : a_art->dome;
 		}
 
 		// what one ward wears: with a_worn (WearsWorn) its row's looping copies where the row has them (the 360 dome loops
@@ -326,35 +339,6 @@ namespace Plugin
 			return Lower(a_art && a_art->GetModel() ? a_art->GetModel() : "");
 		}
 
-		std::size_t RowOf(std::string_view a_token)
-		{
-			for (std::size_t i = 0; i < kRows; ++i) {
-				if (kTokens[i] == a_token) {
-					return i;
-				}
-			}
-			return kRows;
-		}
-
-		std::size_t RankRow(std::int32_t a_skill)
-		{
-			return a_skill >= 100 ? 4 : a_skill >= 75 ? 3 :
-			                        a_skill >= 50     ? 2 :
-			                        a_skill >= 25     ? 1 :
-			                                            0;
-		}
-
-		// an always-on ward's rank by its Ward Power, on the vanilla wards' own scale: Lesser Ward 40 (Novice), Steadfast Ward 60
-		// (Apprentice), Greater Ward 80 (Adept); past them Expert, and 100 and up Master (Reliquary of Myth's Magnus ward, 999).
-		// No magnitude known (0): Novice, as its minimum skill 0 would give
-		std::size_t PowerRow(float a_power)
-		{
-			return a_power >= 100.0f ? 4 : a_power > 80.0f ? 3 :
-			                           a_power > 60.0f     ? 2 :
-			                           a_power > 40.0f     ? 1 :
-			                                                 0;
-		}
-
 		// an always-on ward ranked by its strength: a constant effect whose value is Ward Power (an item's ward while held or worn)
 		bool AlwaysOnPower(const RE::EffectSetting& a_effect)
 		{
@@ -380,9 +364,8 @@ namespace Plugin
 			}
 			// the skill level itself, as the game's own perk requirements read it: a skill raised or lowered by a modifier (a
 			// mod's fortify-skill effect, modav) does not lock or unlock the dome
-			constexpr float kSkill[] = { 0.0f, 50.0f, 75.0f, 100.0f };
-			const auto      i = static_cast<std::size_t>(rule);
-			return i >= std::size(kSkill) || player->AsActorValueOwner()->GetBaseActorValue(RE::ActorValue::kRestoration) >= kSkill[i];
+			const auto need = UnlockSkill(rule);
+			return !need || player->AsActorValueOwner()->GetBaseActorValue(RE::ActorValue::kRestoration) >= *need;
 		}
 
 		template <class T>
@@ -522,22 +505,36 @@ namespace Plugin
 			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
 		}
 
-		std::size_t RefreshHands()
+		// Only a hand whose ward changed what it wears in the hand is re-equipped (3.5, the outside review's "broad hand refresh":
+		// every hand holding any ward of ours was re-equipped after ANY change - an Opacity or Transparency drag, a row it does not
+		// wear, a shield's switch - and each re-equip restarts the hand's casting art): its effect's casting art was swapped
+		// (a_castChanged - a row turned Vanilla, a Compatibility tick), or its row's hand look moved (a_handRows - the row's color
+		// or Hand Brightness; Colors.cpp TakeHandLookChanges). gLock held.
+		std::size_t RefreshHands(const std::array<bool, kRows>& a_handRows, const std::unordered_set<const RE::EffectSetting*>& a_castChanged)
 		{
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (!player || !player->Get3D()) {
 				return 0;
 			}
+			const auto changed = [&](const RE::Effect* e) {
+				if (!e || !e->baseEffect) {
+					return false;
+				}
+				if (a_castChanged.contains(e->baseEffect)) {
+					return true;
+				}
+				const auto it = gTargetOf.find(e->baseEffect);
+				if (it == gTargetOf.end()) {
+					return false;
+				}
+				const auto& t = gTargets[it->second];
+				// a hand that wears our casting art of that row (a ward wearing its own hand art keeps it whatever our colors do)
+				return t.row < kRows && a_handRows[t.row] && Worn(t) && (t.how == How::kTable || t.castWard);
+			};
 			std::size_t n = 0;
 			for (const std::int32_t hand : { 0, 1 }) {  // Papyrus: 0 left, 1 right
 				auto* spell = skyrim_cast<RE::SpellItem*>(player->GetEquippedObject(hand == 0));
-				if (!spell) {
-					continue;
-				}
-				const bool ours = std::ranges::any_of(spell->effects, [](const RE::Effect* e) {
-					return e && e->baseEffect && gTargetOf.contains(e->baseEffect);
-				});
-				if (!ours) {
+				if (!spell || std::ranges::none_of(spell->effects, changed)) {
 					continue;
 				}
 				const bool sent = CallOnPlayer("UnequipSpell", spell, hand, [spell, hand]() {
@@ -613,12 +610,16 @@ namespace Plugin
 				models.push_back(hit);
 			}
 			gArt[row] = a;
+			gHas360Meshes = gHas360Meshes || a.dome360;
 			RegisterRowModels(row, std::move(models));
 			++made;
 		}
 		SKSE::log::info("art: {} row(s) made, {} missing, {} with worn copies; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made,
-			missing, worn, gFlashTemplate, gHas360 ? "loaded" : gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
-																				"not loaded",
+			missing, worn, gFlashTemplate,
+			Can360()      ? "loaded" :
+			gHas360       ? "loaded, but our 360 domes are not installed (installed only with 360 Ward.esp in the plugin list - 360 dome off)" :
+			gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
+							"not loaded",
 			gLightPlacer ? "loaded" : "not loaded", gLightsGlobal ? kLightsGlobal : "NOT made",
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
@@ -644,7 +645,7 @@ namespace Plugin
 		std::unordered_map<RE::FormID, std::size_t> table;
 		for (const auto& r : kTable) {
 			if (const auto id = dh->LookupFormID(r.id, r.file)) {
-				table[id] = RowOf(r.token);
+				table[id] = RowOfToken(r.token);
 			}
 		}
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
@@ -805,7 +806,7 @@ namespace Plugin
 	}
 
 	// another mod's script can swap a dressed ward's art after we dressed it (Strange Runes does at every load and on its
-	// MCM): checked every 2 s on the main thread, and a swapped ward is dressed again. Wards left to another mod (Worn null)
+	// MCM): checked every 2 s on the main thread, and a swapped ward is dressed again; the same round re-reads the 360 unlock. Wards left to another mod (Worn null)
 	// are never touched here, so two mods never fight over one.
 	void WatchArt()
 	{
@@ -836,7 +837,12 @@ namespace Plugin
 						}
 						if (swapped) {
 							SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
-							ApplyAll("art swapped by another mod");
+							ApplyAll(kWhyArtSwapped);
+						} else {
+							// the 360 unlock follows the skill (or the perk) within 2 s: until 3.5 it was read again only when a
+							// menu closed, so a Restoration level-up mid-fight changed nothing (the outside review). Cheap: one
+							// actor value read; ApplyAll runs only when the answer changed
+							CheckUnlock(kWhyUnlock);
 						}
 					});
 					if (!sent) {
@@ -854,50 +860,59 @@ namespace Plugin
 		for (std::size_t r = 0; r < kRows; ++r) {
 			gRowArt[r] = ArtFor(r);
 		}
-		const bool  light = WardLightOn();
-		const bool  use360 = gHas360 && Dome360();
-		const bool  every = EveryWard();
-		Changes     c;
-		std::size_t dressed = 0;
+		const bool                                   light = WardLightOn();
+		const bool                                   use360 = Can360() && Dome360();
+		const bool                                   every = EveryWard();
+		Changes                                      c;
+		std::size_t                                  dressed = 0;
+		std::unordered_set<const RE::EffectSetting*> castChanged;  // the effects whose casting art moved in this apply
 		for (auto& t : gTargets) {
-			auto& d = t.effect->data;
+			auto&       d = t.effect->data;
+			auto* const castBefore = d.castingArt;
 			if (t.how == How::kSilent) {
 				if (gEmpty) {
 					Put(d.hitEffectArt, gEmpty, c.art);
 					Put(d.castingArt, gEmpty, c.art);
 				}
-				continue;
-			}
-			const Art* a = Worn(t);
-			if (!a) {
+			} else if (const Art* a = Worn(t); !a) {
 				Restore(d.castingArt, t.ownCast, c.art);
 				Restore(d.hitEffectArt, t.ownHit, c.art);
 				Restore(d.enchantEffectArt, t.ownEnch, c.art);
-				continue;
+			} else {
+				const auto w = DressOf(t, a);
+				if (w.cast) {
+					Put(d.castingArt, w.cast, c.art);
+				}
+				if (w.hit) {
+					Put(d.hitEffectArt, w.hit, c.art);
+				}
+				if (w.ench) {
+					Put(d.enchantEffectArt, w.ench, c.art);
+				}
+				if (w.cast || w.hit || w.ench) {
+					++dressed;
+				}
 			}
-			const auto w = DressOf(t, a);
-			if (w.cast) {
-				Put(d.castingArt, w.cast, c.art);
-			}
-			if (w.hit) {
-				Put(d.hitEffectArt, w.hit, c.art);
-			}
-			if (w.ench) {
-				Put(d.enchantEffectArt, w.ench, c.art);
-			}
-			if (w.cast || w.hit || w.ench) {
-				++dressed;
+			if (d.castingArt != castBefore) {
+				castChanged.insert(t.effect);
 			}
 		}
 		// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
-		const bool recolored = ApplyColors();
+		ApplyColors();
+		// the hand looks are taken on every apply but the two background ones (the 2 s re-dress after another mod swapped the art,
+		// the 360 unlock check): one of those landing during a color drag would mark the dragged color as seen, and the menu's
+		// apply when the drag ends would then re-equip nothing (the 3.5 code review)
+		const std::string_view why = a_why ? a_why : "";
+		const bool             background = why == kWhyArtSwapped || why == kWhyUnlock;
+		const auto             handRows = background ? std::array<bool, kRows>{} : TakeHandLookChanges();
 		if (c.art) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
 		}
 		// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
-		// (or devbench's setter); a load or a loading screen equips everything afresh anyway
-		if ((c.art || recolored) && a_why && (std::string_view(a_why) == "menu" || std::string_view(a_why) == "devbench")) {
-			RefreshHands();
+		// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
+		std::size_t refreshed = 0;
+		if (why == "menu" || why == "devbench") {
+			refreshed = RefreshHands(handRows, castChanged);
 		}
 		const bool ownHand = OwnLights();
 		for (auto& t : gTargets) {
@@ -1008,8 +1023,8 @@ namespace Plugin
 		}
 		gDressed = dressed;
 		gLastApply = a_why ? a_why : "?";
-		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; ward light {}, colored lights {}; dome {}; unlisted mods {}",
-			gLastApply, dressed, c.art, c.light, c.shield, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
+		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) re-equipped; ward light {}, colored lights {}; dome {}; unlisted mods {}",
+			gLastApply, dressed, c.art, c.light, c.shield, refreshed, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
 			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" :
 											  "360 (locked)",
 			every ? "on" : "off");
@@ -1020,7 +1035,7 @@ namespace Plugin
 	{
 		{
 			std::scoped_lock l{ gLock };
-			if (!gHas360 || !Any360Wanted() || Unlocked() == gUnlocked) {
+			if (!Can360() || !Any360Wanted() || Unlocked() == gUnlocked) {
 				return;
 			}
 		}
@@ -1030,7 +1045,13 @@ namespace Plugin
 	bool Has360Ward()
 	{
 		std::scoped_lock l{ gLock };
-		return gHas360;
+		return Can360();
+	}
+
+	bool Missing360Meshes()
+	{
+		std::scoped_lock l{ gLock };
+		return gHas360 && !gHas360Meshes;
 	}
 
 	bool Missing360Patch()
@@ -1212,11 +1233,11 @@ namespace Plugin
 				ShieldWardOn(s.row), static_cast<int>(ShieldDomeOf(s.row)), s.entry->baseEffect == s.ward);
 		}
 		return std::format(
-			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360":{},)"
+			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360Installed":{},"dome360":{},)"
 			R"("unlocked360":{},"unlockRule":{},"unlockPerk":"{}","ladder":"{}","wardLight":{},"coloredLights":{},"lightsGlobal":{},)"
 			R"("lightPlacer":{},"everyWard":{},"crusader":{},"rows":{{{}}},"shields":[{}],"shieldWards":[{}],"wards":[{}]}})",
 			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), std::ranges::count_if(gArt, [](const Art& a) { return a.hand != nullptr; }),
-			JsonEscape(gFlashTemplate), gHas360, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
+			JsonEscape(gFlashTemplate), gHas360, gHas360Meshes, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
 			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
 			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), rows,
 			shields, shieldWards, wards);
