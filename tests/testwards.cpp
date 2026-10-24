@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 228;  // 2026-10-16: the run's count after the code review
+	constexpr int kFloor = 251;
 
 	using namespace Plugin;
 
@@ -415,6 +415,52 @@ namespace
 	}
 }
 
+namespace
+{
+	bool Near(float a_a, float a_b, float a_tol = 0.002f)
+	{
+		return std::fabs(a_a - a_b) <= a_tol;
+	}
+
+	bool NearRgb(const std::array<float, 3>& a_a, float a_r, float a_g, float a_b)
+	{
+		return Near(a_a[0], a_r) && Near(a_a[1], a_g) && Near(a_a[2], a_b);
+	}
+
+	// ---------------------------------------------------------------- the lights
+	void Lights()
+	{
+		// the build's cutoff (wardgen's K): the dome light's 133 reach at fade 1, size 2
+		CHECK(Near(CutoffFor(1.0f, 133.0f, 2.0f), 3918.88f / (133.0f * 133.0f + 4.0f), 0.0001f));
+		CHECK(CutoffFor(100.0f, 1.0f, 0.0f) == kHighestCutoff);     // clamped high
+		CHECK(CutoffFor(0.0001f, 5000.0f, 2.0f) == kLowestCutoff);  // clamped low
+		CHECK(CutoffFor(1.0f, 0.0f, 0.0f) == kHighestCutoff);       // no reach at all: never a division by zero
+		// the cutoff follows the dimmed fade: half the fade, half the cutoff (inside the clamp)
+		CHECK(Near(CutoffFor(0.5f, 133.0f, 2.0f) * 2.0f, CutoffFor(1.0f, 133.0f, 2.0f), 0.0001f));
+		// sRGB -> linear: the ends hold, the knee and a mid value (0.5 -> 0.2140)
+		CHECK(ToLinear(0.0f) == 0.0f);
+		CHECK(Near(ToLinear(1.0f), 1.0f));
+		CHECK(Near(ToLinear(0.04045f), 0.04045f / 12.92f, 0.00001f));
+		CHECK(Near(ToLinear(0.5f), 0.21404f, 0.0001f));
+		CHECK(NearRgb(LightRgb(0xFF8000, false), 1.0f, 128.0f / 255.0f, 0.0f));
+		CHECK(NearRgb(LightRgb(0xFF8000, true), 1.0f, ToLinear(128.0f / 255.0f), 0.0f));
+		CHECK(NearRgb(LightRgb(0x000000, true), 0.0f, 0.0f, 0.0f));
+		// the ENB sprite: a saturated hue keeps its hue at full value; a pale one is pushed to the floor; white stays white
+		CHECK(NearRgb(SpriteRgb(0xFF0000, 0.75f), 1.0f, 0.0f, 0.0f));
+		CHECK(NearRgb(SpriteRgb(0x00FF00, 0.75f), 0.0f, 1.0f, 0.0f));
+		CHECK(NearRgb(SpriteRgb(0x0000FF, 0.75f), 0.0f, 0.0f, 1.0f));
+		CHECK(NearRgb(SpriteRgb(0x800000, 0.75f), 1.0f, 0.0f, 0.0f));  // full value whatever the color's own
+		CHECK(NearRgb(SpriteRgb(kWhite, 0.75f), 1.0f, 1.0f, 1.0f));
+		CHECK(NearRgb(SpriteRgb(0xFFC0C0, 0.75f), 1.0f, 0.25f, 0.25f));                     // 25% saturated pink -> 75%
+		CHECK(NearRgb(SpriteRgb(0x2468FF, 0.75f), 36.0f / 255.0f, 104.0f / 255.0f, 1.0f));  // the game's ward blue: 86% already
+		// every hue sixth lands on its own pair of channels
+		CHECK(NearRgb(SpriteRgb(0xFFFF00, 0.75f), 1.0f, 1.0f, 0.0f));
+		CHECK(NearRgb(SpriteRgb(0x00FFFF, 0.75f), 0.0f, 1.0f, 1.0f));
+		CHECK(NearRgb(SpriteRgb(0xFF00FF, 0.75f), 1.0f, 0.0f, 1.0f));
+		CHECK(NearRgb(SpriteRgb(0x8000FF, 0.75f), 128.0f / 255.0f, 0.0f, 1.0f));
+	}
+}
+
 int main()
 {
 	Text();
@@ -422,6 +468,7 @@ int main()
 	Ranks();
 	Palettes();
 	Settings();
+	Lights();
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
 		std::printf("FAIL: only %d checks ran, under the floor of %d - a test stopped part way\n", gPassed, kFloor);

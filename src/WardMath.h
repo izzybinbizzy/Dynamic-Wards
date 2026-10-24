@@ -347,4 +347,77 @@ namespace Plugin
 		}
 		return out;
 	}
+
+	// ------------------------------------------------------------------ the lights (Lighting.cpp, DomeLights.cpp, Colors.cpp)
+
+	// Community Shaders' inverse-square words (Light Limit Fix's LightFlags), the build's cutoff constant and the cutoff's range:
+	// the same numbers as Illuminated's LightMath.h
+	inline constexpr std::uint32_t kIslFlag = 1u << 10;
+	inline constexpr std::uint32_t kIslInitialised = 1u << 8;
+	inline constexpr float         kCutoffK = 3918.88f;
+	inline constexpr float         kLowestCutoff = 0.01f, kHighestCutoff = 0.99f;
+
+	// the cutoff an inverse-square light of this fade, reach and size is drawn with: cutoff = K x fade / (reach² + size²)
+	[[nodiscard]] inline float CutoffFor(float a_fade, float a_reach, float a_size) noexcept
+	{
+		const float spread = a_reach * a_reach + a_size * a_size;
+		return spread > 0.0f ? std::clamp(kCutoffK * a_fade / spread, kLowestCutoff, kHighestCutoff) : kHighestCutoff;
+	}
+
+	// one sRGB channel (0-1) as linear light
+	[[nodiscard]] inline float ToLinear(float a_v) noexcept
+	{
+		return a_v <= 0.04045f ? a_v / 12.92f : std::pow((a_v + 0.055f) / 1.055f, 2.4f);
+	}
+
+	// a color's three channels, 0-1: as they are, or as linear light (inverse-square lighting works in linear light)
+	[[nodiscard]] inline std::array<float, 3> LightRgb(Color a_color, bool a_linear) noexcept
+	{
+		std::array<float, 3> out{};
+		for (int i = 0; i < 3; ++i) {
+			const float v = static_cast<float>((a_color >> (16 - 8 * i)) & 0xFF) / 255.0f;
+			out[static_cast<std::size_t>(i)] = a_linear ? ToLinear(v) : v;
+		}
+		return out;
+	}
+
+	// the ENB light sprite's color: the ward's hue at full value and at least a_minSat saturated (a pale light reads white and
+	// washes the ward out); a color with no hue to speak of (under 2% saturated) stays white
+	[[nodiscard]] inline std::array<float, 3> SpriteRgb(Color a_color, float a_minSat) noexcept
+	{
+		const auto  rgb = LightRgb(a_color, false);
+		const float r = rgb[0], g = rgb[1], b = rgb[2];
+		const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), spread = mx - mn;
+		float       sat = mx <= 0.0f ? 0.0f : spread / mx;
+		float       hue = 0.0f;  // sixths of the wheel, 0-6
+		if (spread > 0.0f) {
+			hue = mx == r ? std::fmod((g - b) / spread, 6.0f) : mx == g ? (b - r) / spread + 2.0f :
+			                                                              (r - g) / spread + 4.0f;
+			hue = hue < 0.0f ? hue + 6.0f : hue;
+		}
+		sat = sat > 0.02f ? (std::max)(sat, a_minSat) : 0.0f;
+		const float          x = sat * (1.0f - std::fabs(std::fmod(hue, 2.0f) - 1.0f)), base = 1.0f - sat;
+		std::array<float, 3> out{ base, base, base };
+		switch (static_cast<int>(hue) % 6) {
+		case 0:
+			out[0] += sat, out[1] += x;
+			break;
+		case 1:
+			out[0] += x, out[1] += sat;
+			break;
+		case 2:
+			out[1] += sat, out[2] += x;
+			break;
+		case 3:
+			out[1] += x, out[2] += sat;
+			break;
+		case 4:
+			out[0] += x, out[2] += sat;
+			break;
+		default:
+			out[0] += sat, out[2] += x;
+			break;
+		}
+		return out;
+	}
 }

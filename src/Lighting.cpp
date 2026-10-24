@@ -2,23 +2,27 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// Which lighting the player picked in the installer, and the lights this plugin makes because of it (3.0).
+// Which lighting the player picked in the installer, and the hand-light records this plugin makes because of it.
 //
-//   Community Shaders   this plugin makes every ward light: the hand light (the game's ward light record, one copy per row in
-//                       that row's color) and the dome light (DomeLights.cpp, inverse square when Community Shaders has it).
-//   ENB                 an ENB particle light inside each ward mesh, colored by Colors.cpp, AND (since 2026-10-06) this plugin's
-//                       hand and dome lights as on Vanilla - the mesh light alone barely lit the ground; the game's light goes.
-//   Vanilla             as Community Shaders, in the game's own lighting; the hand light copies take the house light (178 / 1.14).
-// Every pick also lights the FIRST-PERSON hand while one of our wards is cast (DomeLights.cpp; his order 2026-10-05, "every
-// mod gets light for first person as well") - the game's, Light Placer's and the ENB lights hang on the third-person body.
+//   Community Shaders   this plugin makes every ward light: the hand light and the dome light (DomeLights.cpp), inverse square
+//                       whenever Community Shaders runs
+//   ENB                 an ENB light sprite inside each ward mesh, colored by Colors.cpp, and this plugin's hand and dome lights
+//                       as on Vanilla: the sprite alone barely lights the ground
+//   Vanilla             as Community Shaders, in the game's own lighting; the hand-light copies take the house light (178 / 1.14)
+// Every pick also lights the hand in first person (DomeLights.cpp): the game's casting light hangs on the third-person body.
 //
-// The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs. With no file
-// the game is looked at, as Illuminated, Waning Glow and RELight - Spell Addon do: Community Shaders' inverse square shader
-// -> Community Shaders, an ENB's settings in the game folder -> ENB, else Vanilla.
+// The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs - the meshes it
+// installed match that pick, so the pick is kept. The game is looked at the way Illuminated looks at it (Lighting.cpp there):
+// with no pick it decides; with one, a pick the game contradicts is said in the log (a bug report then shows it).
+//
+// COMMUNITY SHADERS' WORDS: Light Limit Fix reads the first three words of EVERY light's runtime data as its flags, cutoff and
+// record (LLFCommon::RuntimeLightDataExt; bit 9 Disabled), so whenever CommunityShaders.dll is loaded (Bottled and Open Shaders
+// keep the name) the lights are written in its words, never with an ambient color - whatever the pick says.
 
 #include "Plugin.h"
 
-#include <cmath>
+#include <Windows.h>
+#include <TlHelp32.h>
 
 namespace Plugin
 {
@@ -27,49 +31,85 @@ namespace Plugin
 		constexpr const char* kPickPath = "Data/SKSE/Plugins/Dynamic Wards/Lighting.txt";
 		constexpr const char* kEffects11 = "Data/Shaders/Features/Effects11.ini";
 		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
-		// a Community Shaders that builds inverse square lights into Light Limit Fix (Bottled Shaders 1.0.10 dropped the
-		// separate shader above): its attenuation reads each light's InverseSquare flag
+		// a Community Shaders that builds inverse square lights into Light Limit Fix (no separate shader file): its attenuation
+		// reads each light's InverseSquare flag
 		constexpr const char*   kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
+		constexpr const char*   kEnbFiles[] = { "enbseries.ini", "enblocal.ini" };
 		constexpr const char*   kGame = "Skyrim.esm";
 		constexpr std::uint32_t kWardLight = 0x02F3EF;  // MagicLightWardHand01, the light every vanilla ward casts with
+		// Vanilla: the game's ward light (radius 50) barely reads in the game's own lighting, so our ward copies take the house
+		// light (wardgen.plain_light: LTBG section 4's reach 133 drawn at radius 178, fade 1.14)
+		constexpr std::uint32_t kPlainRadius = 178;
+		constexpr float         kPlainFade = 1.14f;
+		constexpr const char*   kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 
-		std::mutex                                   gLock;
-		std::atomic<Lighting>                        gPick{ Lighting::kShaders };
-		bool                                         gPickRead = false;
-		bool                                         gE11 = false;
-		bool                                         gIsl = false;
-		bool                                         gCs = false;  // CommunityShaders.dll loaded (read with gIsl)
+		std::atomic<Lighting> gPick{ Lighting::kShaders };
+		std::atomic<Lighting> gSeen{ Lighting::kShaders };  // what the game itself shows
+		std::atomic<bool>     gPickRead{ false }, gE11{ false }, gIsl{ false }, gCs{ false }, gEnbRunning{ false }, gEnbFiles{ false };
+
+		std::mutex                                   gLock;  // the hand-light records
 		const RE::TESObjectLIGH*                     gGame = nullptr;
 		std::array<RE::TESObjectLIGH*, kRows>        gHand{};
 		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
-		float                                        gHandFade = 1.0f;  // the hand lights' strength before the casting glow slider
-		// Vanilla: the game's ward light (radius 50) barely reads in the game's own lighting - his report 2026-10-05, "the
-		// casting art doesn't have light on vanilla". Our ward copies take the house light instead (LTBG section 4's 133 reach
-		// as the game's lights draw it: wardgen.plain_light, radius 178 / fade 1.14); only ward spells wear these copies.
-		constexpr std::uint32_t kPlainRadius = 178;
-		constexpr float         kPlainFade = 1.14f;
+		float                                        gHandFade = 1.0f;  // the hand lights' strength before Hand Brightness
 
-		// Community Shaders (or a fork that keeps its DLL name - Bottled Shaders) is running. Its Light Limit Fix reads the
-		// first three words of EVERY light as its own flags, cutoff and record (LLFCommon::RuntimeLightDataExt), whether or not a shader
-		// file says so: an ambient color written there is read as flags - a red of 81-122 sets bit 9, Disabled (RELight -
-		// Spell Addon 2.1's user report 2026-10-14, Bottled Shaders: the frost and shock hands lit nothing)
-		bool CommunityShadersLoaded()
-		{
-			return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr;
-		}
-
-		bool IslInstalled()
+		[[nodiscard]] bool Exists(const char* a_path)
 		{
 			std::error_code ec;
-			if (CommunityShadersLoaded() || std::filesystem::exists(kIslShader, ec)) {
-				return true;
+			return std::filesystem::exists(a_path, ec);
+		}
+
+		[[nodiscard]] bool CommunityShadersLoaded() { return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr; }
+
+		[[nodiscard]] bool IslBuiltIntoLightLimitFix()
+		{
+			std::ifstream in(kLlfAttenuation, std::ios::binary);
+			if (!in) {
+				return false;
 			}
-			std::ifstream     in(kLlfAttenuation, std::ios::binary);
 			const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
 			return text.find("InverseSquare") != std::string::npos;
 		}
 
-		Lighting ReadPick()
+		// an ENB that is running: a loaded module exports its SDK - d3d11.dll as usual, or any other name an injector gave it;
+		// nullopt when the module list could not be read, so the caller falls back to ENB's settings files. ENB's settings files
+		// alone never make it ENB: a preset left in the game folder with no ENB running is the game's own lighting
+		[[nodiscard]] std::optional<bool> EnbRunning()
+		{
+			for (const char* dll : { "d3d11.dll", "dxgi.dll", "d3d9.dll" }) {
+				if (const auto handle = REX::W32::GetModuleHandleA(dll); handle && REX::W32::GetProcAddress(handle, "ENBGetSDKVersion")) {
+					return true;
+				}
+			}
+			// a module loading at that moment makes the snapshot fail with ERROR_BAD_LENGTH; Windows asks for a retry
+			auto snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+			for (int tries = 0; snap == INVALID_HANDLE_VALUE && ::GetLastError() == ERROR_BAD_LENGTH && tries < 8; ++tries) {
+				snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+			}
+			if (snap == INVALID_HANDLE_VALUE) {
+				return std::nullopt;
+			}
+			MODULEENTRY32W entry{};
+			entry.dwSize = sizeof(entry);
+			if (!::Module32FirstW(snap, &entry)) {
+				::CloseHandle(snap);
+				return std::nullopt;
+			}
+			bool found = false;
+			do {
+				// a counted reference: a module unloaded after the snapshot cannot be read through a stale handle
+				HMODULE module = nullptr;
+				if (::GetModuleHandleExW(0, entry.szModule, &module)) {
+					found = ::GetProcAddress(module, "ENBGetSDKVersion") != nullptr;
+					::FreeLibrary(module);
+				}
+			} while (!found && ::Module32NextW(snap, &entry));
+			::CloseHandle(snap);
+			return found;
+		}
+
+		// the installer's word, or nothing when there is no pick file
+		[[nodiscard]] std::optional<Lighting> ReadPick()
 		{
 			std::ifstream in(kPickPath);
 			std::string   line;
@@ -78,16 +118,10 @@ namespace Plugin
 				if (word.empty() || word[0] == '#') {
 					continue;
 				}
-				gPickRead = true;
 				return word == "enb" ? Lighting::kEnb : word == "vanilla" ? Lighting::kVanilla :
 				                                                            Lighting::kShaders;
 			}
-			// no pick: look at the game
-			std::error_code ec;
-			if (IslInstalled()) {
-				return Lighting::kShaders;
-			}
-			return std::filesystem::exists("enbseries.ini", ec) || std::filesystem::exists("enblocal.ini", ec) ? Lighting::kEnb : Lighting::kVanilla;
+			return std::nullopt;
 		}
 	}
 
@@ -103,24 +137,38 @@ namespace Plugin
 
 	RE::NiColor LightColor(Color a_color, bool a_linear)
 	{
-		auto ch = [&](int a_shift) {
-			const float v = ((a_color >> a_shift) & 0xFF) / 255.0f;
-			return a_linear ? (v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f)) : v;
-		};
-		return { ch(16), ch(8), ch(0) };
+		const auto [r, g, b] = LightRgb(a_color, a_linear);
+		return { r, g, b };
 	}
 
 	void ReadLighting()
 	{
-		std::scoped_lock l{ gLock };
-		gPick = ReadPick();
-		gE11 = std::filesystem::exists(kEffects11);
-		gIsl = IslInstalled();
+		const bool shaderFile = Exists(kIslShader);
+		const bool inLlf = IslBuiltIntoLightLimitFix();
 		gCs = CommunityShadersLoaded();
-		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
-		SKSE::log::info("lighting: {} ({}); Effects 11 {}; inverse square {} (CommunityShaders.dll {})", kNames[static_cast<int>(gPick.load())],
-			gPickRead ? "the installer's pick" : "no installer pick, looked at the game", gE11 ? "installed" : "not installed", gIsl ? "on" : "off",
-			gCs ? "loaded" : "not loaded");
+		gIsl = shaderFile || inLlf || gCs;
+		gE11 = Exists(kEffects11);
+		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
+		const auto running = EnbRunning();
+		gEnbRunning = running.value_or(gEnbFiles.load());
+		gSeen = gIsl ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
+		                                                  Lighting::kVanilla;
+		const auto pick = ReadPick();
+		gPickRead = pick.has_value();
+		gPick = pick.value_or(gSeen.load());
+		if (!running) {
+			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
+		}
+		SKSE::log::info(
+			"lighting: {} ({}); the game shows {} (CommunityShaders.dll {}, inverse square shader {}, in Light Limit Fix {}, ENB running "
+			"{}, ENB settings in the game folder {}); Effects 11 {}; lights drawn {}",
+			kNames[static_cast<int>(gPick.load())], gPickRead ? "the installer's pick" : "no installer pick, looked at the game",
+			kNames[static_cast<int>(gSeen.load())], gCs ? "loaded" : "not loaded", shaderFile ? "installed" : "not installed", inLlf ? "yes" : "no",
+			gEnbRunning ? "yes" : "no", gEnbFiles ? "yes" : "no", gE11 ? "installed" : "not installed", gIsl ? "inverse square" : "plain");
+		if (gPickRead && gPick.load() != gSeen.load()) {
+			SKSE::log::warn("lighting: the installer picked {} but the game shows {} - reinstall Dynamic Wards and pick {} if the wards look wrong",
+				kNames[static_cast<int>(gPick.load())], kNames[static_cast<int>(gSeen.load())], kNames[static_cast<int>(gSeen.load())]);
+		}
 	}
 
 	void MakeHandLights()
@@ -155,7 +203,7 @@ namespace Plugin
 
 	void ColorHandLights()
 	{
-		const float      dim = HandDim();  // the casting glow slider alone (his rule 2026-10-05: opacity and ward brightness leave the hand)
+		const float      dim = HandDim();  // Hand Brightness alone: Opacity and Ward brightness leave the hand
 		std::scoped_lock l{ gLock };
 		for (std::size_t i = 0; i < kRows; ++i) {
 			auto*      h = gHand[i];
@@ -187,32 +235,24 @@ namespace Plugin
 
 	bool OwnLights()
 	{
-		// every pick since 2026-10-06 (his yes): on ENB the mesh's particle light alone barely lit anything - measured at his
-		// temple-steps spot, the floor in front of her went 18.5 -> 18.2 (Nightingale), 22.7 (Ember), 20.5 (Frost green) on a
-		// 0-255 scale; his "why is the light so faint ... there's no light coming off the wards". So ENB also gets this
-		// plugin's hand and dome lights, the game's own lighting values as on Vanilla (no inverse square there); the mesh's
-		// ENB sprite stays as it was.
+		// every pick: on ENB the mesh's light sprite alone barely lit the ground (measured: the floor in front of her 18.5 ->
+		// 18.2 .. 22.7 on a 0-255 scale), so ENB gets this plugin's hand and dome lights too
 		return true;
 	}
 
 	bool Effects11()
 	{
-		std::scoped_lock l{ gLock };
-		return gE11;
+		return gE11.load();
 	}
 
 	bool HandLight1st()
 	{
-		std::scoped_lock l{ gLock };
-		// every pick (his order 2026-10-05, "every mod gets light for first person as well"): the game's casting light, Light
-		// Placer's and the ENB mesh light all hang on the third-person body, which first person does not draw
-		return true;
+		return true;  // every pick: the game's casting light, Light Placer's and the ENB sprite hang on the third-person body
 	}
 
 	bool InverseSquare()
 	{
-		std::scoped_lock l{ gLock };
-		return gIsl;
+		return gIsl.load();
 	}
 
 	RE::TESObjectLIGH* HandLightFor(std::size_t a_row)
@@ -230,7 +270,9 @@ namespace Plugin
 	std::string LightingReport()
 	{
 		std::scoped_lock l{ gLock };
-		return std::format(R"({{"pick":{},"fromInstaller":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"handLights":{}}})",
-			static_cast<int>(gPick.load()), gPickRead, gE11, gIsl, gCs, gOurs.size());
+		return std::format(
+			R"({{"pick":{},"fromInstaller":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{},"handLights":{}}})",
+			static_cast<int>(gPick.load()), gPickRead.load(), static_cast<int>(gSeen.load()), gE11.load(), gIsl.load(), gCs.load(), gEnbRunning.load(),
+			gEnbFiles.load(), gOurs.size());
 	}
 }
