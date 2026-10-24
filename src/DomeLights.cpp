@@ -2,12 +2,15 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The colored light on a ward's dome (every pick; ENB too since 2026-10-06 - Lighting.cpp OwnLights), and - on every pick since 2026-10-05 (his order) - a light on
-// each hand casting or readying one of our wards, first person included (his "every mod gets light for first person as
-// well"). Since 3.1 the player's hand lights hang under the THIRD-person body in first person too (TickHands has the
+// The colored light on a ward's dome, and a light on each hand casting or readying one of our wards, first person included -
+// on every lighting pick. The player's hand lights hang under the THIRD-person body in first person too (TickHands has the
 // measurement): under the first-person skeleton a light lit nothing on ENB. (The name DWHand1st is kept - reports read it.)
-// Each light takes its row's color and the opacity slider every tick, so a change in the menu reaches a ward already up.
-// Where it sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
+// Each light takes its row's color and its slider every tick, so a change in the menu reaches a ward already up.
+// Where a dome light sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
+//
+// Why a 100 ms tick on the main thread and not the player's update (Illuminated's frame hook): the player's update stops
+// while a menu pauses the game and while DevBench's camera is free (measured on Illuminated's lights), and those are the
+// times the wards' colors are set live and filmed. A queued task runs in both.
 //
 // CREDIT: a light is made and registered the way ReLight by Truman does it (github.com/TrumanGIT/ReLight,
 // GPL-3.0-or-later, used with his permission): a master NiPointLight cloned for every use, the size in the radius'
@@ -19,15 +22,12 @@ namespace Plugin
 {
 	namespace
 	{
-		constexpr const char*   kPath = "Data/SKSE/Plugins/Dynamic Wards/Dome Lights.txt";
-		constexpr const char*   kLightName = "DWDome";
-		constexpr const char*   kHandName = "DWHand1st";
-		constexpr float         kK = 3918.88f;  // the build's cutoff constant: cutoff = kK * fade / (reach^2 + size^2)
-		constexpr std::uint32_t kIslFlag = 1u << 10;
-		constexpr std::uint32_t kInitialisedFlag = 1u << 8;  // Light Limit Fix: the light's flags are set
-		constexpr float         kAmbientRatio = 0.1f;        // RE::Light's default ambientRatio (Truman's config.h)
-		constexpr auto          kTick = std::chrono::milliseconds(100);
-		// the first-person hand light: the house reach (LTBG §4), a little in front of the palm
+		constexpr const char* kPath = "Data/SKSE/Plugins/Dynamic Wards/Dome Lights.txt";
+		constexpr const char* kLightName = "DWDome";
+		constexpr const char* kHandName = "DWHand1st";
+		constexpr float       kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
+		constexpr auto        kTick = std::chrono::milliseconds(100);
+		// the hand light: the house reach (LTBG section 4)
 		constexpr float       kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
 		constexpr const char* kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
 
@@ -139,56 +139,54 @@ namespace Plugin
 			return netimmerse_cast<RE::NiPointLight*>(gMaster->Clone());
 		}
 
-		// color, strength and reach: the row's color, dimmed by `a_dim` - a dome's light by opacity x brightness (his call: "light
-		// should dim with opacity"), a hand's by the casting glow slider alone (his rule 2026-10-05)
+		// color, strength and reach: the row's color, dimmed by `a_dim` - a dome's light by Opacity x Ward brightness, a hand's by
+		// Hand Brightness alone (Settings.cpp LightDim / HandDim)
 		void Dress(RE::NiPointLight* a_light, Color a_color, float a_fade, float a_reach, float a_size, float a_plainFade, float a_plainRadius, bool a_plain,
 			float a_dim)
 		{
-			const bool  isl = InverseSquare();
-			const float dim = a_dim;
-			auto&       data = a_light->GetLightRuntimeData();
+			const bool isl = InverseSquare();
+			auto&      data = a_light->GetLightRuntimeData();
 			if (!isl && a_plain) {
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
-				data.fade = a_plainFade * dim;
+				data.fade = a_plainFade * a_dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
 			} else {
 				data.diffuse = LightColor(a_color, isl);
-				data.fade = a_fade * dim;
+				data.fade = a_fade * a_dim;
 				data.radius = { a_reach, a_reach, a_size };
 			}
-			// it writes the first two of the words below, so it goes first (before 3.4 a dome light got it after this, and every
-			// later tick ORed the flag onto the attenuation's float - which could read as Light Limit Fix's Disabled bit)
+			// it writes the first two of the words below, so it goes first: written after them, every later tick ORed the flag onto
+			// the attenuation's float, which could read as Light Limit Fix's Disabled bit
 			a_light->SetLightAttenuation(data.radius.x);
 			if (!isl) {
 				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
-				// NiPointLight starts with a WHITE ambient. With inverse square lighting these words carry its flag and cutoff
-				// (below), so they are never written as a colour there.
+				// NiPointLight starts with a WHITE ambient. Under inverse square lighting these words carry its flags and cutoff.
 				data.ambient = { data.diffuse.red * kAmbientRatio, data.diffuse.green * kAmbientRatio, data.diffuse.blue * kAmbientRatio };
 				gLastAmbient = data.ambient;
+				return;
 			}
-			if (isl) {
-				// Community Shaders' inverse square lighting: its flags, the cutoff and a light record's FormID in the three words
-				// before the color (LLFCommon::RuntimeLightDataExt). A light of our own, never made by the game's GenDynamic, so
-				// Community Shaders set none of them: the words are ours whole, never ORed onto what was there (written as bytes,
-				// as RELight - Spell Addon 2.2 does). Initialised as Light Limit Fix marks its own lights (else it re-marks and
-				// logs ours each frame); no record - the clone's ambient blue (1.0) would read as a FormID
-				// The cutoff follows the DIMMED fade (as RELight - Spell Addon's CutoffFor): the reach holds while the light dims;
-				// off the undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
-				const std::array<std::uint32_t, 3> words{ kIslFlag | kInitialisedFlag,
-					std::bit_cast<std::uint32_t>(std::clamp(kK * data.fade / (a_reach * a_reach + a_size * a_size), 0.01f, 0.99f)), 0u };
-				std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
-			}
+			// Community Shaders' flags, cutoff and light record in the three words before the color (LLFCommon::RuntimeLightDataExt).
+			// A light of our own, so Community Shaders set none of them: the words are ours whole, written as bytes. Initialised as
+			// Light Limit Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue
+			// (1.0) would read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the
+			// undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
+			const std::array<std::uint32_t, 3> words{ kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(CutoffFor(data.fade, a_reach, a_size)), 0u };
+			std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 		}
 
-		RE::NiPointLight* Make(RE::NiNode* a_parent, const char* a_name, const RE::NiPoint3& a_at, RE::ShadowSceneNode* a_scene, RE::BSLight*& a_bs)
+		// A new light under a_parent, registered with the scene; a_dress sets its color and strength before the scene first sees
+		// it. nullptr when the game could not make it or the scene refused it (then it is taken off again). Main thread.
+		template <class F>
+		RE::NiPointLight* Make(RE::NiNode* a_parent, const char* a_name, const RE::NiPoint3& a_at, RE::ShadowSceneNode* a_scene,
+			RE::NiPointer<RE::BSLight>& a_bs, F&& a_dress)
 		{
 			auto* light = CloneMaster();
 			if (!light) {
 				return nullptr;
 			}
+			std::forward<F>(a_dress)(light);
 			light->name = a_name;
 			light->local.translate = a_at;
-			light->SetLightAttenuation(light->GetLightRuntimeData().radius.x);
 			a_parent->AttachChild(light, true);
 			RE::NiUpdateData update{};
 			light->Update(update);
@@ -203,12 +201,22 @@ namespace Plugin
 			params.falloff = 1.0f;
 			params.nearDistance = 5.0f;
 			params.depthBias = 1.0f;
-			a_bs = a_scene->AddLight(light, params);
+			a_bs.reset(a_scene->AddLight(light, params));
 			if (!a_bs) {
 				a_parent->DetachChild(light);
 				return nullptr;
 			}
 			return light;
+		}
+
+		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec)
+		{
+			Dress(a_light, a_color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
+		}
+
+		void DressHand(RE::NiPointLight* a_light, Color a_color)
+		{
+			Dress(a_light, a_color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true, HandDim());
 		}
 
 		void Hang(RE::ModelReferenceEffect* a_effect, std::size_t a_row, const Spec& a_spec, RE::ShadowSceneNode* a_scene)
@@ -219,35 +227,12 @@ namespace Plugin
 				return;
 			}
 			for (const auto& at : a_spec.points) {
-				RE::BSLight* bs = nullptr;
-				auto*        light = CloneMaster();
+				RE::NiPointer<RE::BSLight> bs;
+				auto*                      light = Make(parent, kLightName, at, a_scene, bs, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, a_spec); });
 				if (!light) {
 					return;
 				}
-				Dress(light, *color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
-				light->name = kLightName;
-				light->local.translate = at;
-				parent->AttachChild(light, true);
-				RE::NiUpdateData update{};
-				light->Update(update);
-				RE::ShadowSceneNode::LIGHT_CREATE_PARAMS params{};
-				params.dynamic = true;
-				params.shadowLight = false;
-				params.portalStrict = true;
-				params.affectLand = true;
-				params.affectWater = true;
-				params.neverFades = true;
-				params.fov = 90.0f;
-				params.falloff = 1.0f;
-				params.nearDistance = 5.0f;
-				params.depthBias = 1.0f;
-				bs = a_scene->AddLight(light, params);
-				if (!bs) {
-					parent->DetachChild(light);
-					return;
-				}
-				gLit.push_back({ a_effect, a_effect->artObject3D, RE::NiPointer<RE::NiPointLight>(light), RE::NiPointer<RE::BSLight>(bs),
-					a_effect->target, a_row, &a_spec });
+				gLit.push_back({ a_effect, a_effect->artObject3D, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_effect->target, a_row, &a_spec });
 			}
 		}
 
@@ -325,15 +310,14 @@ namespace Plugin
 				if (!parent) {
 					continue;
 				}
-				if (!h.light) {
-					RE::BSLight* bs = nullptr;
-					if (auto* light = Make(parent, kHandName, { 0.0f, 0.0f, 0.0f }, a_scene, bs)) {
-						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), RE::NiPointer<RE::BSLight>(bs) };
+				if (h.light) {
+					DressHand(h.light.get(), *color);
+				} else {
+					RE::NiPointer<RE::BSLight> bs;
+					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
 						++gHandsMade;
 					}
-				}
-				if (h.light) {
-					Dress(h.light.get(), *color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true, HandDim());
 				}
 			}
 		}
@@ -433,10 +417,10 @@ namespace Plugin
 					lit.light->SetAppCulled(hide);
 				}
 				if (const auto c = RowColor(lit.row)) {
-					Dress(lit.light.get(), *c, lit.spec->fade, lit.spec->reach, lit.spec->size, lit.spec->plainFade, DomeRadius(*lit.spec), lit.spec->plain, LightDim());
+					DressDome(lit.light.get(), *c, *lit.spec);
 				}
 			}
-			TickHands(scene, HandLight1st() && WardLightOn());  // ENB too since 2026-10-06 (OwnLights), behind the same switch
+			TickHands(scene, HandLight1st() && WardLightOn());
 		}
 	}
 

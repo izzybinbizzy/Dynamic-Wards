@@ -375,47 +375,10 @@ namespace Plugin
 					++gSwapFails;
 				}
 			}
-			const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
+			const auto [r, g, b] = LightRgb(a_c, false);
 			const float m = (std::max)({ r, g, b, 0.001f });
-			// the sprite: the hue at least kSpriteSat saturated, full value - a pale light reads white and washes the ward out
-			float sh = 0, ss = 0;
-			{
-				const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), dd = mx - mn;
-				ss = mx <= 0 ? 0 : dd / mx;
-				if (dd > 0) {
-					sh = mx == r ? std::fmod((g - b) / dd, 6.0f) : mx == g ? (b - r) / dd + 2.0f :
-					                                                         (r - g) / dd + 4.0f;
-					sh = sh < 0 ? sh + 6.0f : sh;
-				}
-			}
-			ss = ss > 0.02f ? (std::max)(ss, kSpriteSat) : 0.0f;
-			auto hsv = [&](float a_h, float a_s) {
-				const float c = a_s, x = c * (1 - std::fabs(std::fmod(a_h, 2.0f) - 1)), mm = 1 - c;
-				float       rr = 0, gg = 0, bb = 0;
-				switch (static_cast<int>(a_h) % 6) {
-				case 0:
-					rr = c, gg = x;
-					break;
-				case 1:
-					rr = x, gg = c;
-					break;
-				case 2:
-					gg = c, bb = x;
-					break;
-				case 3:
-					gg = x, bb = c;
-					break;
-				case 4:
-					rr = x, bb = c;
-					break;
-				default:
-					rr = c, bb = x;
-					break;
-				}
-				return RE::NiColor{ rr + mm, gg + mm, bb + mm };
-			};
-			const auto sprite = hsv(sh, ss);
-			const bool goldVapour = GoldVapour(a_c) && GoldVapourTexture();
+			const auto  sprite = SpriteRgb(a_c, kSpriteSat);
+			const bool  goldVapour = GoldVapour(a_c) && GoldVapourTexture();
 			for (auto& master : a_row.masters) {
 				// the ward in the hands answers to the casting glow slider alone; opacity and ward brightness are the wards' own
 				// (his rule 2026-10-05)
@@ -449,9 +412,9 @@ namespace Plugin
 						}
 					}
 					if (blk.sprite) {
-						fresh->baseColor.red = sprite.red * alpha;
-						fresh->baseColor.green = sprite.green * alpha;
-						fresh->baseColor.blue = sprite.blue * alpha;
+						fresh->baseColor.red = sprite[0] * alpha;
+						fresh->baseColor.green = sprite[1] * alpha;
+						fresh->baseColor.blue = sprite[2] * alpha;
 					} else if (plainVapour) {
 						fresh->baseColor.red = r / m;
 						fresh->baseColor.green = g / m;

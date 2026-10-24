@@ -501,7 +501,7 @@ namespace Plugin
 				return false;
 			}
 			const auto                                               handle = policy->GetHandleForObject(RE::FormType::ActorCharacter, player);
-			RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new AfterCall(std::move(a_then)) };
+			RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done = RE::make_smart<AfterCall>(std::move(a_then));
 			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
 		}
 
@@ -1145,7 +1145,7 @@ namespace Plugin
 			                       ae->GetBaseObject() :
 			                       nullptr;
 			const auto  it = base && base->data.castingType == RE::MagicSystem::CastingType::kConstantEffect ?
-			                     gTargetOf.find(const_cast<RE::EffectSetting*>(base)) :
+			                     gTargetOf.find(base) :
 			                     gTargetOf.end();
 			if (it == gTargetOf.end()) {
 				continue;
