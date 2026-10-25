@@ -133,8 +133,9 @@ namespace Plugin
 		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
 		const auto running = EnbRunning();
 		gEnbRunning = running.value_or(gEnbFiles.load());
-		gSeen = gIsl ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
-		                                                  Lighting::kVanilla;
+		// a shader file a running ENB sits beside is a leftover: Community Shaders only when its DLL is loaded or no ENB runs
+		gSeen = gCs || (gIsl && !gEnbRunning) ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
+		                                                                           Lighting::kVanilla;
 		gPick = gSeen.load();
 		if (!running) {
 			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
