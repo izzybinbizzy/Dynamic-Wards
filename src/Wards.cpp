@@ -430,9 +430,11 @@ namespace Plugin
 			return a.hand && a.dome ? &a : nullptr;
 		}
 
+		// the hands and domes carry an ENB light sprite in the ENB set (`ENB\`), none in the other; the hit flash is one set
 		std::string ModelName(std::string_view a_kind, std::size_t a_row)
 		{
-			return std::format("{}{} - {}.nif", kLookDir, a_kind, kTokens[a_row]);
+			const bool enbSet = a_kind != "wardshieldhitfx" && LightingPick() == Lighting::kEnb;
+			return std::format("{}{}{} - {}.nif", kLookDir, enbSet ? "ENB\\" : "", a_kind, kTokens[a_row]);
 		}
 
 		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is

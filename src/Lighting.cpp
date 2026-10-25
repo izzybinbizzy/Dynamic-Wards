@@ -2,7 +2,7 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// Which lighting the player picked in the installer, and the hand-light records this plugin makes because of it.
+// Which lighting the game runs - found by the plugin itself, never picked - and the hand-light records it makes because of it.
 //
 //   Community Shaders   this plugin makes every ward light: the hand light and the dome light (DomeLights.cpp), inverse square
 //                       whenever Community Shaders runs
@@ -11,9 +11,8 @@
 //   Vanilla             as Community Shaders, in the game's own lighting; the hand-light copies take the house light (178 / 1.14)
 // Every pick also lights the hand in first person (DomeLights.cpp): the game's casting light hangs on the third-person body.
 //
-// The pick is one word in `SKSE\Plugins\Dynamic Wards\Lighting.txt`, which the installer's option installs - the meshes it
-// installed match that pick, so the pick is kept. The game is looked at the way Illuminated looks at it (Lighting.cpp there):
-// with no pick it decides; with one, a pick the game contradicts is said in the log (a bug report then shows it).
+// The game is looked at the way Illuminated looks at it (Lighting.cpp there): ENB only when an ENB module runs. Both mesh sets
+// ship and Wards.cpp takes the ENB domes on ENB; a `Lighting.txt` an older installer left is not read.
 //
 // COMMUNITY SHADERS' WORDS: Light Limit Fix reads the first three words of EVERY light's runtime data as its flags, cutoff and
 // record (LLFCommon::RuntimeLightDataExt; bit 9 Disabled), so whenever CommunityShaders.dll is loaded (Bottled and Open Shaders
@@ -28,7 +27,6 @@ namespace Plugin
 {
 	namespace
 	{
-		constexpr const char* kPickPath = "Data/SKSE/Plugins/Dynamic Wards/Lighting.txt";
 		constexpr const char* kEffects11 = "Data/Shaders/Features/Effects11.ini";
 		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
 		// a Community Shaders that builds inverse square lights into Light Limit Fix (no separate shader file): its attenuation
@@ -45,7 +43,7 @@ namespace Plugin
 
 		std::atomic<Lighting> gPick{ Lighting::kShaders };
 		std::atomic<Lighting> gSeen{ Lighting::kShaders };  // what the game itself shows
-		std::atomic<bool>     gPickRead{ false }, gE11{ false }, gIsl{ false }, gCs{ false }, gEnbRunning{ false }, gEnbFiles{ false };
+		std::atomic<bool>     gE11{ false }, gIsl{ false }, gCs{ false }, gEnbRunning{ false }, gEnbFiles{ false };
 
 		std::mutex                                   gLock;  // the hand-light records
 		const RE::TESObjectLIGH*                     gGame = nullptr;
@@ -107,22 +105,6 @@ namespace Plugin
 			::CloseHandle(snap);
 			return found;
 		}
-
-		// the installer's word, or nothing when there is no pick file
-		[[nodiscard]] std::optional<Lighting> ReadPick()
-		{
-			std::ifstream in(kPickPath);
-			std::string   line;
-			while (in && std::getline(in, line)) {
-				const auto word = Lower(line.substr(0, line.find_first_of(" \t\r")));
-				if (word.empty() || word[0] == '#') {
-					continue;
-				}
-				return word == "enb" ? Lighting::kEnb : word == "vanilla" ? Lighting::kVanilla :
-				                                                            Lighting::kShaders;
-			}
-			return std::nullopt;
-		}
 	}
 
 	std::string ModelKey(std::string_view a_model)
@@ -153,22 +135,15 @@ namespace Plugin
 		gEnbRunning = running.value_or(gEnbFiles.load());
 		gSeen = gIsl ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
 		                                                  Lighting::kVanilla;
-		const auto pick = ReadPick();
-		gPickRead = pick.has_value();
-		gPick = pick.value_or(gSeen.load());
+		gPick = gSeen.load();
 		if (!running) {
 			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
 		}
 		SKSE::log::info(
-			"lighting: {} ({}); the game shows {} (CommunityShaders.dll {}, inverse square shader {}, in Light Limit Fix {}, ENB running "
-			"{}, ENB settings in the game folder {}); Effects 11 {}; lights drawn {}",
-			kNames[static_cast<int>(gPick.load())], gPickRead ? "the installer's pick" : "no installer pick, looked at the game",
-			kNames[static_cast<int>(gSeen.load())], gCs ? "loaded" : "not loaded", shaderFile ? "installed" : "not installed", inLlf ? "yes" : "no",
+			"lighting: Automatic - {} (CommunityShaders.dll {}, inverse square shader {}, in Light Limit Fix {}, ENB running {}, ENB "
+			"settings in the game folder {}); Effects 11 {}; lights drawn {}",
+			kNames[static_cast<int>(gPick.load())], gCs ? "loaded" : "not loaded", shaderFile ? "installed" : "not installed", inLlf ? "yes" : "no",
 			gEnbRunning ? "yes" : "no", gEnbFiles ? "yes" : "no", gE11 ? "installed" : "not installed", gIsl ? "inverse square" : "plain");
-		if (gPickRead && gPick.load() != gSeen.load()) {
-			SKSE::log::warn("lighting: the installer picked {} but the game shows {} - reinstall Dynamic Wards and pick {} if the wards look wrong",
-				kNames[static_cast<int>(gPick.load())], kNames[static_cast<int>(gSeen.load())], kNames[static_cast<int>(gSeen.load())]);
-		}
 	}
 
 	void MakeHandLights()
@@ -271,8 +246,8 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return std::format(
-			R"({{"pick":{},"fromInstaller":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{},"handLights":{}}})",
-			static_cast<int>(gPick.load()), gPickRead.load(), static_cast<int>(gSeen.load()), gE11.load(), gIsl.load(), gCs.load(), gEnbRunning.load(),
+			R"({{"pick":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{},"handLights":{}}})",
+			static_cast<int>(gPick.load()), static_cast<int>(gSeen.load()), gE11.load(), gIsl.load(), gCs.load(), gEnbRunning.load(),
 			gEnbFiles.load(), gOurs.size());
 	}
 }

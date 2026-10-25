@@ -241,7 +241,7 @@ namespace Plugin
 
 			Header(Icon::kBulb, T("Lights"));
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
-			TextColored(kMuted, "%s", Fill(T("Lighting picked in the installer: {}"), lighting[static_cast<int>(LightingPick())]).c_str());
+			TextColored(kMuted, "%s", Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
 			{  // every pick since 2026-10-06: ENB gets the plugin's lights too (Lighting.cpp OwnLights), so its switches show
 				bool light = WardLightOn();
