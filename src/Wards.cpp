@@ -609,8 +609,11 @@ namespace Plugin
 		auto                       pick = StrangePick::kUnknown;
 		std::optional<RE::NiColor> firstBase;  // named in the log when no block names a pick
 		EachEffectBlock(root.get(), [&](RE::BSGeometry*, RE::BSEffectShaderProperty*, RE::BSEffectShaderMaterial* a_mat) {
-			installed = installed || Lower(a_mat->sourceTexturePath.c_str()).contains("po3_strangerunes") ||
-			            Lower(a_mat->greyscaleTexturePath.c_str()).contains("po3_strangerunes");
+			if (!Lower(a_mat->sourceTexturePath.c_str()).contains("po3_strangerunes") &&
+				!Lower(a_mat->greyscaleTexturePath.c_str()).contains("po3_strangerunes")) {
+				return;  // only Strange Wards' own blocks tell its pick
+			}
+			installed = true;
 			const RE::NiColor base{ a_mat->baseColor.red, a_mat->baseColor.green, a_mat->baseColor.blue };
 			firstBase = firstBase.value_or(base);
 			if (pick == StrangePick::kUnknown) {
