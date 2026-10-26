@@ -114,8 +114,8 @@ namespace Plugin
 
 		struct Grave
 		{
-			REX::W32::ID3D11Resource*             tex;
-			REX::W32::ID3D11ShaderResourceView*   srv;
+			REX::W32::ID3D11Resource*             tex{ nullptr };
+			REX::W32::ID3D11ShaderResourceView*   srv{ nullptr };
 			std::chrono::steady_clock::time_point at;
 		};
 

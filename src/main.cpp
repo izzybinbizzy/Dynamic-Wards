@@ -20,6 +20,7 @@
 //   Lighting.cpp       the installer's lighting pick and the hand-light records      DomeLights.cpp  the lights we hang
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
 //   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, JSON text, form lookups
+//   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)
 //   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h are the master
 //                      copies the other plugins carry word for word
 //   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
@@ -102,15 +103,18 @@ namespace
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
 			OfferToDevBench();
+			RegisterArcBar();
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:
 			OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
 			ApplyAll("game loaded");
+			WatchBlocking();
 			break;
 		case SKSE::MessagingInterface::kNewGame:
 			ApplyAll("new game");
+			WatchBlocking();
 			break;
 		default:
 			break;

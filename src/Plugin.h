@@ -70,6 +70,9 @@ namespace Plugin
 	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
 	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
+	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);    // the row a ward of ours wears, kRows when it is not one
+	void                                             WatchBlocking();                                 // a game loaded or a new one: the shield's ward at once when the player blocks
+	void                                             KeepBlockWatch();                                // main thread, every 2 s: a rebuilt animation graph gets the block watch
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
@@ -187,6 +190,8 @@ namespace Plugin
 	void        StartDomeLights();  // data load, after MakeArt
 	void        SetDomeMode(DomeMode a_mode);
 	std::string DomeLightsReport();
+
+	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 
 	void RegisterMenu();
 	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied

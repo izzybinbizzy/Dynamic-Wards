@@ -96,14 +96,14 @@ namespace Plugin
 
 		struct Target
 		{
-			RE::EffectSetting* effect;
-			std::size_t        row;
-			How                how;
-			bool               castWard, hitWard, enchWard;
-			RE::BGSArtObject*  ownCast;
-			RE::BGSArtObject*  ownHit;
-			RE::BGSArtObject*  ownEnch;
-			RE::TESObjectLIGH* ownLight;
+			RE::EffectSetting* effect{ nullptr };
+			std::size_t        row{ 0 };
+			How                how{};
+			bool               castWard{ false }, hitWard{ false }, enchWard{ false };
+			RE::BGSArtObject*  ownCast{ nullptr };
+			RE::BGSArtObject*  ownHit{ nullptr };
+			RE::BGSArtObject*  ownEnch{ nullptr };
+			RE::TESObjectLIGH* ownLight{ nullptr };
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
 			std::string        plugin;            // the file that adds the effect: its line on the Compatibility page
@@ -942,6 +942,7 @@ namespace Plugin
 							// actor value read; ApplyAll runs only when the answer changed
 							CheckUnlock(kWhyUnlock);
 						}
+						KeepBlockWatch();  // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
 					});
 					if (!sent) {
 						queued = false;  // nothing queued: the next round tries again
@@ -1259,6 +1260,13 @@ namespace Plugin
 		return best;
 	}
 
+	std::size_t WardRowOf(const RE::EffectSetting* a_effect)
+	{
+		std::scoped_lock l{ gLock };
+		const auto       it = gTargetOf.find(a_effect);
+		return it == gTargetOf.end() ? kRows : gTargets[it->second].row;
+	}
+
 	std::size_t RowOfModel(std::string_view a_model)
 	{
 		const auto key = ModelKey(a_model);
@@ -1339,5 +1347,109 @@ namespace Plugin
 			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
 			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), PickName(gStrangePick.load()), rows,
 			shields, shieldWards, wards);
+	}
+
+	// ------------------------------------------------------------------ the shield's ward at once
+	// A shield raises its ward through its enchantment, whose effects ask IsBlocking; the game re-checks an active effect's
+	// conditions only on its own timer, so the dome came up to a second after the block. When the player's block starts, those
+	// effects are checked at once, and again on the next frame in case she is not marked blocking yet. Nothing else changes.
+	namespace
+	{
+		// the event her graph sends as a block begins ("blockStart" is the input event and never reaches the graph)
+		constexpr std::string_view kBlockTag = "blockStartOut";
+
+		// an enchantment's effect whose conditions ask IsBlocking: the shield wards, the game's and any mod's built the same way
+		[[nodiscard]] bool WaitsForBlock(const RE::ActiveEffect* a_effect)
+		{
+			using Flag = RE::ActiveEffect::Flag;
+			if (!a_effect || !a_effect->effect || !a_effect->spell || a_effect->flags.none(Flag::kHasConditions) ||
+				a_effect->flags.any(Flag::kDispelled) || a_effect->spell->GetSpellType() != RE::MagicSystem::SpellType::kEnchantment) {
+				return false;
+			}
+			for (const auto* item = a_effect->effect->conditions.head; item; item = item->next) {
+				if (item->data.functionData.function.get() == RE::FUNCTION_DATA::FunctionID::kIsBlocking) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		class ShieldWards : public RE::MagicTarget::ForEachActiveEffectVisitor
+		{
+		public:
+			RE::BSContainer::ForEachResult Accept(RE::ActiveEffect* a_effect) override
+			{
+				if (WaitsForBlock(a_effect)) {
+					found.push_back(a_effect);
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			}
+
+			std::vector<RE::ActiveEffect*> found;
+		};
+
+		// main thread. Collected first, then checked, so the list is never walked while an effect changes state
+		void RecheckShieldWards()
+		{
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			auto* target = player ? player->AsMagicTarget() : nullptr;
+			if (!target) {
+				return;
+			}
+			ShieldWards wards;
+			target->VisitEffects(wards);
+			for (auto* effect : wards.found) {
+				effect->EvaluateConditions(0.0f, true);
+			}
+		}
+
+		class BlockWatch : public RE::BSTEventSink<RE::BSAnimationGraphEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) override
+			{
+				Guarded("block watch", [a_event]() {
+					if (!a_event || !SameText(a_event->tag.c_str(), kBlockTag)) {
+						return;
+					}
+					static std::atomic<bool> told{ false };
+					if (!told.exchange(true)) {
+						SKSE::log::info("[WARD] a block started - the shield wards are checked at once");
+					}
+					// the graph's events may come off the main thread: the effects are read on it, now and a frame later
+					static_cast<void>(Later("shield ward check", []() {
+						RecheckShieldWards();
+						static_cast<void>(Later("shield ward check (next frame)", RecheckShieldWards));
+					}));
+				});
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+		BlockWatch gBlockWatch;
+		// held, not only its address: the graph it replaced stays alive, so a new graph can never take its address (main thread)
+		RE::BSTSmartPointer<RE::BSAnimationGraphManager> gWatchedGraph;
+	}
+
+	void WatchBlocking()
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+		RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
+		player->GetAnimationGraphManager(graph);
+		player->RemoveAnimationGraphEventSink(&gBlockWatch);
+		const bool added = graph && player->AddAnimationGraphEventSink(&gBlockWatch);
+		gWatchedGraph = added ? graph : nullptr;
+		SKSE::log::info("[WARD] the block watch is {} the player's animation graph", added ? "on" : "NOT on (no graph yet)");
+	}
+
+	void KeepBlockWatch()
+	{
+		auto*                                            player = RE::PlayerCharacter::GetSingleton();
+		RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
+		if (player && player->GetAnimationGraphManager(graph) && graph && graph.get() != gWatchedGraph.get()) {
+			WatchBlocking();
+		}
 	}
 }
