@@ -5,7 +5,8 @@
 // The ward's strength as an add-on bar for Reticle Arcs - only its published interface (ReticleArcsAPI.h, Reticle Arcs by
 // Chiktabba, https://codeberg.org/chiktabba/ReticleArcs, MIT, copied unchanged). Reticle Arcs draws the bar in the player's
 // own look, asks for its state every frame and shows or hides it on its own settings page; this plugin has no setting for it.
-// While a ward is up on the player (an active effect that raises Ward Power - the game's wards and every mod's), the bar is
+// While a ward is up on the player (an active effect that raises Ward Power - the game's wards and every mod's, not a passive
+// bonus), the bar is
 // what the ward can still take: the Ward Power left of what it gave. It wears the ward's row color, or the player's when the
 // row is Vanilla or the ward is not one of ours.
 
@@ -28,6 +29,13 @@ namespace
 {
 	using ReticleArcsAPI::BarState;
 
+	// a constant effect that asks nothing (a ring's or a perk's Ward Power bonus) is always on: no ward that is raised and breaks
+	[[nodiscard]] bool Passive(const RE::ActiveEffect& a_ae, const RE::EffectSetting& a_base)
+	{
+		return a_ae.spell && a_ae.spell->GetCastingType() == RE::MagicSystem::CastingType::kConstantEffect && !a_ae.effect->conditions.head &&
+		       !a_base.conditions.head;
+	}
+
 	// the ward up on the player now (its base effect), or nullptr
 	[[nodiscard]] const RE::EffectSetting* WardUp(RE::PlayerCharacter& a_player)
 	{
@@ -38,7 +46,7 @@ namespace
 		using Flag = RE::ActiveEffect::Flag;
 		for (auto* ae : *list) {
 			const auto* base = ae && ae->effect && ae->flags.none(Flag::kInactive, Flag::kDispelled) ? ae->GetBaseObject() : nullptr;
-			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental()) {
+			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental() && !Passive(*ae, *base)) {
 				return base;
 			}
 		}
@@ -55,7 +63,7 @@ namespace
 		a_state.alarm = a_state.percent <= 0.0f;
 	}
 
-	// the ward's row color, read again only when the ward changes or once a second: the frame waits for Update (main thread)
+	// the ward's row color, read again when a ward is raised or changes, and once a second: the frame waits for Update (main thread)
 	struct RowColorSeen
 	{
 		const RE::EffectSetting*     ward{ nullptr };
@@ -70,6 +78,7 @@ namespace
 		auto*       player = RE::PlayerCharacter::GetSingleton();
 		const auto* ward = player ? WardUp(*player) : nullptr;
 		if (!ward) {
+			gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
 			return;
 		}
 		const float left = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower);
@@ -101,13 +110,10 @@ namespace Plugin
 {
 	void RegisterArcBar()
 	{
-		if (!GetModuleHandleW(L"ReticleArcs.dll")) {
-			return;
-		}
 		// the bar needs interface 1 only: asked for that, it keeps working with older Reticle Arcs releases
 		auto* arcs = ReticleArcsAPI::Request(1);
 		if (!arcs) {
-			SKSE::log::info("Reticle Arcs is too old for add-on bars; the ward bar is not offered to it");
+			SKSE::log::info("Reticle Arcs is not installed, or too old for add-on bars: no ward bar");
 			return;
 		}
 		ReticleArcsAPI::BarDefinition bar;

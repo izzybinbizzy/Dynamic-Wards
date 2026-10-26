@@ -454,6 +454,13 @@ namespace Plugin
 			return gRowArt[a_t.row];
 		}
 
+		// the table entry of a ward we found, or nullptr (gLock held)
+		const Target* TargetOf(const RE::EffectSetting* a_effect)
+		{
+			const auto it = gTargetOf.find(a_effect);
+			return it == gTargetOf.end() ? nullptr : &gTargets[it->second];
+		}
+
 		RE::TESGlobal* MakeGlobal(const char* a_id)
 		{
 			auto* g = NewForm<RE::TESGlobal>();
@@ -1201,12 +1208,12 @@ namespace Plugin
 			return nullptr;
 		}
 		std::scoped_lock l{ gLock };
-		const auto       it = gTargetOf.find(a_effect);
-		const Art*       a = it == gTargetOf.end() ? nullptr : Worn(gTargets[it->second]);
+		const Target*    t = TargetOf(a_effect);
+		const Art*       a = t ? Worn(*t) : nullptr;
 		if (!a) {
 			return nullptr;  // 360 Ward's own flash plays
 		}
-		const bool on360 = a->dome360 && DomeOf(gTargets[it->second].row, a) == a->dome360;
+		const bool on360 = a->dome360 && DomeOf(t->row, a) == a->dome360;
 		return (on360 && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
 	}
 
@@ -1263,12 +1270,8 @@ namespace Plugin
 	std::size_t WardRowOf(const RE::EffectSetting* a_effect)
 	{
 		std::scoped_lock l{ gLock };
-		const auto       it = gTargetOf.find(a_effect);
-		if (it == gTargetOf.end()) {
-			return kRows;
-		}
-		const auto& t = gTargets[it->second];
-		return t.how != How::kSilent && Worn(t) ? t.row : kRows;  // a ward left to another mod wears none of our rows
+		const Target*    t = TargetOf(a_effect);
+		return t && Worn(*t) ? t->row : kRows;  // a ward left to another mod wears none of our rows
 	}
 
 	std::size_t RowOfModel(std::string_view a_model)
@@ -1355,12 +1358,15 @@ namespace Plugin
 
 	// ------------------------------------------------------------------ the shield's ward at once
 	// A shield raises its ward through its enchantment, whose effects ask IsBlocking; the game re-checks an active effect's
-	// conditions only on its own timer, so the dome came up to a second after the block. When the player's block starts, those
-	// effects are checked at once, and again a moment later in case she is not marked blocking yet. Nothing else changes.
+	// conditions only on its own timer, so the dome came up to a second after the block (and stayed as long after it). When the
+	// player's block starts, those effects are checked at once and again a moment later in case she is not marked blocking yet,
+	// then her block is followed and they are checked the moment it ends. Nothing else changes.
 	namespace
 	{
 		// the event her graph sends as a block begins ("blockStart" is the input event and never reaches the graph)
 		constexpr std::string_view kBlockTag = "blockStartOut";
+		constexpr auto             kSecondCheck = std::chrono::milliseconds(50);
+		constexpr auto             kBlockLook = std::chrono::milliseconds(100);
 
 		[[nodiscard]] bool AsksBlocking(const RE::TESCondition& a_conditions)
 		{
@@ -1372,14 +1378,20 @@ namespace Plugin
 			return false;
 		}
 
-		// an enchantment's effect that asks IsBlocking, on the effect or on its magic effect: the shield wards, the game's and any mod's
+		// an effect that asks IsBlocking, on the effect or on its magic effect: an enchantment's (the shield wards, the game's and
+		// any mod's) or an ability's that raises Ward Power (a block perk's ward)
 		[[nodiscard]] bool WaitsForBlock(const RE::ActiveEffect* a_effect)
 		{
-			if (!a_effect || !a_effect->effect || !a_effect->spell || a_effect->flags.any(RE::ActiveEffect::Flag::kDispelled) ||
-				a_effect->spell->GetSpellType() != RE::MagicSystem::SpellType::kEnchantment) {
+			if (!a_effect || !a_effect->effect || !a_effect->spell || a_effect->flags.any(RE::ActiveEffect::Flag::kDispelled)) {
 				return false;
 			}
+			using Type = RE::MagicSystem::SpellType;
 			const auto* base = a_effect->GetBaseObject();
+			const auto  type = a_effect->spell->GetSpellType();
+			const bool  ward = base && base->data.primaryAV == RE::ActorValue::kWardPower;
+			if (type != Type::kEnchantment && !(type == Type::kAbility && ward)) {
+				return false;
+			}
 			return AsksBlocking(a_effect->effect->conditions) || (base && AsksBlocking(base->conditions));
 		}
 
@@ -1407,8 +1419,69 @@ namespace Plugin
 			}
 			ShieldWards wards;
 			target->VisitEffects(wards);
+			auto*      list = target->GetActiveEffectList();
+			const auto inList = [list](const RE::ActiveEffect* a_effect) {
+				if (list) {
+					for (const auto* e : *list) {
+						if (e == a_effect) {
+							return true;
+						}
+					}
+				}
+				return false;
+			};
 			for (auto* effect : wards.found) {
-				effect->EvaluateConditions(0.0f, true);
+				// one effect's change can end another: only one still in her list is checked
+				if (inList(effect) && effect->flags.none(RE::ActiveEffect::Flag::kDispelled)) {
+					effect->EvaluateConditions(0.0f, true);
+				}
+			}
+		}
+
+		// both graphs send each block start, so the checks are merged: one queued check at a time, and one helper thread (made
+		// at the first block, asleep between blocks) for the check a moment later and the look for the block's end. A task
+		// queued from a task runs in the same frame, hence a thread for the waits
+		std::atomic<bool>          gCheckQueued{ false };
+		std::atomic<bool>          gLookQueued{ false };
+		std::atomic<bool>          gBlockEnded{ false };
+		std::atomic<std::uint32_t> gBlockStarts{ 0 };
+
+		void QueueCheck(const char* a_why)
+		{
+			if (!gCheckQueued.exchange(true) && !Later(a_why, []() {
+					gCheckQueued = false;
+					RecheckShieldWards();
+				})) {
+				gCheckQueued = false;
+			}
+		}
+
+		// main thread: once she no longer blocks, the shield wards are checked so they end at once
+		void LookForBlockEnd()
+		{
+			gLookQueued = false;
+			const auto* player = RE::PlayerCharacter::GetSingleton();
+			if (!gBlockEnded && (!player || !player->IsBlocking())) {
+				gBlockEnded = true;
+				RecheckShieldWards();
+			}
+		}
+
+		void FollowBlocks()
+		{
+			std::uint32_t seen = 0;
+			for (;;) {
+				gBlockStarts.wait(seen);
+				seen = gBlockStarts.load();
+				std::this_thread::sleep_for(kSecondCheck);
+				QueueCheck("shield ward check (a moment later)");
+				gBlockEnded = false;
+				while (!gBlockEnded && gBlockStarts.load() == seen) {
+					std::this_thread::sleep_for(kBlockLook);
+					if (!gLookQueued.exchange(true) && !Later("block end check", LookForBlockEnd)) {
+						gLookQueued = false;
+					}
+				}
 			}
 		}
 
@@ -1418,20 +1491,19 @@ namespace Plugin
 			RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) override
 			{
 				Guarded("block watch", [a_event]() {
-					if (!a_event || !SameText(a_event->tag.c_str(), kBlockTag)) {
+					static const RE::BSFixedString blockTag{ kBlockTag };  // the game's strings are pooled: one pointer compare per event
+					if (!a_event || a_event->tag != blockTag) {
 						return;
 					}
 					static std::atomic<bool> told{ false };
 					if (!told.exchange(true)) {
 						SKSE::log::info("[WARD] a block started - the shield wards are checked at once");
+						std::thread(FollowBlocks).detach();
 					}
-					// the graph's events may come off the main thread: the effects are read on it. The second check goes through a
-					// short wait, because a task queued from a task runs in the same frame
-					static_cast<void>(Later("shield ward check", RecheckShieldWards));
-					std::thread([]() {
-						std::this_thread::sleep_for(std::chrono::milliseconds(50));
-						static_cast<void>(Later("shield ward check (a moment later)", RecheckShieldWards));
-					}).detach();
+					// the graph's events may come off the main thread: the effects are read on it
+					QueueCheck("shield ward check");
+					++gBlockStarts;
+					gBlockStarts.notify_one();
 				});
 				return RE::BSEventNotifyControl::kContinue;
 			}
