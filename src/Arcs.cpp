@@ -38,7 +38,7 @@ namespace
 		using Flag = RE::ActiveEffect::Flag;
 		for (auto* ae : *list) {
 			const auto* base = ae && ae->effect && ae->flags.none(Flag::kInactive, Flag::kDispelled) ? ae->GetBaseObject() : nullptr;
-			if (base && base->data.primaryAV == RE::ActorValue::kWardPower) {
+			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental()) {
 				return base;
 			}
 		}
@@ -55,8 +55,17 @@ namespace
 		a_state.alarm = a_state.percent <= 0.0f;
 	}
 
+	// the ward's row color, read again only when the ward changes or once a second: the frame waits for Update (main thread)
+	struct RowColorSeen
+	{
+		const RE::EffectSetting*     ward{ nullptr };
+		float                        age{ 0.0f };
+		std::optional<Plugin::Color> color;
+	};
+	RowColorSeen gSeen;
+
 	// Reticle Arcs calls this on the main thread every frame
-	void Update(float, BarState& a_state)
+	void Update(float a_delta, BarState& a_state)
 	{
 		auto*       player = RE::PlayerCharacter::GetSingleton();
 		const auto* ward = player ? WardUp(*player) : nullptr;
@@ -68,11 +77,14 @@ namespace
 		const float taken = -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower);
 		const float gave = left + std::max(taken, 0.0f);
 		Fill(a_state, gave > 0.0f ? left / gave : 0.0f);
-		if (const auto row = Plugin::WardRowOf(ward); row < Plugin::kRows) {
-			if (const auto color = Plugin::RowColor(row)) {
-				a_state.useColor = true;
-				a_state.color = *color & 0xFFFFFF;
-			}
+		gSeen.age += std::max(a_delta, 0.0f);
+		if (ward != gSeen.ward || gSeen.age > 1.0f) {
+			const auto row = Plugin::WardRowOf(ward);
+			gSeen = { ward, 0.0f, row < Plugin::kRows ? Plugin::RowColor(row) : std::nullopt };
+		}
+		if (gSeen.color) {
+			a_state.useColor = true;
+			a_state.color = *gSeen.color & 0xFFFFFF;
 		}
 	}
 

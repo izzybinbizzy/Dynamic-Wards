@@ -942,7 +942,7 @@ namespace Plugin
 							// actor value read; ApplyAll runs only when the answer changed
 							CheckUnlock(kWhyUnlock);
 						}
-						KeepBlockWatch();  // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
+						WatchBlocking();  // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
 					});
 					if (!sent) {
 						queued = false;  // nothing queued: the next round tries again
@@ -1264,7 +1264,11 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		const auto       it = gTargetOf.find(a_effect);
-		return it == gTargetOf.end() ? kRows : gTargets[it->second].row;
+		if (it == gTargetOf.end()) {
+			return kRows;
+		}
+		const auto& t = gTargets[it->second];
+		return t.how != How::kSilent && Worn(t) ? t.row : kRows;  // a ward left to another mod wears none of our rows
 	}
 
 	std::size_t RowOfModel(std::string_view a_model)
@@ -1352,26 +1356,31 @@ namespace Plugin
 	// ------------------------------------------------------------------ the shield's ward at once
 	// A shield raises its ward through its enchantment, whose effects ask IsBlocking; the game re-checks an active effect's
 	// conditions only on its own timer, so the dome came up to a second after the block. When the player's block starts, those
-	// effects are checked at once, and again on the next frame in case she is not marked blocking yet. Nothing else changes.
+	// effects are checked at once, and again a moment later in case she is not marked blocking yet. Nothing else changes.
 	namespace
 	{
 		// the event her graph sends as a block begins ("blockStart" is the input event and never reaches the graph)
 		constexpr std::string_view kBlockTag = "blockStartOut";
 
-		// an enchantment's effect whose conditions ask IsBlocking: the shield wards, the game's and any mod's built the same way
-		[[nodiscard]] bool WaitsForBlock(const RE::ActiveEffect* a_effect)
+		[[nodiscard]] bool AsksBlocking(const RE::TESCondition& a_conditions)
 		{
-			using Flag = RE::ActiveEffect::Flag;
-			if (!a_effect || !a_effect->effect || !a_effect->spell || a_effect->flags.none(Flag::kHasConditions) ||
-				a_effect->flags.any(Flag::kDispelled) || a_effect->spell->GetSpellType() != RE::MagicSystem::SpellType::kEnchantment) {
-				return false;
-			}
-			for (const auto* item = a_effect->effect->conditions.head; item; item = item->next) {
+			for (const auto* item = a_conditions.head; item; item = item->next) {
 				if (item->data.functionData.function.get() == RE::FUNCTION_DATA::FunctionID::kIsBlocking) {
 					return true;
 				}
 			}
 			return false;
+		}
+
+		// an enchantment's effect that asks IsBlocking, on the effect or on its magic effect: the shield wards, the game's and any mod's
+		[[nodiscard]] bool WaitsForBlock(const RE::ActiveEffect* a_effect)
+		{
+			if (!a_effect || !a_effect->effect || !a_effect->spell || a_effect->flags.any(RE::ActiveEffect::Flag::kDispelled) ||
+				a_effect->spell->GetSpellType() != RE::MagicSystem::SpellType::kEnchantment) {
+				return false;
+			}
+			const auto* base = a_effect->GetBaseObject();
+			return AsksBlocking(a_effect->effect->conditions) || (base && AsksBlocking(base->conditions));
 		}
 
 		class ShieldWards : public RE::MagicTarget::ForEachActiveEffectVisitor
@@ -1416,40 +1425,40 @@ namespace Plugin
 					if (!told.exchange(true)) {
 						SKSE::log::info("[WARD] a block started - the shield wards are checked at once");
 					}
-					// the graph's events may come off the main thread: the effects are read on it, now and a frame later
-					static_cast<void>(Later("shield ward check", []() {
-						RecheckShieldWards();
-						static_cast<void>(Later("shield ward check (next frame)", RecheckShieldWards));
-					}));
+					// the graph's events may come off the main thread: the effects are read on it. The second check goes through a
+					// short wait, because a task queued from a task runs in the same frame
+					static_cast<void>(Later("shield ward check", RecheckShieldWards));
+					std::thread([]() {
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+						static_cast<void>(Later("shield ward check (a moment later)", RecheckShieldWards));
+					}).detach();
 				});
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
 		BlockWatch gBlockWatch;
-		// held, not only its address: the graph it replaced stays alive, so a new graph can never take its address (main thread)
-		RE::BSTSmartPointer<RE::BSAnimationGraphManager> gWatchedGraph;
 	}
 
+	// every graph she has (third and first person) gets the watch; a source keeps a sink only once, so a rebuilt graph (a
+	// transformation, a 3D reset) simply gets it on the next round, and nothing of the game is held
 	void WatchBlocking()
 	{
-		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!player) {
+		auto*                                            player = RE::PlayerCharacter::GetSingleton();
+		RE::BSTSmartPointer<RE::BSAnimationGraphManager> manager;
+		if (!player || !player->GetAnimationGraphManager(manager) || !manager) {
 			return;
 		}
-		RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
-		player->GetAnimationGraphManager(graph);
-		player->RemoveAnimationGraphEventSink(&gBlockWatch);
-		const bool added = graph && player->AddAnimationGraphEventSink(&gBlockWatch);
-		gWatchedGraph = added ? graph : nullptr;
-		SKSE::log::info("[WARD] the block watch is {} the player's animation graph", added ? "on" : "NOT on (no graph yet)");
-	}
-
-	void KeepBlockWatch()
-	{
-		auto*                                            player = RE::PlayerCharacter::GetSingleton();
-		RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
-		if (player && player->GetAnimationGraphManager(graph) && graph && graph.get() != gWatchedGraph.get()) {
-			WatchBlocking();
+		std::size_t graphs = 0;
+		for (const auto& graph : manager->graphs) {
+			if (graph) {
+				graph->GetEventSource<RE::BSAnimationGraphEvent>()->AddEventSink(&gBlockWatch);
+				++graphs;
+			}
+		}
+		static std::size_t told = 0;  // main thread; said again only when the count changes
+		if (graphs != told) {
+			told = graphs;
+			SKSE::log::info("[WARD] the block watch is on the player's {} animation graph(s)", graphs);
 		}
 	}
 }

@@ -71,8 +71,7 @@ namespace Plugin
 	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);    // the row a ward of ours wears, kRows when it is not one
-	void                                             WatchBlocking();                                 // a game loaded or a new one: the shield's ward at once when the player blocks
-	void                                             KeepBlockWatch();                                // main thread, every 2 s: a rebuilt animation graph gets the block watch
+	void                                             WatchBlocking();                                 // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
