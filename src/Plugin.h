@@ -122,8 +122,12 @@ namespace Plugin
 	void                 SetEveryWard(bool a_on);
 	bool                 ModOn(std::string_view a_plugin);
 	void                 SetModOn(std::string_view a_plugin, bool a_on);
-	std::optional<Color> RowColor(std::size_t a_row);      // what the row wears now; nothing = Vanilla
-	int                  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
+	std::optional<Color> RowColor(std::size_t a_row);  // what the row wears now; nothing = Vanilla
+	// Strange Wards (a vanilla ward replacer, Nexus 139921) installed: the five rank rows act as Vanilla, so its dome and the
+	// game's hand art (which reads the gradient its pick ships) show, and the game's ward hand light takes its pick's color
+	void NoteStrangeWards();  // data load, main thread, after MakeHandLights
+	bool StrangeWardsInstalled();
+	int  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
 	// cached model every copy is cloned from

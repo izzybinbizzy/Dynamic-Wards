@@ -549,6 +549,68 @@ namespace Plugin
 		}
 	}
 
+	namespace
+	{
+		std::atomic_bool gStrangeWards{ false };
+		// its Amber and Sswaye Special picks differ from its Blue one only by the dome's base color
+		constexpr RE::NiColor kStrangeAmber{ 0.886f, 0.345f, 0.133f };
+		constexpr RE::NiColor kStrangeWhite{ 0.935f, 0.869f, 0.843f };
+		constexpr RE::FormID  kWardHandLight = 0x02F3EF;  // Skyrim.esm MagicLightWardHand01
+
+		[[nodiscard]] bool NearColor(const RE::NiColor& a_a, const RE::NiColor& a_b)
+		{
+			return std::abs(a_a.red - a_b.red) < 0.02f && std::abs(a_a.green - a_b.green) < 0.02f && std::abs(a_a.blue - a_b.blue) < 0.02f;
+		}
+	}
+
+	// the dome at the game's own path is Strange Wards' when one of its textures lies under effects\po3_strangerunes\; not on
+	// VR (the model loader's address is read off the SE / AE Address Library only)
+	void NoteStrangeWards()
+	{
+		RE::NiPointer<RE::NiNode> root;
+		if (REL::Module::IsVR() || RE::BSModelDB::Demand("magic\\wardbodyfx.nif", root, RE::BSModelDB::DBTraits::ArgsType{}) != RE::BSResource::ErrorCode::kNone ||
+			!root) {
+			SKSE::log::info("wards: Strange Wards not looked for (VR, or the game's ward dome did not load)");
+			return;
+		}
+		bool                       installed = false;
+		std::optional<RE::NiColor> pick;
+		RE::BSVisit::TraverseScenegraphGeometries(root.get(), [&](RE::BSGeometry* a_geometry) {
+			auto* shader = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+			auto* effect = netimmerse_cast<RE::BSEffectShaderProperty*>(shader);
+			auto* material = effect ? static_cast<RE::BSEffectShaderMaterial*>(effect->material) : nullptr;
+			if (!material) {
+				return RE::BSVisit::BSVisitControl::kContinue;
+			}
+			installed = installed || Lower(material->sourceTexturePath.c_str()).contains("po3_strangerunes") ||
+			            Lower(material->greyscaleTexturePath.c_str()).contains("po3_strangerunes");
+			const RE::NiColor base{ material->baseColor.red, material->baseColor.green, material->baseColor.blue };
+			for (const auto& c : { kStrangeAmber, kStrangeWhite }) {
+				if (NearColor(base, c)) {
+					pick = c;
+				}
+			}
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+		gStrangeWards = installed;
+		if (!installed) {
+			SKSE::log::info("wards: Strange Wards is not installed");
+			return;
+		}
+		auto* light = pick ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(kWardHandLight) : nullptr;
+		if (light) {
+			light->data.color = RE::Color{ static_cast<std::uint8_t>(pick->red * 255.0f), static_cast<std::uint8_t>(pick->green * 255.0f),
+				static_cast<std::uint8_t>(pick->blue * 255.0f), 0 };
+		}
+		SKSE::log::info("wards: Strange Wards is installed - the five rank rows step aside for its art{}",
+			light ? ", the game's ward hand light in its pick's color" : " (its Blue pick)");
+	}
+
+	bool StrangeWardsInstalled()
+	{
+		return gStrangeWards.load();
+	}
+
 	void MakeArt()
 	{
 		std::scoped_lock l{ gLock };

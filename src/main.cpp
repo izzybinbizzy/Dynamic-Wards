@@ -71,6 +71,7 @@ namespace
 		LoadSettings();
 		ReadLighting();
 		MakeHandLights();
+		NoteStrangeWards();
 		MakeArt();
 		FindWards();
 		ApplyAll("data loaded");
