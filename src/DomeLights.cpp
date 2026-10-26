@@ -41,13 +41,13 @@ namespace Plugin
 
 		struct Lit
 		{
-			const RE::ModelReferenceEffect* effect;
+			const RE::ModelReferenceEffect* effect{ nullptr };
 			RE::NiPointer<RE::NiAVObject>   art;
 			RE::NiPointer<RE::NiPointLight> light;
 			RE::NiPointer<RE::BSLight>      bs;
 			RE::ObjectRefHandle             target;
-			std::size_t                     row;
-			const Spec*                     spec;
+			std::size_t                     row{ 0 };
+			const Spec*                     spec{ nullptr };
 		};
 
 		struct Hand1st
