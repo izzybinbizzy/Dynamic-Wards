@@ -274,57 +274,51 @@ namespace Plugin
 					++gMissing;
 					continue;  // a model this install does not carry (the 360 dome without 360 Ward's meshes, say)
 				}
-				RE::BSVisit::TraverseScenegraphGeometries(m.root.get(), [&](RE::BSGeometry* a_geometry) {
-					auto* raw = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
-					auto* prop = raw ? netimmerse_cast<RE::BSEffectShaderProperty*>(raw) : nullptr;
-					auto* mat = prop ? static_cast<RE::BSEffectShaderMaterial*>(prop->GetMaterial()) : nullptr;
-					if (!mat) {
-						return RE::BSVisit::BSVisitControl::kContinue;
-					}
+				EachEffectBlock(m.root.get(), [&](RE::BSGeometry* a_geometry, RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial* a_mat) {
 					// a palette block both says so AND names a palette: the ENB build's hand wisps keep the flag with no palette
 					// (Particle Patch's fix, so ENB does not make each wisp a light) and their color is still their emissive
-					const bool        named = mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str();
-					Block             b{ RE::NiPointer<RE::BSEffectShaderProperty>(prop), mat->baseColor,
-						named && prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
-					const std::string src = Lower(mat->sourceTexturePath.c_str() ? mat->sourceTexturePath.c_str() : "");
+					const bool        named = a_mat->greyscaleTexturePath.c_str() && *a_mat->greyscaleTexturePath.c_str();
+					Block             b{ RE::NiPointer<RE::BSEffectShaderProperty>(a_prop), a_mat->baseColor,
+						named && a_prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteColor), false };
+					const std::string src = Lower(a_mat->sourceTexturePath.c_str() ? a_mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
-					b.scale = mat->baseColorScale;
+					b.scale = a_mat->baseColorScale;
 					{
 						const auto lm = Lower(model);
 						const bool normalDome = lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos;
 						// layer 1 = the vapour block on the lower palette row (0.39; layer 2 sits at 0.74)
-						b.vapourOne = normalDome && b.palette && src.find("vapor") != std::string::npos && mat->baseColor.red < 0.5f;
+						b.vapourOne = normalDome && b.palette && src.find("vapor") != std::string::npos && a_mat->baseColor.red < 0.5f;
 						if (b.vapourOne) {
-							b.paletteAlpha = prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteAlpha);
-							b.source = mat->sourceTexture;
-							b.sourcePath = mat->sourceTexturePath;
+							b.paletteAlpha = a_prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kGrayscaleToPaletteAlpha);
+							b.source = a_mat->sourceTexture;
+							b.sourcePath = a_mat->sourceTexturePath;
 							++gGoldVapourBlocks;
 						}
 					}
-					b.alphaDead = b.palette && mat->baseColor.alpha < 0.01f;
+					b.alphaDead = b.palette && a_mat->baseColor.alpha < 0.01f;
 					if (const auto& ap = a_geometry->GetGeometryRuntimeData().alphaProperty) {
 						b.additive = ap->GetAlphaBlending() && ap->GetDestBlendMode() == RE::NiAlphaProperty::AlphaFunction::kOne;
 					}
 					// a dome's fill: falloff on, and more opaque facing you (the larger cos angle) than at the rim
-					if (prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
+					if (a_prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
 						Lower(model).find("wardbodyfx") != std::string::npos) {
-						b.startFaces = mat->falloffStartAngle >= mat->falloffStopAngle;
-						b.facing = b.startFaces ? mat->falloffStartOpacity : mat->falloffStopOpacity;
-						const float rim = b.startFaces ? mat->falloffStopOpacity : mat->falloffStartOpacity;
+						b.startFaces = a_mat->falloffStartAngle >= a_mat->falloffStopAngle;
+						b.facing = b.startFaces ? a_mat->falloffStartOpacity : a_mat->falloffStopOpacity;
+						const float rim = b.startFaces ? a_mat->falloffStopOpacity : a_mat->falloffStartOpacity;
 						b.fill = b.facing > rim;
 					}
-					if (b.palette && mat->greyscaleTexturePath.c_str() && *mat->greyscaleTexturePath.c_str()) {
-						paths.insert(mat->greyscaleTexturePath.c_str());
+					if (b.palette && a_mat->greyscaleTexturePath.c_str() && *a_mat->greyscaleTexturePath.c_str()) {
+						paths.insert(a_mat->greyscaleTexturePath.c_str());
 						const auto lm = Lower(model);
 						if (lm.find("wardinhandfx") != std::string::npos) {
-							handPaths.insert(mat->greyscaleTexturePath.c_str());
+							handPaths.insert(a_mat->greyscaleTexturePath.c_str());
 						} else if (lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos) {
-							normalDomePaths.insert(mat->greyscaleTexturePath.c_str());
+							normalDomePaths.insert(a_mat->greyscaleTexturePath.c_str());
 						}
 					}
 					// the colour controllers come off the cached model once: a clone of it has none
 					std::vector<RE::NiTimeController*> colour;
-					for (auto* c = prop->GetControllers(); c; c = c->GetNext()) {
+					for (auto* c = a_prop->GetControllers(); c; c = c->GetNext()) {
 						const auto* rtti = c->GetRTTI();
 						if (rtti && rtti->name && std::string_view(rtti->name).find("ColorController") != std::string_view::npos) {
 							colour.push_back(c);
@@ -332,11 +326,10 @@ namespace Plugin
 					}
 					for (auto* c : colour) {
 						c->IncRefCount();  // a sequence may still name it
-						prop->RemoveController(c);
+						a_prop->RemoveController(c);
 						++m.controllersOff;
 					}
 					m.blocks.push_back(std::move(b));
-					return RE::BSVisit::BSVisitControl::kContinue;
 				});
 				a_row.masters.push_back(std::move(m));
 			}
@@ -490,14 +483,7 @@ namespace Plugin
 			std::size_t painted = 0;
 			for (const auto& [root, master] : live) {
 				std::vector<RE::BSEffectShaderProperty*> props;
-				RE::BSVisit::TraverseScenegraphGeometries(root.get(), [&](RE::BSGeometry* a_geometry) {
-					auto* raw = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
-					auto* prop = raw ? netimmerse_cast<RE::BSEffectShaderProperty*>(raw) : nullptr;
-					if (prop && prop->GetMaterial()) {
-						props.push_back(prop);
-					}
-					return RE::BSVisit::BSVisitControl::kContinue;
-				});
+				EachEffectBlock(root.get(), [&](RE::BSGeometry*, RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial*) { props.push_back(a_prop); });
 				if (props.size() != master->blocks.size()) {
 					continue;  // not the shape the master was read from: leave it to the next cast
 				}

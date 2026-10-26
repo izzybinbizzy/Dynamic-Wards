@@ -304,6 +304,9 @@ namespace Plugin
 
 	std::optional<Color> RowColor(std::size_t a_row)
 	{
+		if (a_row < kRanks && StrangeWardsInstalled()) {
+			return std::nullopt;
+		}
 		std::scoped_lock l{ gLock };
 		return RowColorOf(gS, a_row);
 	}
