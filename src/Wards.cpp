@@ -599,8 +599,8 @@ namespace Plugin
 		}
 		auto* light = pick ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(kWardHandLight) : nullptr;
 		if (light) {
-			light->data.color = RE::Color{ static_cast<std::uint8_t>(pick->red * 255.0f), static_cast<std::uint8_t>(pick->green * 255.0f),
-				static_cast<std::uint8_t>(pick->blue * 255.0f), 0 };
+			const auto byte = [](float a_v) { return static_cast<std::uint8_t>(std::clamp(std::lround(a_v * 255.0f), 0L, 255L)); };
+			light->data.color = RE::Color{ byte(pick->red), byte(pick->green), byte(pick->blue), 0 };
 		}
 		SKSE::log::info("wards: Strange Wards is installed - the five rank rows step aside for its art{}",
 			light ? ", the game's ward hand light in its pick's color" : " (its Blue pick)");
