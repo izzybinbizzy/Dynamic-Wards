@@ -3,7 +3,8 @@
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // DevBench, when it is in the load order (it is optional; nothing here runs without it):
-//   inspect kind=dynamicwards    every ward found, what each row wears, the colors, the lights and the settings.
+//   inspect kind=dynamicwards    every ward found, what each row wears, the colors, the lights, the settings and Strange
+//                                Wards' pick (strangeWards: none, Blue, Amber, Sswaye Special or unknown).
 //   dynamicwards.control         action = set (setting + value / color: one menu setting changed the way the menu does -
 //                                saved, then applied on the main thread; the reply is the wards' state after it) | apply
 //                                (dress every ward again) | preview (row + value = seconds: plays that row's dome on the

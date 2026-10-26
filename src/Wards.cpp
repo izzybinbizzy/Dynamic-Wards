@@ -551,64 +551,95 @@ namespace Plugin
 
 	namespace
 	{
-		std::atomic_bool gStrangeWards{ false };
-		// its Amber and Sswaye Special picks differ from its Blue one only by the dome's base color
-		constexpr RE::NiColor kStrangeAmber{ 0.886f, 0.345f, 0.133f };
-		constexpr RE::NiColor kStrangeWhite{ 0.935f, 0.869f, 0.843f };
-		constexpr RE::FormID  kWardHandLight = 0x02F3EF;  // Skyrim.esm MagicLightWardHand01
+		// Strange Wards' three picks are told apart by its dome's base color (read off its three meshes)
+		enum class StrangePick : std::uint8_t
+		{
+			kNone,  // not installed
+			kBlue,
+			kAmber,
+			kWhite,  // its Sswaye Special
+			kUnknown
+		};
+		std::atomic<StrangePick> gStrangePick{ StrangePick::kNone };
+		constexpr RE::NiColor    kStrangeBlue{ 0.098f, 0.592f, 0.902f };
+		constexpr RE::NiColor    kStrangeAmber{ 0.886f, 0.345f, 0.133f };
+		constexpr RE::NiColor    kStrangeWhite{ 0.935f, 0.869f, 0.843f };
+		constexpr RE::FormID     kWardHandLight = 0x02F3EF;  // Skyrim.esm MagicLightWardHand01
 
 		[[nodiscard]] bool NearColor(const RE::NiColor& a_a, const RE::NiColor& a_b)
 		{
 			return std::abs(a_a.red - a_b.red) < 0.02f && std::abs(a_a.green - a_b.green) < 0.02f && std::abs(a_a.blue - a_b.blue) < 0.02f;
 		}
+
+		[[nodiscard]] StrangePick PickOf(const RE::NiColor& a_base)
+		{
+			return NearColor(a_base, kStrangeBlue)  ? StrangePick::kBlue :
+			       NearColor(a_base, kStrangeAmber) ? StrangePick::kAmber :
+			       NearColor(a_base, kStrangeWhite) ? StrangePick::kWhite :
+			                                          StrangePick::kUnknown;
+		}
+
+		[[nodiscard]] const char* PickName(StrangePick a_pick)
+		{
+			switch (a_pick) {
+			case StrangePick::kNone:
+				return "none";
+			case StrangePick::kBlue:
+				return "Blue";
+			case StrangePick::kAmber:
+				return "Amber";
+			case StrangePick::kWhite:
+				return "Sswaye Special";
+			default:
+				return "unknown";
+			}
+		}
 	}
 
-	// the dome at the game's own path is Strange Wards' when one of its textures lies under effects\po3_strangerunes\; not on
-	// VR (the model loader's address is read off the SE / AE Address Library only)
+	// the dome at the game's own path is Strange Wards' when one of its textures lies under effects\po3_strangerunes\. The
+	// model loader resolves on VR the way Colors.cpp's masters do
 	void NoteStrangeWards()
 	{
 		RE::NiPointer<RE::NiNode> root;
-		if (REL::Module::IsVR() || RE::BSModelDB::Demand("magic\\wardbodyfx.nif", root, RE::BSModelDB::DBTraits::ArgsType{}) != RE::BSResource::ErrorCode::kNone ||
-			!root) {
-			SKSE::log::info("wards: Strange Wards not looked for (VR, or the game's ward dome did not load)");
+		if (RE::BSModelDB::Demand("magic\\wardbodyfx.nif", root, RE::BSModelDB::DBTraits::ArgsType{}) != RE::BSResource::ErrorCode::kNone || !root) {
+			SKSE::log::info("wards: Strange Wards not looked for (the game's ward dome did not load)");
 			return;
 		}
 		bool                       installed = false;
-		std::optional<RE::NiColor> pick;
-		RE::BSVisit::TraverseScenegraphGeometries(root.get(), [&](RE::BSGeometry* a_geometry) {
-			auto* shader = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
-			auto* effect = netimmerse_cast<RE::BSEffectShaderProperty*>(shader);
-			auto* material = effect ? static_cast<RE::BSEffectShaderMaterial*>(effect->material) : nullptr;
-			if (!material) {
-				return RE::BSVisit::BSVisitControl::kContinue;
+		auto                       pick = StrangePick::kUnknown;
+		std::optional<RE::NiColor> firstBase;  // named in the log when no block names a pick
+		EachEffectBlock(root.get(), [&](RE::BSGeometry*, RE::BSEffectShaderProperty*, RE::BSEffectShaderMaterial* a_mat) {
+			installed = installed || Lower(a_mat->sourceTexturePath.c_str()).contains("po3_strangerunes") ||
+			            Lower(a_mat->greyscaleTexturePath.c_str()).contains("po3_strangerunes");
+			const RE::NiColor base{ a_mat->baseColor.red, a_mat->baseColor.green, a_mat->baseColor.blue };
+			firstBase = firstBase.value_or(base);
+			if (pick == StrangePick::kUnknown) {
+				pick = PickOf(base);  // the first block that names a pick decides
 			}
-			installed = installed || Lower(material->sourceTexturePath.c_str()).contains("po3_strangerunes") ||
-			            Lower(material->greyscaleTexturePath.c_str()).contains("po3_strangerunes");
-			const RE::NiColor base{ material->baseColor.red, material->baseColor.green, material->baseColor.blue };
-			for (const auto& c : { kStrangeAmber, kStrangeWhite }) {
-				if (NearColor(base, c)) {
-					pick = c;
-				}
-			}
-			return RE::BSVisit::BSVisitControl::kContinue;
 		});
-		gStrangeWards = installed;
 		if (!installed) {
+			gStrangePick = StrangePick::kNone;
 			SKSE::log::info("wards: Strange Wards is not installed");
 			return;
 		}
-		auto* light = pick ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(kWardHandLight) : nullptr;
+		gStrangePick = pick;
+		const auto* color = pick == StrangePick::kAmber ? &kStrangeAmber : pick == StrangePick::kWhite ? &kStrangeWhite :
+		                                                                                                 nullptr;
+		auto*       light = color ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(kWardHandLight) : nullptr;
 		if (light) {
 			const auto byte = [](float a_v) { return static_cast<std::uint8_t>(std::clamp(std::lround(a_v * 255.0f), 0L, 255L)); };
-			light->data.color = RE::Color{ byte(pick->red), byte(pick->green), byte(pick->blue), 0 };
+			light->data.color = RE::Color{ byte(color->red), byte(color->green), byte(color->blue), 0 };
 		}
-		SKSE::log::info("wards: Strange Wards is installed - the five rank rows step aside for its art{}",
-			light ? ", the game's ward hand light in its pick's color" : " (its Blue pick)");
+		const auto seen = firstBase.value_or(RE::NiColor{});
+		SKSE::log::info("wards: Strange Wards is installed, its {} pick{} - the five rank rows step aside for its art; the game's ward hand light {}",
+			PickName(pick), pick == StrangePick::kUnknown ? std::format(" (dome color {:.3f} {:.3f} {:.3f})", seen.red, seen.green, seen.blue) : std::string(),
+			light ? "takes its color" : color ? "was not found and keeps its own color" :
+												"keeps its own color");
 	}
 
 	bool StrangeWardsInstalled()
 	{
-		return gStrangeWards.load();
+		return gStrangePick.load() != StrangePick::kNone;
 	}
 
 	void MakeArt()
@@ -1299,11 +1330,11 @@ namespace Plugin
 		return std::format(
 			R"({{"found":{},"dressed":{},"leftAlone":{},"lastApply":"{}","looks":{},"flashTemplate":"{}","has360Ward":{},"dome360Installed":{},"dome360":{},)"
 			R"("unlocked360":{},"unlockRule":{},"unlockPerk":"{}","ladder":"{}","wardLight":{},"coloredLights":{},"lightsGlobal":{},)"
-			R"("lightPlacer":{},"everyWard":{},"crusader":{},"rows":{{{}}},"shields":[{}],"shieldWards":[{}],"wards":[{}]}})",
+			R"("lightPlacer":{},"everyWard":{},"crusader":{},"strangeWards":"{}","rows":{{{}}},"shields":[{}],"shieldWards":[{}],"wards":[{}]}})",
 			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), std::ranges::count_if(gArt, [](const Art& a) { return a.hand != nullptr; }),
 			JsonEscape(gFlashTemplate), gHas360, gHas360Meshes, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
 			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
-			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), rows,
+			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), PickName(gStrangePick.load()), rows,
 			shields, shieldWards, wards);
 	}
 }

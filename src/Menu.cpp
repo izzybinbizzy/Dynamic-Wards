@@ -143,7 +143,9 @@ namespace Plugin
 				const auto c = RowColor(i);
 				ColorButton(std::format("##rank{}", i).c_str(), c ? Vec(*c) : Vec(0x404040), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip,
 					ImVec2(48.0f, 22.0f));
-				SetItemTooltip("%s", c ? Fill(T("{}: #{}"), std::string(T(kRowLabel[i])), HexColor(*c)).c_str() : T(kRowLabel[i]));
+				SetItemTooltip("%s", c                       ? Fill(T("{}: #{}"), std::string(T(kRowLabel[i])), HexColor(*c)).c_str() :
+									 StrangeWardsInstalled() ? Fill(T("{}: Strange Wards' look"), std::string(T(kRowLabel[i]))).c_str() :
+															   T(kRowLabel[i]));
 			}
 		}
 
@@ -175,7 +177,15 @@ namespace Plugin
 			}
 
 			Header(Icon::kPalette, T("Colors"));
+			// Strange Wards takes the five rank rows (NoteStrangeWards), so the ladder and their own colors would change nothing
+			const bool strange = StrangeWardsInstalled();
+			if (strange) {
+				TextColored(kMuted, "%s",
+					T("Strange Wards is installed, so the five rank wards (Lesser to Master) keep its look: the ladder and their "
+					  "colors change nothing while it is. The other wards still take their colors."));
+			}
 			TextColored(kMuted, "%s", T("The ladder runs from white at the lowest rank to this color at the highest."));
+			BeginDisabled(strange);
 			// dragged (the color bar, the picker's hue): the wards follow live - his ask 2026-10-06, "slide the mouse across the
 			// slider ... to make the ward just skim through the color spectrum". Saved when let go.
 			if (EditColor("ladder", heldLadder, LadderColor(), [](Color a_c) { SetLadderColor(a_c); })) {
@@ -198,12 +208,14 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s", T("Off: Lesser wards are white and the strongest take the color. On: the other way round."));
+			EndDisabled();
 			LadderSwatches();
 
 			Spacing();
 			if (CollapsingHeader(T("Each ward"), ImGuiTreeNodeFlags_DefaultOpen)) {
 				for (std::size_t i = 0; i < kRows; ++i) {
 					PushID(static_cast<int>(i));
+					BeginDisabled(strange && i < kRanks);
 					int        mode = static_cast<int>(RowModeOf(i));
 					const auto shown = RowColor(i);
 					ColorButton("##now", shown ? Vec(*shown) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
@@ -229,6 +241,7 @@ namespace Plugin
 						}
 						Unindent(26.0f);
 					}
+					EndDisabled();
 					PopID();
 				}
 			}

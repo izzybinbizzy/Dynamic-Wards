@@ -133,11 +133,26 @@ namespace Plugin
 	// cached model every copy is cloned from
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
 	bool ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
-	void LiveRecolor();
+	void LiveRecolor();                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	// the rows whose ward-in-the-hand look (its color or Hand Brightness) changed since the last call: a ward already in a hand
-	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
+	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call
 	std::array<bool, kRows> TakeHandLookChanges();
 	std::string             ColorsReport();
+
+	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
+	// master's blocks and a live copy's pair up by index
+	template <class F>
+	void EachEffectBlock(RE::NiAVObject* a_root, F&& a_fn)
+	{
+		RE::BSVisit::TraverseScenegraphGeometries(a_root, [&](RE::BSGeometry* a_geometry) {
+			auto* raw = a_geometry ? a_geometry->GetGeometryRuntimeData().shaderProperty.get() : nullptr;
+			auto* prop = raw ? netimmerse_cast<RE::BSEffectShaderProperty*>(raw) : nullptr;
+			if (auto* mat = prop ? static_cast<RE::BSEffectShaderMaterial*>(prop->GetMaterial()) : nullptr) {
+				a_fn(a_geometry, prop, mat);
+			}
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+	}
 
 	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
 	enum class Lighting : int
