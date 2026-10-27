@@ -133,6 +133,18 @@ namespace Plugin
 			return false;
 		}
 
+		// a slider changes its setting live while held: its release saves it, and a menu shut mid-drag is saved by FlushHeldColor
+		void SliderDone()
+		{
+			if (IsItemActive()) {
+				gHeldEdit = true;
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				gHeldEdit = false;
+				Changed();
+			}
+		}
+
 		// the five ranks as they will look, white end to color end
 		void LadderSwatches()
 		{
@@ -335,9 +347,7 @@ namespace Plugin
 			if (opacity != Opacity()) {
 				SetOpacity(opacity);
 			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
+			SliderDone();
 			SetItemTooltip("%s", T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
 			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
 			const bool has360 = Has360Ward();
@@ -348,8 +358,8 @@ namespace Plugin
 			if (has360 && transparency != Transparency()) {
 				SetTransparency(transparency);
 			}
-			if (has360 && IsItemDeactivatedAfterEdit()) {
-				Changed();
+			if (has360) {
+				SliderDone();
 			}
 			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
 			EndDisabled();
@@ -366,9 +376,7 @@ namespace Plugin
 			if (brightness != Brightness()) {
 				SetBrightness(brightness);
 			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
+			SliderDone();
 			SetItemTooltip("%s", T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
 
 			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
@@ -378,9 +386,7 @@ namespace Plugin
 			if (castingGlow != CastingGlow()) {
 				SetCastingGlow(castingGlow);
 			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
+			SliderDone();
 			SetItemTooltip("%s", T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
 
 			// off unless the player turns it up: in a place with normal color a boosted dome reads too strong
@@ -390,10 +396,8 @@ namespace Plugin
 			if (boost != DomeBoost()) {
 				SetDomeBoost(boost);
 			}
-			if (IsItemDeactivatedAfterEdit()) {
-				Changed();
-			}
-			SetItemTooltip("%s", T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. 0 = off. In a place with normal color a boosted dome looks too strong."));
+			SliderDone();
+			SetItemTooltip("%s", T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. A color already at full strength stays as it is. 0 = off. In a place with normal color a boosted dome looks too strong."));
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);

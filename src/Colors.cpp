@@ -301,11 +301,11 @@ namespace Plugin
 			return rtti && rtti->name && std::string_view(rtti->name).find("ColorController") != std::string_view::npos;
 		}
 
-		std::size_t RemoveColour(RE::BSEffectShaderProperty* a_prop)
+		std::size_t RemoveColour(RE::BSEffectShaderProperty* a_prop, const std::vector<RE::NiTimeController*>& a_keep = {})
 		{
 			std::vector<RE::NiTimeController*> colour;
 			for (auto* c = a_prop->GetControllers(); c; c = c->GetNext()) {
-				if (IsColour(c)) {
+				if (IsColour(c) && std::ranges::find(a_keep, c) == a_keep.end()) {
 					colour.push_back(c);
 				}
 			}
@@ -324,6 +324,19 @@ namespace Plugin
 				}
 			}
 			return nullptr;
+		}
+
+		// the colour controllers a plain block's recorded tracks drive - the ones TintTracks keeps in the row's hue
+		std::vector<RE::NiTimeController*> Tinted(const Master& a_m, const Block& a_b)
+		{
+			std::vector<RE::NiTimeController*> out;
+			auto*                              mgr = ManagerOf(a_m.root.get());
+			for (const auto& t : a_b.tracks) {
+				if (auto* seq = mgr ? mgr->sequenceArray[t.seq].get() : nullptr; seq && t.item < seq->arraySize) {
+					out.push_back(seq->interpArray[t.item].interpCtlr.get());
+				}
+			}
+			return out;
 		}
 
 		RE::NiKeyBasedInterpolator* ColourKeys(RE::NiInterpolator* a_interp)
@@ -438,6 +451,8 @@ namespace Plugin
 					if (!blk.palette && (blk.tracks.empty() || blk.full <= 0.0f)) {
 						blk.tracks.clear();
 						m.controllersOff += RemoveColour(blk.prop.get());  // keys we could not read: the static color wins
+					} else if (!blk.palette) {
+						m.controllersOff += RemoveColour(blk.prop.get(), Tinted(m, blk));  // an unread one would write its neutral keys over ours
 					}
 					m.tracks += blk.tracks.size();
 				}
