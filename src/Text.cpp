@@ -26,9 +26,10 @@ namespace Plugin
 		std::size_t Utf8Length(std::string_view a_text, std::size_t a_at)
 		{
 			const auto        c = static_cast<unsigned char>(a_text[a_at]);
-			const std::size_t n = c >= 0xF0 && c < 0xF5 ? 4 : c >= 0xE0 ? 3 :
-			                                              c >= 0xC2     ? 2 :
-			                                                              0;
+			const std::size_t n = c >= 0xF5 ? 0 : c >= 0xF0 ? 4 :
+			                                  c >= 0xE0     ? 3 :
+			                                  c >= 0xC2     ? 2 :
+			                                                  0;
 			if (n == 0 || a_at + n > a_text.size()) {
 				return 0;
 			}

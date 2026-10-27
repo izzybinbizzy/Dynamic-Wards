@@ -60,9 +60,12 @@ namespace Plugin
 			// DevBench listener thread: the reports only read, each under its own lock, taken one after the other. Nothing thrown
 			// may leave into DevBench (Control's rule)
 			try {
-				auto report = WardsReport();
+				// the image space is game data, read on the main thread; null while the game runs no frame (a loading screen, a pause)
+				const auto image = DevBenchGlue::OnMainThread([]() { return json::parse(ImageSpaceReport()); }, std::chrono::milliseconds(500));
+				const auto imageSpace = image && !DevBenchGlue::Refused(*image) ? DevBenchGlue::Dump(*image) : std::string("null");
+				auto       report = WardsReport();
 				report.pop_back();
-				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + R"(,"imageSpace":)" + ImageSpaceReport() + "}";
+				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + R"(,"imageSpace":)" + imageSpace + "}";
 				a_write(a_sink, report.c_str());
 			} catch (...) {
 				a_write(a_sink, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");  // a plain string: raw ones are descriptors (glue check)
@@ -109,11 +112,17 @@ namespace Plugin
 		// one setting, exactly as the menu changes it; nullopt = unknown or a bad value. a_saved tells the caller whether
 		// it is a saved setting (the two test switches are not)
 		// a mod or perk key goes into DynamicWards.ini as written: a control character would add lines, a leading ';' or '#'
-		// would read back as a comment
+		// would read back as a comment, an '=' would split the key where the reader splits key from value
 		bool IniSafe(std::string_view a_text)
 		{
-			return !a_text.empty() && a_text.front() != ';' && a_text.front() != '#' &&
+			return !a_text.empty() && a_text.front() != ';' && a_text.front() != '#' && !a_text.contains('=') &&
 			       std::ranges::none_of(a_text, [](char a_c) { return static_cast<unsigned char>(a_c) < 0x20; });
+		}
+
+		// a value that was sent but is not a finite number is refused, never read as the default
+		bool BadValue(const json& a_args)
+		{
+			return a_args.is_object() && a_args.contains("value") && !DevBenchGlue::Number(a_args, "value");
 		}
 
 		std::optional<std::string> SetOne(const std::string& a_key, double a_number, const std::string& a_color, bool& a_saved)
@@ -241,6 +250,9 @@ namespace Plugin
 			if (action == "apply") {
 				return ApplyAndRead(false);
 			}
+			if (BadValue(a_args)) {
+				return DevBenchGlue::Refusal("value must be a finite number");
+			}
 			if (action == "preview") {
 				return PreviewNow(DevBenchGlue::Text(a_args, "row"), DevBenchGlue::Number(a_args, "value").value_or(10.0));
 			}
@@ -273,6 +285,10 @@ namespace Plugin
 			try {
 				const auto args = DevBenchGlue::Args(a_args);
 				const auto key = DevBenchGlue::Text(args, "set");
+				if (BadValue(args)) {
+					DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("value must be a finite number"));
+					return;
+				}
 				const auto number = DevBenchGlue::Number(args, "value").value_or(0.0);
 				if (key.starts_with("preview:")) {
 					DevBenchGlue::Reply(a_sink, a_write, PreviewNow(key.substr(8), number));

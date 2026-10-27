@@ -655,13 +655,15 @@ namespace Plugin
 			const Setting want{ *c, opacity, transparency, brightness, castingGlow, DomeKept() };
 			if (a_quiet) {
 				// a color drag (~15 a second): the palettes and the live domes; the cached models follow when the mouse is let go.
-				// Every live dome of a dragged row is painted each round, so one cast mid-drag (a clone of the old model) follows too
-				if (row.live != want) {
+				// Every live dome of a dragged row is painted each round, so one cast mid-drag (a clone of the old model) follows too,
+				// and so does a drag that comes back to the cached models' own look
+				const bool moved = row.live != want;
+				if (moved) {
 					PaintPalettes(row, LookOf(want));
 					row.live = want;
 					changed = true;
 				}
-				if (row.applied != want) {
+				if (moved || row.applied != want) {
 					drag[i] = LookOf(want);
 				}
 				continue;
