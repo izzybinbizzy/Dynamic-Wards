@@ -19,6 +19,7 @@
 #include "Plugin.h"
 
 #include <cmath>
+#include <numbers>
 
 namespace Plugin
 {
@@ -222,7 +223,7 @@ namespace Plugin
 			params.affectLand = true;
 			params.affectWater = true;
 			params.neverFades = true;
-			params.fov = 90.0f;
+			params.fov = a_shadow ? 2.0f * std::numbers::pi_v<float> : 90.0f;  // a shadow light's field of view, radians: omni
 			params.falloff = 1.0f;
 			params.nearDistance = 5.0f;
 			params.depthBias = 1.0f;
@@ -262,9 +263,12 @@ namespace Plugin
 			if (!parent || !color) {
 				return;
 			}
+			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
+			const auto* wearer = a_s.target.get().get();
+			const bool  shadowDome = gShadowTest.load() && wearer && wearer == RE::PlayerCharacter::GetSingleton();
 			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				const bool                 shadow = gShadowTest.load();
+				const bool                 shadow = shadowDome && &at == &a_s.spec->points.front();
 				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
 				if (!light) {
 					return;
@@ -442,7 +446,7 @@ namespace Plugin
 				}
 			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
-				const bool keep = a_lit.light && a_lit.light->parent && a_lit.shadow == gShadowTest.load() && std::ranges::any_of(live, [&](const Showing& a_s) {
+				const bool keep = a_lit.light && a_lit.light->parent && (!a_lit.shadow || gShadowTest.load()) && std::ranges::any_of(live, [&](const Showing& a_s) {
 					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
 				});
 				if (!keep) {

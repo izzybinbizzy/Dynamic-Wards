@@ -493,6 +493,9 @@ namespace
 		for (const Color c : { 0x2ED452u, 0xFF6A10u }) {  // too little of their weakest channel to take it all: much nearer
 			CHECK(screenSat(TrueOnScreen(c, 0.67f), 0.67f) > screenSat(c, 0.67f) + 0.05f);
 		}
+		// a plain block's colour key: the brightest key at the block's own glow, the fades scaled down from it, nothing without keys
+		CHECK(TrackKey(1.0f, 1.0f, 0.6f) == 0.6f && std::fabs(TrackKey(0.5f, 1.0f, 0.6f) - 0.3f) < 1e-6f);
+		CHECK(TrackKey(0.0f, 1.0f, 0.6f) == 0.0f && TrackKey(1.0f, 0.0f, 0.6f) == 0.0f);
 		// the menu's Dome color boost: 0 = the color as it is, full = corrected for a screen keeping half
 		CHECK(KeptForBoost(0) == 0.0f && TrueOnScreen(0xFFBE5A, KeptForBoost(0)) == 0xFFBE5A);
 		CHECK(std::fabs(KeptForBoost(100) - 0.5f) < 1e-6f && std::fabs(KeptForBoost(70) - 0.65f) < 1e-6f);

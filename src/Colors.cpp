@@ -99,6 +99,7 @@ namespace Plugin
 				std::vector<float> grey;
 			};
 			std::vector<Track> tracks{};
+			float              full = 0.0f;  // the brightest key of its tracks
 		};
 
 		struct Master
@@ -364,6 +365,7 @@ namespace Plugin
 					for (std::uint32_t n = 0; n < keys->GetKeyCount(0); ++n) {
 						const auto& v = KeyValue(keys, n);
 						t.grey.push_back((std::max)({ v.x, v.y, v.z }));
+						blk->full = (std::max)(blk->full, t.grey.back());
 					}
 					blk->tracks.push_back(std::move(t));
 				}
@@ -433,7 +435,8 @@ namespace Plugin
 				});
 				FindTracks(m);
 				for (auto& blk : m.blocks) {
-					if (!blk.palette && blk.tracks.empty()) {
+					if (!blk.palette && (blk.tracks.empty() || blk.full <= 0.0f)) {
+						blk.tracks.clear();
 						m.controllersOff += RemoveColour(blk.prop.get());  // keys we could not read: the static color wins
 					}
 					m.tracks += blk.tracks.size();
@@ -574,6 +577,8 @@ namespace Plugin
 				if (!hue) {
 					continue;
 				}
+				// the brightest key wears the glow the block was painted with statically: its loaded emissive (a sprite: full)
+				const float level = blk.sprite ? 1.0f : (std::max)({ blk.base.red, blk.base.green, blk.base.blue });
 				for (const auto& t : blk.tracks) {
 					auto* seq = t.seq < mgr->sequenceArray.capacity() ? mgr->sequenceArray[t.seq].get() : nullptr;
 					if (!seq || t.item >= seq->arraySize) {
@@ -585,7 +590,7 @@ namespace Plugin
 						continue;  // not the shape the model was read from
 					}
 					for (std::uint32_t n = 0; n < t.grey.size(); ++n) {
-						KeyValue(keys, n) = *hue * t.grey[n];
+						KeyValue(keys, n) = *hue * TrackKey(t.grey[n], blk.full, level);
 					}
 				}
 			}
