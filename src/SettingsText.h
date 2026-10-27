@@ -2,7 +2,7 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// DynamicWards.ini as text, game-free (tests\test_wards.cpp reads and writes it without the game): every setting in ONE
+// DynamicWards.ini as text, game-free (tests\testwards.cpp reads and writes it without the game): every setting in ONE
 // table (SettingsValues), its reader and its writer. Settings.cpp keeps the live table under its lock, reads the file at data
 // load and writes it - beside the file, then moved over it - after every change. 3.0 stores colors as RRGGBB; a 2.x file
 // (numbered ladders and picks) is read and carried over, then written back in the new form.
@@ -47,7 +47,8 @@ namespace Plugin
 		bool                                     every = true;
 		bool                                     keepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
 		std::map<std::string, bool, std::less<>> mods;               // [Compatibility] plugin=0/1, lowercased; missing = every
-		// ShieldDome per kShieldRows entry (0 off, 1 normal, 2 360); -1 = not set: the dome the spell wards wear (ShieldPick)
+		// ShieldDome per kShieldRows entry (0 off, 1 normal, 2 360); -1 = not set yet - ReadSettingsText always sets it, so only a
+		// table that was never read (a test's) meets ShieldPick's -1 branch
 		std::array<int, kShieldRows.size()> shieldDome{ -1, -1, -1 };
 	};
 

@@ -2,13 +2,13 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// Which lighting the game runs - found by the plugin itself, never picked - and the hand-light records it makes because of it.
+// Which lighting the game runs - found by the plugin itself, never picked.
 //
 //   Community Shaders   this plugin makes every ward light: the hand light and the dome light (DomeLights.cpp), inverse square
 //                       whenever Community Shaders runs
 //   ENB                 an ENB light sprite inside each ward mesh, colored by Colors.cpp, and this plugin's hand and dome lights
-//                       as on Vanilla: the sprite alone barely lights the ground
-//   Vanilla             as Community Shaders, in the game's own lighting; the hand-light copies take the house light (178 / 1.14)
+//                       as on Vanilla: the sprite alone barely lit the ground (the floor in front of her 18.5 -> 18.2 .. 22.7)
+//   Vanilla             as Community Shaders, in the game's own lighting (the house light, 178 / 1.14)
 // Every pick also lights the hand in first person (DomeLights.cpp): the game's casting light hangs on the third-person body.
 //
 // The game is looked at the way Illuminated looks at it (Lighting.cpp there): ENB only when an ENB module runs. Both mesh sets
@@ -31,25 +31,13 @@ namespace Plugin
 		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
 		// a Community Shaders that builds inverse square lights into Light Limit Fix (no separate shader file): its attenuation
 		// reads each light's InverseSquare flag
-		constexpr const char*   kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
-		constexpr const char*   kEnbFiles[] = { "enbseries.ini", "enblocal.ini" };
-		constexpr const char*   kGame = "Skyrim.esm";
-		constexpr std::uint32_t kWardLight = 0x02F3EF;  // MagicLightWardHand01, the light every vanilla ward casts with
-		// Vanilla: the game's ward light (radius 50) barely reads in the game's own lighting, so our ward copies take the house
-		// light (wardgen.plain_light: LTBG section 4's reach 133 drawn at radius 178, fade 1.14)
-		constexpr std::uint32_t kPlainRadius = 178;
-		constexpr float         kPlainFade = 1.14f;
-		constexpr const char*   kNames[] = { "Community Shaders", "ENB", "Vanilla" };
+		constexpr const char* kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
+		constexpr const char* kEnbFiles[] = { "enbseries.ini", "enblocal.ini" };
+		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 
 		std::atomic<Lighting> gPick{ Lighting::kShaders };
 		std::atomic<Lighting> gSeen{ Lighting::kShaders };  // what the game itself shows
 		std::atomic<bool>     gE11{ false }, gIsl{ false }, gCs{ false }, gEnbRunning{ false }, gEnbFiles{ false };
-
-		std::mutex                                   gLock;  // the hand-light records
-		const RE::TESObjectLIGH*                     gGame = nullptr;
-		std::array<RE::TESObjectLIGH*, kRows>        gHand{};
-		std::unordered_set<const RE::TESObjectLIGH*> gOurs;
-		float                                        gHandFade = 1.0f;  // the hand lights' strength before Hand Brightness
 
 		[[nodiscard]] bool Exists(const char* a_path)
 		{
@@ -147,53 +135,6 @@ namespace Plugin
 			gEnbRunning ? "yes" : "no", gEnbFiles ? "yes" : "no", gE11 ? "installed" : "not installed", gIsl ? "inverse square" : "plain");
 	}
 
-	void MakeHandLights()
-	{
-		auto*            dh = RE::TESDataHandler::GetSingleton();
-		std::scoped_lock l{ gLock };
-		gGame = dh ? dh->LookupForm<RE::TESObjectLIGH>(kWardLight, kGame) : nullptr;
-		if (!gGame) {
-			SKSE::log::warn("lighting: the game's ward light was NOT found - no hand lights");
-			return;
-		}
-		const bool plain = gPick.load() == Lighting::kVanilla && !gIsl;
-		gHandFade = plain ? kPlainFade : gGame->fade;
-		for (auto& h : gHand) {
-			auto* out = NewForm<RE::TESObjectLIGH>();
-			if (!out) {
-				continue;
-			}
-			out->data = gGame->data;
-			if (plain) {
-				out->data.radius = kPlainRadius;
-			}
-			out->fade = gHandFade;
-			out->emittanceColor = gGame->emittanceColor;
-			out->lensFlare = gGame->lensFlare;
-			out->sound = gGame->sound;
-			out->SetModel(gGame->GetModel());
-			h = out;
-			gOurs.insert(out);
-		}
-	}
-
-	void ColorHandLights()
-	{
-		const float      dim = HandDim();  // Hand Brightness alone: Opacity and Ward brightness leave the hand
-		std::scoped_lock l{ gLock };
-		for (std::size_t i = 0; i < kRows; ++i) {
-			auto*      h = gHand[i];
-			const auto c = RowColor(i);
-			if (!h || !c || !gGame) {
-				continue;
-			}
-			h->data.color.red = static_cast<std::uint8_t>((*c >> 16) & 0xFF);
-			h->data.color.green = static_cast<std::uint8_t>((*c >> 8) & 0xFF);
-			h->data.color.blue = static_cast<std::uint8_t>(*c & 0xFF);
-			h->fade = gHandFade * dim;
-		}
-	}
-
 	Lighting LightingPick()
 	{
 		return gPick.load();
@@ -209,46 +150,15 @@ namespace Plugin
 		return gPick.load() == Lighting::kEnb;
 	}
 
-	bool OwnLights()
-	{
-		// every pick: on ENB the mesh's light sprite alone barely lit the ground (measured: the floor in front of her 18.5 ->
-		// 18.2 .. 22.7 on a 0-255 scale), so ENB gets this plugin's hand and dome lights too
-		return true;
-	}
-
-	bool Effects11()
-	{
-		return gE11.load();
-	}
-
-	bool HandLight1st()
-	{
-		return true;  // every pick: the game's casting light, Light Placer's and the ENB sprite hang on the third-person body
-	}
-
 	bool InverseSquare()
 	{
 		return gIsl.load();
 	}
 
-	RE::TESObjectLIGH* HandLightFor(std::size_t a_row)
-	{
-		std::scoped_lock l{ gLock };
-		return a_row < kRows ? gHand[a_row] : nullptr;
-	}
-
-	bool IsOurHandLight(const RE::TESObjectLIGH* a_light)
-	{
-		std::scoped_lock l{ gLock };
-		return a_light && gOurs.contains(a_light);
-	}
-
 	std::string LightingReport()
 	{
-		std::scoped_lock l{ gLock };
-		return std::format(
-			R"({{"pick":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{},"handLights":{}}})",
+		return std::format(R"({{"pick":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{}}})",
 			static_cast<int>(gPick.load()), static_cast<int>(gSeen.load()), gE11.load(), gIsl.load(), gCs.load(), gEnbRunning.load(),
-			gEnbFiles.load(), gOurs.size());
+			gEnbFiles.load());
 	}
 }

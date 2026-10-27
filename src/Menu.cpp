@@ -247,7 +247,7 @@ namespace Plugin
 			}
 		}
 
-		// The Settings page (his order 2026-10-05): Lights first, then the dome, Opacity last
+		// The Settings page: Lights first, then the dome, then Opacity and Brightness
 		void __stdcall RenderSettings()
 		{
 			MenuStyle::Page page;
@@ -256,7 +256,7 @@ namespace Plugin
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
 			TextColored(kMuted, "%s", Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
-			{  // every pick since 2026-10-06: ENB gets the plugin's lights too (Lighting.cpp OwnLights), so its switches show
+			{  // every pick: ENB gets the plugin's lights too (Lighting.cpp), so its switches show
 				bool light = WardLightOn();
 				if (Checkbox(T("Ward casting light"), &light)) {
 					SetWardLightOn(light);

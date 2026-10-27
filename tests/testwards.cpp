@@ -459,6 +459,38 @@ namespace
 		CHECK(NearRgb(SpriteRgb(0xFF00FF, 0.75f), 1.0f, 0.0f, 1.0f));
 		CHECK(NearRgb(SpriteRgb(0x8000FF, 0.75f), 128.0f / 255.0f, 0.0f, 1.0f));
 	}
+
+	// the dome's screen correction: on a screen that keeps only `kept` of a color's saturation (the rest back as a grey of its
+	// own luminance), the corrected color reads the color asked for
+	void ScreenColor()
+	{
+		const auto screenSat = [](Color a_c, float a_kept) {
+			const auto  x = LightRgb(a_c, false);
+			const float grey = (0.2126f * x[0] + 0.7152f * x[1] + 0.0722f * x[2]) * (1.0f - a_kept);
+			const float mx = (std::max)({ x[0], x[1], x[2] }) * a_kept + grey, mn = (std::min)({ x[0], x[1], x[2] }) * a_kept + grey;
+			return mx <= 0.0f ? 0.0f : (mx - mn) / mx;
+		};
+		const auto sat = [](Color a_c) {
+			const auto x = LightRgb(a_c, false);
+			return Sat(x[2], x[1], x[0]);
+		};
+		CHECK(TrueOnScreen(0xFFBE5A, 0.0f) == 0xFFBE5A);   // off
+		CHECK(TrueOnScreen(0xFFBE5A, 1.0f) == 0xFFBE5A);   // a screen that keeps everything needs nothing
+		CHECK(TrueOnScreen(0x808080, 0.67f) == 0x808080);  // a grey has no color to keep
+		CHECK(TrueOnScreen(0x000000, 0.67f) == 0x000000);
+		CHECK(TrueOnScreen(0xFFBE5A, 0.67f) == 0xFFA822);  // gold: its luminance's grey out, the bright channel kept
+		CHECK(TrueOnScreen(0x2ED452, 0.67f) == 0x00D42E);  // green: as far as its red allows
+		CHECK(TrueOnScreen(0xFFFF00, 0.67f) == 0xFFFF00);  // yellow has no weakest channel left to take from
+		for (const Color c : { 0xFFBE5Au, 0xFF2020u, 0x2468FFu, 0x7A3CFFu, 0xFF2EC4u }) {
+			CHECK(std::fabs(screenSat(TrueOnScreen(c, 0.67f), 0.67f) - sat(c)) < 0.02f);  // reads as asked
+			CHECK(screenSat(c, 0.67f) < sat(c) - 0.02f);                                  // and without it would not
+		}
+		for (const Color c : { 0x2ED452u, 0xFF6A10u }) {  // too little of their weakest channel to take it all: much nearer
+			CHECK(screenSat(TrueOnScreen(c, 0.67f), 0.67f) > screenSat(c, 0.67f) + 0.05f);
+		}
+		const Color gold = TrueOnScreen(0xFFBE5A, 0.67f);
+		CHECK(((gold >> 16) & 0xFF) == 0xFF);  // as bright as asked at its brightest channel
+	}
 }
 
 int main()
@@ -469,6 +501,7 @@ int main()
 	Palettes();
 	Settings();
 	Lights();
+	ScreenColor();
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
 		std::printf("FAIL: only %d checks ran, under the floor of %d - a test stopped part way\n", gPassed, kFloor);

@@ -71,7 +71,6 @@ namespace
 		const auto started = std::chrono::steady_clock::now();
 		LoadSettings();
 		ReadLighting();
-		MakeHandLights();
 		NoteStrangeWards();
 		MakeArt();
 		FindWards();

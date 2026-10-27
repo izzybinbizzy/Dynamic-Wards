@@ -16,6 +16,8 @@
 
 #include "DevBenchGlue.h"
 
+#include <cmath>
+
 namespace Plugin
 {
 	namespace
@@ -28,10 +30,27 @@ namespace Plugin
 			R"json({"description":"Dynamic Wards - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, and the settings. Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
 
 		constexpr const char* kTool =
-			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default or vanilla), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, every (0/1), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), mod:<Plugin.esp> (0/1), perk:<0xID~Plugin>, and two test switches never saved: domeLights (0 auto, 1 on, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla). Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default or vanilla"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
+			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default or vanilla), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, every (0/1), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), mod:<Plugin.esp> (0/1), perk:<0xID~Plugin>, and three test switches never saved: domeLights (0 auto, 1 on, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default). Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default or vanilla"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
 
 		constexpr const char* kSetDescriptor =
-			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
+			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | domeKept (percent the domes are corrected for, 0 none, -1 the default; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
+
+		// the color grading the frame is drawn with: the place's own (base) and the blend with any modifiers on top (now) -
+		// a dome's color read off a picture means something only beside these
+		std::string ImageSpaceReport()
+		{
+			auto* is = RE::ImageSpaceManager::GetSingleton();
+			if (!is) {
+				return "null";
+			}
+			const auto grading = [](const RE::ImageSpaceBaseData& a_d) {
+				return std::format(R"fmt({{"saturation":{:.3f},"brightness":{:.3f},"contrast":{:.3f},"tint":{:.3f},"tintColor":[{:.3f},{:.3f},{:.3f}]}})fmt",
+					a_d.cinematic.saturation, a_d.cinematic.brightness, a_d.cinematic.contrast, a_d.tint.amount, a_d.tint.color.red,
+					a_d.tint.color.green, a_d.tint.color.blue);
+			};
+			const auto* base = is->GetCurrentBaseData();
+			return std::format(R"fmt({{"base":{},"now":{}}})fmt", base ? grading(*base) : "null", grading(is->GetImageSpaceData().baseData));
+		}
 
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write) noexcept
 		{
@@ -41,9 +60,12 @@ namespace Plugin
 			// DevBench listener thread: the reports only read, each under its own lock, taken one after the other. Nothing thrown
 			// may leave into DevBench (Control's rule)
 			try {
-				auto report = WardsReport();
+				// the image space is game data, read on the main thread; null while the game runs no frame (a loading screen, a pause)
+				const auto image = DevBenchGlue::OnMainThread([]() { return json::parse(ImageSpaceReport()); }, std::chrono::milliseconds(500));
+				const auto imageSpace = image && !DevBenchGlue::Refused(*image) ? DevBenchGlue::Dump(*image) : std::string("null");
+				auto       report = WardsReport();
 				report.pop_back();
-				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + "}";
+				report += R"(,"domeLights":)" + DomeLightsReport() + R"(,"lighting":)" + LightingReport() + R"(,"colors":)" + ColorsReport() + R"(,"imageSpace":)" + imageSpace + "}";
 				a_write(a_sink, report.c_str());
 			} catch (...) {
 				a_write(a_sink, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");  // a plain string: raw ones are descriptors (glue check)
@@ -53,7 +75,7 @@ namespace Plugin
 		json SettingNames()
 		{
 			return json::array({ "ladder", "stages", "reversed", "row:<Row>", "opacity", "transparency", "brightness", "castingglow", "dome", "unlock",
-				"wardLight", "lights", "crusader", "every", "shield:<Row>", "mod:<Plugin.esp>", "perk:<0xID~Plugin>", "domeLights", "lighting" });
+				"wardLight", "lights", "crusader", "every", "shield:<Row>", "mod:<Plugin.esp>", "perk:<0xID~Plugin>", "domeLights", "lighting", "domeKept" });
 		}
 
 		json RowNames()
@@ -89,9 +111,26 @@ namespace Plugin
 
 		// one setting, exactly as the menu changes it; nullopt = unknown or a bad value. a_saved tells the caller whether
 		// it is a saved setting (the two test switches are not)
+		// a mod or perk key goes into DynamicWards.ini as written: a control character would add lines, a leading ';' or '#'
+		// would read back as a comment, an '=' would split the key where the reader splits key from value
+		bool IniSafe(std::string_view a_text)
+		{
+			return !a_text.empty() && a_text.front() != ';' && a_text.front() != '#' && !a_text.contains('=') &&
+			       std::ranges::none_of(a_text, [](char a_c) { return static_cast<unsigned char>(a_c) < 0x20; });
+		}
+
+		// a value that was sent but is not a finite number is refused, never read as the default
+		bool BadValue(const json& a_args)
+		{
+			return a_args.is_object() && a_args.contains("value") && !DevBenchGlue::Number(a_args, "value");
+		}
+
 		std::optional<std::string> SetOne(const std::string& a_key, double a_number, const std::string& a_color, bool& a_saved)
 		{
-			const int value = static_cast<int>(a_number);
+			if (!std::isfinite(a_number)) {
+				return std::nullopt;  // NaN or infinity: no int it could become
+			}
+			const int value = static_cast<int>(std::clamp(a_number, -1.0e6, 1.0e6));
 			a_saved = true;
 			if (a_key == "wardLight") {
 				SetWardLightOn(value != 0);
@@ -130,14 +169,23 @@ namespace Plugin
 				}
 				SetShieldDome(*row, static_cast<ShieldDome>(std::clamp(value, 0, 2)));  // one shield's pick: 0 off, 1 normal dome, 2 360 dome
 			} else if (a_key.starts_with("mod:")) {
+				if (!IniSafe(std::string_view(a_key).substr(4))) {
+					return std::nullopt;
+				}
 				SetModOn(a_key.substr(4), value != 0);  // one Compatibility-page tick, by plugin file name
 			} else if (a_key.starts_with("perk:")) {
+				if (!IniSafe(std::string_view(a_key).substr(5))) {
+					return std::nullopt;
+				}
 				SetUnlockPerk(a_key.substr(5));
 			} else if (a_key == "lighting") {
 				SetLightingPick(static_cast<Lighting>(std::clamp(value, 0, 2)));  // a test switch, never saved
 				a_saved = false;
 			} else if (a_key == "domeLights") {
 				SetDomeMode(static_cast<DomeMode>(std::clamp(value, 0, 2)));  // a test switch, never saved
+				a_saved = false;
+			} else if (a_key == "domeKept") {
+				SetDomeKeptTest(value);  // a test switch, never saved
 				a_saved = false;
 			} else if (a_key.starts_with("row:")) {
 				const auto row = RowIndex(std::string_view(a_key).substr(4));
@@ -186,6 +234,10 @@ namespace Plugin
 			if (!row) {
 				return DevBenchGlue::Refusal("unknown row '" + a_row + "'", RowNames());
 			}
+			if (!std::isfinite(a_seconds)) {
+				return DevBenchGlue::Refusal("the preview's seconds must be a number");
+			}
+			a_seconds = std::clamp(a_seconds, 0.1, 60.0);  // -1 would keep the dome on her for good
 			if (!Later("devbench preview", [i = *row, a_seconds]() { PreviewRow(i, static_cast<float>(a_seconds)); })) {
 				return DevBenchGlue::Refusal("the preview could not be queued on the main thread");
 			}
@@ -197,6 +249,9 @@ namespace Plugin
 			const auto action = DevBenchGlue::Text(a_args, "action");
 			if (action == "apply") {
 				return ApplyAndRead(false);
+			}
+			if (BadValue(a_args)) {
+				return DevBenchGlue::Refusal("value must be a finite number");
 			}
 			if (action == "preview") {
 				return PreviewNow(DevBenchGlue::Text(a_args, "row"), DevBenchGlue::Number(a_args, "value").value_or(10.0));
@@ -230,6 +285,10 @@ namespace Plugin
 			try {
 				const auto args = DevBenchGlue::Args(a_args);
 				const auto key = DevBenchGlue::Text(args, "set");
+				if (BadValue(args)) {
+					DevBenchGlue::Reply(a_sink, a_write, DevBenchGlue::Refusal("value must be a finite number"));
+					return;
+				}
 				const auto number = DevBenchGlue::Number(args, "value").value_or(0.0);
 				if (key.starts_with("preview:")) {
 					DevBenchGlue::Reply(a_sink, a_write, PreviewNow(key.substr(8), number));

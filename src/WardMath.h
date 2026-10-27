@@ -2,7 +2,7 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The game-free parts of the plugin (no CommonLib here - tests\test_wards.cpp builds and runs them without the game, the way
+// The game-free parts of the plugin (no CommonLib here - tests\testwards.cpp builds and runs them without the game, the way
 // Illuminated tests its LightMath.h and ConfigText.h): the rows and their colors, the ladder, a ward's rank, the palette
 // recolor (wardgen.pal_retint) and the palette file's checks. Plugin.h includes it; every file of the plugin sees it.
 
@@ -346,6 +346,26 @@ namespace Plugin
 			out[i + 3] = a_s.bgra[i + 3];
 		}
 		return out;
+	}
+
+	// the color to hand the game so a dome READS a_c on screen. The game draws a glowing effect keeping only a_kept of a color's
+	// saturation and adding the rest back as a grey of the color's own brightness (Rec. 709 luminance), so green-heavy colors -
+	// gold, yellow, green - turn pale and red / blue / purple barely move. That grey is taken out beforehand, as far as the
+	// color's weakest channel allows, and the brightest channel is kept. a_kept 0 (or 1) = the color as it is.
+	[[nodiscard]] inline Color TrueOnScreen(Color a_c, float a_kept) noexcept
+	{
+		if (a_kept <= 0.0f || a_kept >= 1.0f) {
+			return a_c;
+		}
+		const float r = ((a_c >> 16) & 0xFF) / 255.0f, g = ((a_c >> 8) & 0xFF) / 255.0f, b = (a_c & 0xFF) / 255.0f;
+		const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b });
+		if (mx <= 0.0f || mx - mn <= 0.0f) {
+			return a_c;  // black or a grey: no color to keep
+		}
+		const float grey = (std::min)((0.2126f * r + 0.7152f * g + 0.0722f * b) * (1.0f - a_kept), mn);
+		const float k = mx / (mx - grey);
+		const auto  ch = [&](float a_v) { return static_cast<Color>(std::clamp(std::lround((a_v - grey) * k * 255.0f), 0L, 255L)); };
+		return (a_c & 0xFF000000u) | (ch(r) << 16) | (ch(g) << 8) | ch(b);
 	}
 
 	// ------------------------------------------------------------------ the lights (Lighting.cpp, DomeLights.cpp, Colors.cpp)
