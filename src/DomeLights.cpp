@@ -51,7 +51,8 @@ namespace Plugin
 			RE::ObjectRefHandle             target;
 			std::size_t                     row{ 0 };
 			const Spec*                     spec{ nullptr };
-			bool                            shadow{ false };  // hung as an engine shadow light (the domeShadow test switch)
+			bool                            shadow{ false };      // hung as an engine shadow light (the domeShadow test switch)
+			bool                            shadowable{ false };  // the player's dome, its first point: the light the switch decides
 		};
 
 		struct Hand1st
@@ -265,15 +266,16 @@ namespace Plugin
 			}
 			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
 			const auto* wearer = a_s.target.get().get();
-			const bool  shadowDome = gShadowTest.load() && wearer && wearer == RE::PlayerCharacter::GetSingleton();
+			const bool  playerDome = wearer && wearer == RE::PlayerCharacter::GetSingleton();
 			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				const bool                 shadow = shadowDome && &at == &a_s.spec->points.front();
+				const bool                 shadowable = playerDome && &at == &a_s.spec->points.front();
+				const bool                 shadow = shadowable && gShadowTest.load();
 				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
 				if (!light) {
 					return;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable });
 			}
 		}
 
@@ -445,8 +447,16 @@ namespace Plugin
 					}
 				}
 			}
+			// a dome whose light no longer matches the shadow switch is hung again whole, in both directions
+			const bool                                   shadowOn = gShadowTest.load();
+			std::vector<const RE::ModelReferenceEffect*> flip;
+			for (const auto& lit : gLit) {
+				if (lit.shadow != (lit.shadowable && shadowOn)) {
+					flip.push_back(lit.effect);
+				}
+			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
-				const bool keep = a_lit.light && a_lit.light->parent && (!a_lit.shadow || gShadowTest.load()) && std::ranges::any_of(live, [&](const Showing& a_s) {
+				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::find(flip, a_lit.effect) == flip.end() && std::ranges::any_of(live, [&](const Showing& a_s) {
 					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
 				});
 				if (!keep) {
