@@ -257,7 +257,7 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 		};
 
-		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene)
+		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
 			const auto color = RowColor(a_s.row);
@@ -269,9 +269,15 @@ namespace Plugin
 			const bool  playerDome = wearer && wearer == RE::PlayerCharacter::GetSingleton();
 			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				const bool                 shadowable = playerDome && &at == &a_s.spec->points.front();
-				const bool                 shadow = shadowable && gShadowTest.load();
-				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
+				bool                       shadowable = playerDome && &at == &a_s.spec->points.front();
+				bool                       shadow = shadowable && a_shadowOn;
+				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); };
+				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, dress);
+				if (!light && shadow) {
+					// the renderer had no shadow map left: a plain light, and the switch leaves this one alone until the next cast
+					shadow = shadowable = false;
+					light = Make(parent, kLightName, at, a_scene, bs, false, dress);
+				}
 				if (!light) {
 					return;
 				}
@@ -466,7 +472,7 @@ namespace Plugin
 			});
 			for (const auto& s : live) {
 				if (std::ranges::none_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; })) {
-					Hang(s, scene);
+					Hang(s, scene, shadowOn);
 				}
 			}
 			for (auto& lit : gLit) {
