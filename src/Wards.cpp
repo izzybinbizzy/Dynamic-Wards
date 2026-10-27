@@ -262,10 +262,14 @@ namespace Plugin
 			if (player) {
 				out.push_back(player);
 			}
+			// every process level: an NPC in a lower one keeps an effect too, and one switched under it never gives its Ward Power
+			// back (the senior audit)
 			if (auto* lists = RE::ProcessLists::GetSingleton()) {
-				for (auto& handle : lists->highActorHandles) {
-					if (auto actor = handle.get(); actor && actor.get() != player) {
-						out.push_back(actor.get());
+				for (auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles, &lists->middleLowActorHandles, &lists->lowActorHandles }) {
+					for (auto& handle : *handles) {
+						if (auto actor = handle.get(); actor && actor.get() != player) {
+							out.push_back(actor.get());
+						}
 					}
 				}
 			}
@@ -518,12 +522,18 @@ namespace Plugin
 		// every hand holding any ward of ours was re-equipped after ANY change - an Opacity or Transparency drag, a row it does not
 		// wear, a shield's switch - and each re-equip restarts the hand's casting art): its effect's casting art was swapped
 		// (a_castChanged - a row turned Vanilla, a Compatibility tick), or its row's hand look moved (a_handRows - the row's color
-		// or Hand Brightness; Colors.cpp TakeHandLookChanges). gLock held.
-		std::size_t RefreshHands(const std::array<bool, kRows>& a_handRows, const std::unordered_set<const RE::EffectSetting*>& a_castChanged)
+		// or Hand Brightness; Colors.cpp TakeHandLookChanges). gLock held; SendHands makes the calls once it is released.
+		struct HandCall
+		{
+			RE::SpellItem* spell;
+			std::int32_t   hand;  // Papyrus: 0 left, 1 right
+		};
+
+		std::vector<HandCall> HandsToRefresh(const std::array<bool, kRows>& a_handRows, const std::unordered_set<const RE::EffectSetting*>& a_castChanged)
 		{
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (!player || !player->Get3D()) {
-				return 0;
+				return {};
 			}
 			const auto changed = [&](const RE::Effect* e) {
 				if (!e || !e->baseEffect) {
@@ -540,19 +550,24 @@ namespace Plugin
 				// a hand that wears our casting art of that row (a ward wearing its own hand art keeps it whatever our colors do)
 				return t.row < kRows && a_handRows[t.row] && Worn(t) && (t.how == How::kTable || t.castWard);
 			};
-			std::size_t n = 0;
-			for (const std::int32_t hand : { 0, 1 }) {  // Papyrus: 0 left, 1 right
+			std::vector<HandCall> out;
+			for (const std::int32_t hand : { 0, 1 }) {
 				auto* spell = skyrim_cast<RE::SpellItem*>(player->GetEquippedObject(hand == 0));
-				if (!spell || std::ranges::none_of(spell->effects, changed)) {
-					continue;
+				if (spell && std::ranges::any_of(spell->effects, changed)) {
+					out.push_back({ spell, hand });
 				}
+			}
+			return out;
+		}
+
+		void SendHands(const std::vector<HandCall>& a_hands)
+		{
+			for (const auto& [spell, hand] : a_hands) {
 				const bool sent = CallOnPlayer("UnequipSpell", spell, hand, [spell, hand]() {
 					CallOnPlayer("EquipSpell", spell, hand, {});
 				});
 				SKSE::log::info("hand refresh ({}): {} re-equipped {}", hand == 0 ? "left" : "right", spell->GetName(), sent ? "(sent)" : "(VM not ready)");
-				n += sent ? 1 : 0;
 			}
-			return n;
 		}
 	}
 
@@ -859,6 +874,9 @@ namespace Plugin
 				auto& copy = inert[it->first];
 				if (!copy) {
 					copy = InertCopy(it->first);
+					if (!copy) {
+						SKSE::log::warn("[SHIELD] no inert copy of {} could be made - its shield's Off switch leaves that ward on", Where(it->first));
+					}
 				}
 				entries.push_back({ e, it->first, copy, it->second, a_carrier, a_ability });
 			}
@@ -881,6 +899,20 @@ namespace Plugin
 		for (const auto& s : entries) {
 			SKSE::log::info("[SHIELD] {} raises the {} ward through {} ({})", Where(s.carrier), kTokens[s.row], Where(s.ward),
 				s.ability ? "an ability" : "an enchantment");
+		}
+		// a shield's enchantment record worn by something that is not a shield follows that shield's switch too
+		if (!entries.empty()) {
+			std::unordered_set<const RE::MagicItem*> shieldEnchants;
+			for (const auto& s : entries) {
+				if (!s.ability) {
+					shieldEnchants.insert(s.carrier);
+				}
+			}
+			for (auto* armo : dh->GetFormArray<RE::TESObjectARMO>()) {
+				if (armo && !armo->IsShield() && armo->formEnchanting && shieldEnchants.contains(armo->formEnchanting)) {
+					SKSE::log::warn("[SHIELD] {} shares its enchantment with a shield: that shield's switch takes its ward too", Where(armo));
+				}
+			}
 		}
 		std::scoped_lock l{ gLock };
 		gShieldEntries = std::move(entries);
@@ -949,7 +981,8 @@ namespace Plugin
 							// actor value read; ApplyAll runs only when the answer changed
 							CheckUnlock(kWhyUnlock);
 						}
-						WatchBlocking();  // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
+						WatchBlocking();       // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
+						ReleaseOldTextures();  // a color drag's retired palettes, without waiting for the next recolor
 					});
 					if (!sent) {
 						queued = false;  // nothing queued: the next round tries again
@@ -959,182 +992,204 @@ namespace Plugin
 		}).detach();  // never joined: a join from a DLL's static destructor at exit can hang on the loader lock
 	}
 
+	namespace
+	{
+		struct Applied
+		{
+			bool                  artChanged = false;
+			std::vector<HandCall> hands;
+			std::string           why;
+			std::size_t           targets = 0, dressed = 0;
+		};
+
+		// gLock held. What calls out of this plugin (other plugins' art listeners, Papyrus, DevBench) is handed back to ApplyAll,
+		// which makes those calls once the lock is released: a listener that took gLock again would deadlock (the senior audit)
+		Applied ApplyLocked(const char* a_why)
+		{
+			Applied out;
+			gUnlocked = Unlocked();
+			for (std::size_t r = 0; r < kRows; ++r) {
+				gRowArt[r] = ArtFor(r);
+			}
+			const bool                                   light = WardLightOn();
+			const bool                                   use360 = Can360() && Dome360();
+			const bool                                   every = EveryWard();
+			Changes                                      c;
+			std::size_t                                  dressed = 0;
+			std::unordered_set<const RE::EffectSetting*> castChanged;  // the effects whose casting art moved in this apply
+			for (auto& t : gTargets) {
+				auto&       d = t.effect->data;
+				auto* const castBefore = d.castingArt;
+				if (t.how == How::kSilent) {
+					if (gEmpty) {
+						Put(d.hitEffectArt, gEmpty, c.art);
+						Put(d.castingArt, gEmpty, c.art);
+					}
+				} else if (const Art* a = Worn(t); !a) {
+					Restore(d.castingArt, t.ownCast, c.art);
+					Restore(d.hitEffectArt, t.ownHit, c.art);
+					Restore(d.enchantEffectArt, t.ownEnch, c.art);
+				} else {
+					const auto w = DressOf(t, a);
+					if (w.cast) {
+						Put(d.castingArt, w.cast, c.art);
+					}
+					if (w.hit) {
+						Put(d.hitEffectArt, w.hit, c.art);
+					}
+					if (w.ench) {
+						Put(d.enchantEffectArt, w.ench, c.art);
+					}
+					if (w.cast || w.hit || w.ench) {
+						++dressed;
+					}
+				}
+				if (d.castingArt != castBefore) {
+					castChanged.insert(t.effect);
+				}
+			}
+			// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
+			ApplyColors();
+			// the hand looks are taken on every apply but the two background ones (the 2 s re-dress after another mod swapped the art,
+			// the 360 unlock check): one of those landing during a color drag would mark the dragged color as seen, and the menu's
+			// apply when the drag ends would then re-equip nothing (the 3.5 code review)
+			const std::string_view why = a_why ? a_why : "";
+			const bool             background = why == kWhyArtSwapped || why == kWhyUnlock;
+			const auto             handRows = background ? std::array<bool, kRows>{} : TakeHandLookChanges();
+			out.artChanged = c.art != 0;
+			// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
+			// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
+			if (why == "menu" || why == "devbench") {
+				out.hands = HandsToRefresh(handRows, castChanged);
+			}
+			for (auto& t : gTargets) {
+				// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
+				// too big beside his other casting art. The silent row fires with EVERY vanilla ward and kept the game's white
+				// ward light, a second light on the hand; it never has one now. Under Light Placer a dressed ward's own light goes
+				// too - our config lights the hand in the ward's color, behind the Ward casting light switch (kHandGlobal).
+				// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
+				// decides it. A Vanilla row only gets back a light the switch took.
+				// 2.3, the installer's lighting pick (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
+				// no light framework loaded) a colored ward casts with the game's ward light in its own color. Since 2026-10-06
+				// every pick (ENB too) gets this plugin's hand light, so a dressed ward's own light always goes.
+				auto&       slot = t.effect->data.light;
+				auto* const before = slot;
+				std::size_t quiet = 0;
+				if (t.how == How::kSilent) {
+					ApplyLight(t, false, false, quiet);
+				} else {
+					// only a ward whose casting art is ours has its light decided here; one wearing its own hand art keeps its own light
+					const bool ourHand = Worn(t) && (t.how == How::kTable || t.castWard);
+					if (ourHand) {
+						if (slot) {
+							t.takenLight = slot;  // back when the row turns Vanilla
+						}
+						// 2026-10-05 (his report: the ward lit the caster but not the ground): the game's casting light never reaches
+						// the land, so DomeLights.cpp hangs the hand light itself on every caster (behind the same switch) and the
+						// effect carries none - two lights on one hand would double the caster
+						slot = nullptr;
+					} else {
+						// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
+						ApplyLight(t, true, Worn(t) != nullptr, quiet);
+					}
+				}
+				if (slot != before) {
+					++c.light;
+				}
+			}
+			for (auto& [armo, own] : gShields) {
+				auto* want = (CrusaderOn() && gCrusaderEnch) ? gCrusaderEnch : own;
+				if (armo->formEnchanting != want) {
+					armo->formEnchanting = want;
+					++c.shield;
+				}
+			}
+			std::vector<const ShieldEntry*> switched;
+			for (const auto& s : gShieldEntries) {
+				if (s.entry->baseEffect != ShieldWant(s)) {
+					switched.push_back(&s);
+				}
+			}
+			auto refresh = TakeShieldEffects(switched);  // before the switch: each effect ends on the base it started on
+			for (const auto* s : switched) {
+				s->entry->baseEffect = ShieldWant(*s);
+			}
+			std::size_t givenBack = 0;
+			for (const auto& [actor, spell] : refresh.giveBack) {
+				givenBack += actor->AddSpell(spell) ? 1 : 0;
+			}
+			// a shield's enchantment ward switched back ON comes back at once on everyone wearing that shield, as switching it off
+			// took it at once (measured 2026-10-10 on an NPC wearing Spellbreaker: on again left him without his ward until the
+			// shield was equipped again) - the game's own equip step for an armor's enchantment, on the worn copy
+			std::unordered_set<const RE::MagicItem*> backOn;
+			for (const auto* s : switched) {
+				if (!s->ability && s->entry->baseEffect == s->ward) {
+					backOn.insert(s->carrier);
+				}
+			}
+			std::size_t reapplied = 0;
+			for (auto* actor : backOn.empty() ? std::vector<RE::Actor*>{} : ShieldActors()) {
+				for (auto& [obj, item] : actor->GetInventory()) {
+					auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
+					auto* entry = item.second.get();
+					if (!armo || !armo->formEnchanting || !backOn.contains(armo->formEnchanting) || !entry || !entry->extraLists) {
+						continue;
+					}
+					for (auto* xl : *entry->extraLists) {
+						if (xl && (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>())) {
+							actor->UpdateArmorAbility(armo, xl);
+							++reapplied;
+						}
+					}
+				}
+			}
+			if (!switched.empty()) {
+				const auto pick = [](std::size_t a_row) {
+					const auto d = ShieldDomeOf(a_row);
+					return d == ShieldDome::kOff ? "off" : d == ShieldDome::k360 ? "360 dome" :
+					                                                               "normal dome";
+				};
+				SKSE::log::info(
+					"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "
+					"ability(ies) given back, {} worn shield(s) given their ward again",
+					switched.size(), pick(kShieldRows[0]), pick(kShieldRows[1]), pick(kShieldRows[2]), refresh.dispelled, givenBack,
+					refresh.giveBack.size(), reapplied);
+			}
+			if (gLightsGlobal) {
+				gLightsGlobal->value = ColoredLightsOn() ? 1.0f : 0.0f;
+			}
+			if (gHandGlobal) {
+				gHandGlobal->value = light ? 1.0f : 0.0f;
+			}
+			if (gPresentGlobal) {
+				gPresentGlobal->value = 1.0f;
+			}
+			gDressed = dressed;
+			gLastApply = a_why ? a_why : "?";
+			SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) to re-equip; ward light {}, colored lights {}; dome {}; unlisted mods {}",
+				gLastApply, dressed, c.art, c.light, c.shield, out.hands.size(), light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
+				!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" :
+												  "360 (locked)",
+				every ? "on" : "off");
+			out.why = gLastApply;
+			out.targets = gTargets.size();
+			out.dressed = dressed;
+			return out;
+		}
+	}
+
 	void ApplyAll(const char* a_why)
 	{
-		std::scoped_lock l{ gLock };
-		gUnlocked = Unlocked();
-		for (std::size_t r = 0; r < kRows; ++r) {
-			gRowArt[r] = ArtFor(r);
+		Applied done;
+		{
+			std::scoped_lock l{ gLock };
+			done = ApplyLocked(a_why);
 		}
-		const bool                                   light = WardLightOn();
-		const bool                                   use360 = Can360() && Dome360();
-		const bool                                   every = EveryWard();
-		Changes                                      c;
-		std::size_t                                  dressed = 0;
-		std::unordered_set<const RE::EffectSetting*> castChanged;  // the effects whose casting art moved in this apply
-		for (auto& t : gTargets) {
-			auto&       d = t.effect->data;
-			auto* const castBefore = d.castingArt;
-			if (t.how == How::kSilent) {
-				if (gEmpty) {
-					Put(d.hitEffectArt, gEmpty, c.art);
-					Put(d.castingArt, gEmpty, c.art);
-				}
-			} else if (const Art* a = Worn(t); !a) {
-				Restore(d.castingArt, t.ownCast, c.art);
-				Restore(d.hitEffectArt, t.ownHit, c.art);
-				Restore(d.enchantEffectArt, t.ownEnch, c.art);
-			} else {
-				const auto w = DressOf(t, a);
-				if (w.cast) {
-					Put(d.castingArt, w.cast, c.art);
-				}
-				if (w.hit) {
-					Put(d.hitEffectArt, w.hit, c.art);
-				}
-				if (w.ench) {
-					Put(d.enchantEffectArt, w.ench, c.art);
-				}
-				if (w.cast || w.hit || w.ench) {
-					++dressed;
-				}
-			}
-			if (d.castingArt != castBefore) {
-				castChanged.insert(t.effect);
-			}
-		}
-		// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
-		ApplyColors();
-		// the hand looks are taken on every apply but the two background ones (the 2 s re-dress after another mod swapped the art,
-		// the 360 unlock check): one of those landing during a color drag would mark the dragged color as seen, and the menu's
-		// apply when the drag ends would then re-equip nothing (the 3.5 code review)
-		const std::string_view why = a_why ? a_why : "";
-		const bool             background = why == kWhyArtSwapped || why == kWhyUnlock;
-		const auto             handRows = background ? std::array<bool, kRows>{} : TakeHandLookChanges();
-		if (c.art) {
+		if (done.artChanged) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
 		}
-		// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
-		// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
-		std::size_t refreshed = 0;
-		if (why == "menu" || why == "devbench") {
-			refreshed = RefreshHands(handRows, castChanged);
-		}
-		const bool ownHand = OwnLights();
-		for (auto& t : gTargets) {
-			// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
-			// too big beside his other casting art. The silent row fires with EVERY vanilla ward and kept the game's white
-			// ward light, a second light on the hand; it never has one now. Under Light Placer a dressed ward's own light goes
-			// too - our config lights the hand in the ward's color, behind the Ward casting light switch (kHandGlobal).
-			// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
-			// decides it. A Vanilla row only gets back a light the switch took.
-			// 2.3, the installer's lighting pick (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
-			// no light framework loaded) a colored ward casts with the game's ward light in its own color. Since 2026-10-06
-			// every pick (ENB too) gets this plugin's hand light, so a dressed ward's own light always goes.
-			auto&       slot = t.effect->data.light;
-			auto* const before = slot;
-			if (IsOurHandLight(slot)) {
-				slot = nullptr;  // ours is never "the light the ward had"
-			}
-			std::size_t quiet = 0;
-			if (t.how == How::kSilent) {
-				ApplyLight(t, false, false, quiet);
-			} else {
-				// only a ward whose casting art is ours has its light decided here; one wearing its own hand art keeps its own light
-				const bool ourHand = Worn(t) && (t.how == How::kTable || t.castWard);
-				auto*      mine = (ourHand && ownHand) ? HandLightFor(t.row) : nullptr;
-				if (mine) {
-					if (slot) {
-						t.takenLight = slot;  // back when the row turns Vanilla
-					}
-					// 2026-10-05 (his report: the ward lit the caster but not the ground): the game's casting light never reaches
-					// the land, so DomeLights.cpp hangs the hand light itself on every caster (behind the same switch) and the
-					// effect carries none - two lights on one hand would double the caster
-					slot = nullptr;
-				} else {
-					// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
-					ApplyLight(t, !ourHand, Worn(t) != nullptr, quiet);  // OwnLights is true on every pick (CodeRabbit, PR #3)
-				}
-			}
-			if (slot != before) {
-				++c.light;
-			}
-		}
-		for (auto& [armo, own] : gShields) {
-			auto* want = (CrusaderOn() && gCrusaderEnch) ? gCrusaderEnch : own;
-			if (armo->formEnchanting != want) {
-				armo->formEnchanting = want;
-				++c.shield;
-			}
-		}
-		std::vector<const ShieldEntry*> switched;
-		for (const auto& s : gShieldEntries) {
-			if (s.entry->baseEffect != ShieldWant(s)) {
-				switched.push_back(&s);
-			}
-		}
-		auto refresh = TakeShieldEffects(switched);  // before the switch: each effect ends on the base it started on
-		for (const auto* s : switched) {
-			s->entry->baseEffect = ShieldWant(*s);
-		}
-		std::size_t givenBack = 0;
-		for (const auto& [actor, spell] : refresh.giveBack) {
-			givenBack += actor->AddSpell(spell) ? 1 : 0;
-		}
-		// a shield's enchantment ward switched back ON comes back at once on everyone wearing that shield, as switching it off
-		// took it at once (measured 2026-10-10 on an NPC wearing Spellbreaker: on again left him without his ward until the
-		// shield was equipped again) - the game's own equip step for an armor's enchantment, on the worn copy
-		std::unordered_set<const RE::MagicItem*> backOn;
-		for (const auto* s : switched) {
-			if (!s->ability && s->entry->baseEffect == s->ward) {
-				backOn.insert(s->carrier);
-			}
-		}
-		std::size_t reapplied = 0;
-		for (auto* actor : backOn.empty() ? std::vector<RE::Actor*>{} : ShieldActors()) {
-			for (auto& [obj, item] : actor->GetInventory()) {
-				auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
-				auto* entry = item.second.get();
-				if (!armo || !armo->formEnchanting || !backOn.contains(armo->formEnchanting) || !entry || !entry->extraLists) {
-					continue;
-				}
-				for (auto* xl : *entry->extraLists) {
-					if (xl && (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>())) {
-						actor->UpdateArmorAbility(armo, xl);
-						++reapplied;
-					}
-				}
-			}
-		}
-		if (!switched.empty()) {
-			const auto pick = [](std::size_t a_row) {
-				const auto d = ShieldDomeOf(a_row);
-				return d == ShieldDome::kOff ? "off" : d == ShieldDome::k360 ? "360 dome" :
-				                                                               "normal dome";
-			};
-			SKSE::log::info(
-				"shield wards: {} entr(ies) switched (Spellbreaker {}, Crusader {}, Reman {}); {} enchantment effect(s) dispelled, {} of {} "
-				"ability(ies) given back, {} worn shield(s) given their ward again",
-				switched.size(), pick(kShieldRows[0]), pick(kShieldRows[1]), pick(kShieldRows[2]), refresh.dispelled, givenBack,
-				refresh.giveBack.size(), reapplied);
-		}
-		if (gLightsGlobal) {
-			gLightsGlobal->value = ColoredLightsOn() ? 1.0f : 0.0f;
-		}
-		if (gHandGlobal) {
-			gHandGlobal->value = light ? 1.0f : 0.0f;
-		}
-		if (gPresentGlobal) {
-			gPresentGlobal->value = 1.0f;
-		}
-		gDressed = dressed;
-		gLastApply = a_why ? a_why : "?";
-		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) re-equipped; ward light {}, colored lights {}; dome {}; unlisted mods {}",
-			gLastApply, dressed, c.art, c.light, c.shield, refreshed, light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
-			!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" :
-											  "360 (locked)",
-			every ? "on" : "off");
-		WardsApplied(gLastApply.c_str(), gTargets.size(), dressed);  // only hands the numbers to DevBench; takes no lock of ours
+		SendHands(done.hands);
+		WardsApplied(done.why.c_str(), done.targets, done.dressed);
 	}
 
 	void CheckUnlock(const char* a_why)
@@ -1445,6 +1500,11 @@ namespace Plugin
 		std::atomic<bool>          gLookQueued{ false };
 		std::atomic<bool>          gBlockEnded{ false };
 		std::atomic<std::uint32_t> gBlockStarts{ 0 };
+		// the first look ~150 ms after a block starts can come before the game sets her blocking: a block ends only once she was
+		// seen blocking, or after kBlockLooksBlind looks that never saw it (a tap too short to read)
+		std::atomic<bool> gSeenBlocking{ false };
+		std::atomic<int>  gLooks{ 0 };
+		constexpr int     kBlockLooksBlind = 10;
 
 		void QueueCheck(const char* a_why)
 		{
@@ -1461,7 +1521,14 @@ namespace Plugin
 		{
 			gLookQueued = false;
 			const auto* player = RE::PlayerCharacter::GetSingleton();
-			if (!gBlockEnded && (!player || !player->IsBlocking())) {
+			if (gBlockEnded) {
+				return;
+			}
+			if (player && player->IsBlocking()) {
+				gSeenBlocking = true;
+				return;
+			}
+			if (!player || gSeenBlocking || ++gLooks >= kBlockLooksBlind) {
 				gBlockEnded = true;
 				RecheckShieldWards();
 			}
@@ -1475,10 +1542,12 @@ namespace Plugin
 				seen = gBlockStarts.load();
 				std::this_thread::sleep_for(kSecondCheck);
 				QueueCheck("shield ward check (a moment later)");
+				gSeenBlocking = false;
+				gLooks = 0;
 				gBlockEnded = false;
 				while (!gBlockEnded && gBlockStarts.load() == seen) {
 					std::this_thread::sleep_for(kBlockLook);
-					if (!gLookQueued.exchange(true) && !Later("block end check", LookForBlockEnd)) {
+					if (!gLookQueued.exchange(true) && !Later("block end check", []() { LookForBlockEnd(); })) {
 						gLookQueued = false;
 					}
 				}

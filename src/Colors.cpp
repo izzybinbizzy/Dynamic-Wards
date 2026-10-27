@@ -26,6 +26,7 @@
 #include "Plugin.h"
 
 #include <cmath>
+#include <tuple>
 
 namespace Plugin
 {
@@ -58,6 +59,7 @@ namespace Plugin
 			std::string                        stem;
 			RE::NiPointer<RE::NiSourceTexture> tex;
 			Color                              applied = 0xFFFFFFFF;
+			float                              kept = -1.0f;        // the screen correction it was made with (DomeKept)
 			bool                               hand = false;        // named by the hand art (wardinhandfx): tinted to its core
 			bool                               normalDome = false;  // named by the normal dome (wardbodyfx, not 360): tinted to its core
 		};
@@ -72,6 +74,8 @@ namespace Plugin
 			bool                                      startFaces = false;  // the start angle is the one facing you
 			float                                     facing = 0.0f;       // the fill's own opacity facing you
 			float                                     scale = 1.0f;        // the block's own glow strength (emissive multiple)
+			float                                     loadStart = 1.0f;    // the falloff opacities as loaded: a repaint starts from them,
+			float                                     loadStop = 1.0f;     // never from the last repaint's
 			// a palette block whose emissive alpha is 0: the shader takes its alpha from the palette and the texture, never from
 			// the emissive, so the opacity slider cannot reach it through alpha (the normal dome's vapour layers and flare - his
 			// report 2026-10-05, "the actual flares and second layer both are the same throughout the entire spectrum").
@@ -95,6 +99,15 @@ namespace Plugin
 			bool                      hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
 		};
 
+		// the settings one look of a row was made from
+		struct Setting
+		{
+			Color c = 0xFFFFFFFF;
+			int   opacity = -1, transparency = -1, brightness = -1, castingGlow = -1;
+			float kept = -1.0f;
+			bool  operator==(const Setting&) const = default;
+		};
+
 		struct Row
 		{
 			std::vector<std::string> models;
@@ -106,6 +119,8 @@ namespace Plugin
 			int                      appliedTransparency = -1;
 			int                      appliedBrightness = -1;
 			int                      appliedCastingGlow = -1;
+			float                    appliedKept = -1.0f;
+			Setting                  live{};  // what its live domes show: a color drag paints them, never the cached models
 			// the hand look the hands were last seen in (TakeHandLookChanges): a ward in the hand is re-equipped only when its row's
 			// own look moved - never for a dome-only setting or another row
 			Color handSeen = 0xFFFFFFFF;
@@ -131,6 +146,16 @@ namespace Plugin
 		RE::NiPointer<RE::NiSourceTexture> gGoldVapour;
 		bool                               gGoldVapourTried = false;
 		std::size_t                        gGoldVapourBlocks = 0;
+
+		// the share of a color's saturation the game keeps when it draws a dome (WardMath.h TrueOnScreen); 0 = no correction.
+		// The devbench test switch domeKept (percent, -1 = this default) overrides it, never saved
+		std::atomic<int> gKeptTest{ -1 };
+
+		float DomeKept()
+		{
+			const int test = gKeptTest.load();
+			return test >= 0 ? test / 100.0f : 0.0f;
+		}
 
 		// a gold or orange ward on Community Shaders (WardMath.h GoldHue): ENB and Vanilla show the palette layer in its true
 		// color (measured 2026-10-06)
@@ -283,6 +308,8 @@ namespace Plugin
 					const std::string src = Lower(a_mat->sourceTexturePath.c_str() ? a_mat->sourceTexturePath.c_str() : "");
 					b.sprite = src.find("dwardglowenb") != std::string::npos;
 					b.scale = a_mat->baseColorScale;
+					b.loadStart = a_mat->falloffStartOpacity;
+					b.loadStop = a_mat->falloffStopOpacity;
 					{
 						const auto lm = Lower(model);
 						const bool normalDome = lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos;
@@ -347,13 +374,26 @@ namespace Plugin
 			}
 		}
 
-		void PaintRow(Row& a_row, Color a_c, int a_opacity, int a_transparency, int a_brightness, int a_castingGlow)
+		// one row's look: what PaintRow puts on the cached models, and what a color drag puts on the live domes alone
+		struct Look
 		{
-			const float wardGlow = a_brightness / 100.0f;
-			const float wardAlpha = a_opacity / 100.0f;
-			const float clear = 1.0f - a_transparency / 100.0f;
+			Color                c = 0;
+			float                wardGlow = 1.0f, wardAlpha = 1.0f, clear = 1.0f, castingGlow = 1.0f, kept = 0.0f;
+			std::array<float, 3> sprite{};
+			bool                 goldVapour = false;
+		};
+
+		Look LookOf(const Setting& a_s)
+		{
+			return { a_s.c, a_s.brightness / 100.0f, a_s.opacity / 100.0f, 1.0f - a_s.transparency / 100.0f, a_s.castingGlow / 100.0f, a_s.kept,
+				SpriteRgb(a_s.c, kSpriteSat), GoldVapour(a_s.c) && GoldVapourTexture() };
+		}
+
+		void PaintPalettes(Row& a_row, const Look& a_look)
+		{
 			for (auto& p : a_row.palettes) {
-				if (p.applied == a_c) {
+				const float want = p.hand ? 0.0f : a_look.kept;  // the hand art is the casting art's look, not a dome's
+				if (p.applied == a_look.c && p.kept == want) {
 					continue;
 				}
 				auto& s = LoadSource(p.stem);
@@ -361,108 +401,143 @@ namespace Plugin
 					++gSwapFails;
 					continue;
 				}
-				if (Swap(p, s, a_c)) {
-					p.applied = a_c;
+				if (Swap(p, s, TrueOnScreen(a_look.c, want))) {
+					p.applied = a_look.c;
+					p.kept = want;
 					++gSwaps;
 				} else {
 					++gSwapFails;
 				}
 			}
-			const auto [r, g, b] = LightRgb(a_c, false);
+		}
+
+		// a block's material in a look, built aside from the block's own (read only, never changed here); a_plainVapour says
+		// whether vapour layer 1 wears the baked gold copy, so the caller sets that block's palette bits. nullptr: none made
+		RE::BSEffectShaderMaterial* Fresh(const Block& a_blk, bool a_hand, const Look& a_look, bool& a_plainVapour)
+		{
+			auto* mat = static_cast<RE::BSEffectShaderMaterial*>(a_blk.prop->GetMaterial());
+			auto* fresh = mat ? static_cast<RE::BSEffectShaderMaterial*>(mat->Create()) : nullptr;
+			if (!fresh) {
+				return nullptr;
+			}
+			fresh->CopyMembers(mat);
+			// the ward in the hands answers to the casting glow slider alone; opacity and ward brightness are the wards' own
+			// (his rule 2026-10-05)
+			const float glow = a_hand ? a_look.castingGlow : a_look.wardGlow;
+			const float alpha = a_hand ? 1.0f : a_look.wardAlpha;
+			const auto [r, g, b] = LightRgb(TrueOnScreen(a_look.c, a_hand ? 0.0f : a_look.kept), false);
 			const float m = (std::max)({ r, g, b, 0.001f });
-			const auto  sprite = SpriteRgb(a_c, kSpriteSat);
-			const bool  goldVapour = GoldVapour(a_c) && GoldVapourTexture();
+			const float bright = (std::max)({ a_blk.base.red, a_blk.base.green, a_blk.base.blue });
+			a_plainVapour = a_blk.vapourOne && a_look.goldVapour;
+			if (a_blk.vapourOne) {
+				// the baked copy carries the palette's value and alpha itself, so the block becomes a plain glow in the ward's
+				// color; any other hue (or lighting) gets the palette layer back exactly as loaded
+				fresh->sourceTexture = a_plainVapour ? RE::NiPointer<RE::NiSourceTexture>(gGoldVapour) : a_blk.source;
+				fresh->sourceTexturePath = a_plainVapour ? RE::BSFixedString(kGoldVapour) : a_blk.sourcePath;
+			}
+			if (a_blk.sprite) {
+				fresh->baseColor.red = a_look.sprite[0] * alpha;
+				fresh->baseColor.green = a_look.sprite[1] * alpha;
+				fresh->baseColor.blue = a_look.sprite[2] * alpha;
+			} else if (a_plainVapour) {
+				fresh->baseColor.red = r / m;
+				fresh->baseColor.green = g / m;
+				fresh->baseColor.blue = b / m;
+			} else if (a_blk.vapourOne) {
+				fresh->baseColor.red = a_blk.base.red;  // the palette row coordinate, as loaded
+				fresh->baseColor.green = a_blk.base.green;
+				fresh->baseColor.blue = a_blk.base.blue;
+			} else if (!a_blk.palette && bright > 0.0001f) {
+				fresh->baseColor.red = r / m * bright;
+				fresh->baseColor.green = g / m * bright;
+				fresh->baseColor.blue = b / m * bright;
+			}
+			fresh->baseColor.alpha = a_plainVapour ? alpha : a_blk.base.alpha * (a_blk.sprite ? 1.0f : alpha);
+			fresh->baseColorScale = a_blk.scale * glow * (a_blk.alphaDead && a_blk.additive && !a_plainVapour ? alpha : 1.0f);
+			fresh->falloffStartOpacity = a_blk.loadStart;
+			fresh->falloffStopOpacity = a_blk.loadStop;
+			if (a_blk.fill) {
+				(a_blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = a_blk.facing * a_look.clear;
+			}
+			if (a_blk.alphaDead && !a_blk.additive) {  // not seen in our meshes; the falloff is the alpha the shader does read
+				fresh->falloffStartOpacity *= alpha;
+				fresh->falloffStopOpacity *= alpha;
+			}
+			return fresh;
+		}
+
+		// vapour layer 1's palette bits: off while it wears the baked gold copy, as loaded otherwise
+		void VapourBits(RE::BSEffectShaderProperty* a_prop, const Block& a_blk, bool a_plain)
+		{
+			using F = RE::BSShaderProperty::EShaderPropertyFlag;
+			if (a_plain) {
+				a_prop->flags.reset(F::kGrayscaleToPaletteColor, F::kGrayscaleToPaletteAlpha);
+				return;
+			}
+			a_prop->flags.set(F::kGrayscaleToPaletteColor);
+			if (a_blk.paletteAlpha) {
+				a_prop->flags.set(F::kGrayscaleToPaletteAlpha);
+			}
+		}
+
+		void PutMaterial(RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial* a_fresh)
+		{
+			a_prop->SetMaterial(a_fresh, true);
+			if (a_prop->GetMaterial() != a_fresh) {
+				a_fresh->~BSEffectShaderMaterial();
+				RE::free(a_fresh);
+			}
+		}
+
+		void PaintRow(Row& a_row, const Setting& a_s)
+		{
+			const auto look = LookOf(a_s);
+			PaintPalettes(a_row, look);
 			for (auto& master : a_row.masters) {
-				// the ward in the hands answers to the casting glow slider alone; opacity and ward brightness are the wards' own
-				// (his rule 2026-10-05)
-				const float glow = master.hand ? a_castingGlow / 100.0f : wardGlow;
-				const float alpha = master.hand ? 1.0f : wardAlpha;
 				for (auto& blk : master.blocks) {
-					auto* mat = static_cast<RE::BSEffectShaderMaterial*>(blk.prop->GetMaterial());
-					if (!mat) {
-						continue;
-					}
-					auto* fresh = static_cast<RE::BSEffectShaderMaterial*>(mat->Create());
+					bool  plain = false;
+					auto* fresh = Fresh(blk, master.hand, look, plain);
 					if (!fresh) {
 						continue;
 					}
-					fresh->CopyMembers(mat);
-					const float bright = (std::max)({ blk.base.red, blk.base.green, blk.base.blue });
-					const bool  plainVapour = blk.vapourOne && goldVapour;
 					if (blk.vapourOne) {
-						// the baked copy carries the palette's value and alpha itself, so the block becomes a plain glow in
-						// the ward's color; any other hue (or lighting) gets the palette layer back exactly as loaded
-						using F = RE::BSShaderProperty::EShaderPropertyFlag;
-						fresh->sourceTexture = plainVapour ? RE::NiPointer<RE::NiSourceTexture>(gGoldVapour) : blk.source;
-						fresh->sourceTexturePath = plainVapour ? RE::BSFixedString(kGoldVapour) : blk.sourcePath;
-						if (plainVapour) {
-							blk.prop->flags.reset(F::kGrayscaleToPaletteColor, F::kGrayscaleToPaletteAlpha);
-						} else {
-							blk.prop->flags.set(F::kGrayscaleToPaletteColor);
-							if (blk.paletteAlpha) {
-								blk.prop->flags.set(F::kGrayscaleToPaletteAlpha);
-							}
-						}
+						VapourBits(blk.prop.get(), blk, plain);
 					}
-					if (blk.sprite) {
-						fresh->baseColor.red = sprite[0] * alpha;
-						fresh->baseColor.green = sprite[1] * alpha;
-						fresh->baseColor.blue = sprite[2] * alpha;
-					} else if (plainVapour) {
-						fresh->baseColor.red = r / m;
-						fresh->baseColor.green = g / m;
-						fresh->baseColor.blue = b / m;
-					} else if (blk.vapourOne) {
-						fresh->baseColor.red = blk.base.red;  // the palette row coordinate, as loaded
-						fresh->baseColor.green = blk.base.green;
-						fresh->baseColor.blue = blk.base.blue;
-					} else if (!blk.palette && bright > 0.0001f) {
-						fresh->baseColor.red = r / m * bright;
-						fresh->baseColor.green = g / m * bright;
-						fresh->baseColor.blue = b / m * bright;
-					}
-					fresh->baseColor.alpha = plainVapour ? alpha : blk.base.alpha * (blk.sprite ? 1.0f : alpha);
-					fresh->baseColorScale = blk.scale * glow * (blk.alphaDead && blk.additive && !plainVapour ? alpha : 1.0f);
-					if (blk.fill) {
-						(blk.startFaces ? fresh->falloffStartOpacity : fresh->falloffStopOpacity) = blk.facing * clear;
-					}
-					if (blk.alphaDead && !blk.additive) {  // not seen in our meshes; the falloff is the alpha the shader does read
-						fresh->falloffStartOpacity *= alpha;
-						fresh->falloffStopOpacity *= alpha;
-					}
-					blk.prop->SetMaterial(fresh, true);
-					if (blk.prop->GetMaterial() != fresh) {
-						fresh->~BSEffectShaderMaterial();
-						RE::free(fresh);
-					}
+					PutMaterial(blk.prop.get(), fresh);
 					++gEdits;
 				}
 			}
-			a_row.applied = a_c;
-			a_row.appliedOpacity = a_opacity;
-			a_row.appliedTransparency = a_transparency;
-			a_row.appliedBrightness = a_brightness;
-			a_row.appliedCastingGlow = a_castingGlow;
+			a_row.applied = a_s.c;
+			a_row.appliedOpacity = a_s.opacity;
+			a_row.appliedTransparency = a_s.transparency;
+			a_row.appliedBrightness = a_s.brightness;
+			a_row.appliedCastingGlow = a_s.castingGlow;
+			a_row.appliedKept = a_s.kept;
 		}
 
 		// A dome already on screen (a held ward's, the menu's preview) is a CLONE of the cached model, made before the change:
 		// it shares the palette textures (so those follow at once) but carries its own copy of every block's glow, so its
 		// emissive blocks kept the old color until the next cast (his ask 2026-10-06: drag the color bar and watch the ward
-		// "skim through the color spectrum"). Every live dome of a row is given the master's materials again, block for
-		// block - a clone walks its geometry in the same order as the model it was cloned from. Main thread (ApplyColors).
-		std::size_t RepaintLive()
+		// "skim through the color spectrum"). Every live dome of a row is given its row's look again, block for block - a clone
+		// walks its geometry in the same order as the model it was cloned from: a_looks[row] built aside during a color drag,
+		// else the cached model's materials. The cached models change only outside a drag: a loader thread copying one while
+		// its materials were replaced ~15 times a second could read one being freed (the senior audit). Main thread.
+		std::size_t RepaintLive(const std::array<std::optional<Look>, kRows>* a_looks)
 		{
 			auto* lists = RE::ProcessLists::GetSingleton();
 			if (!lists) {
 				return 0;
 			}
-			std::map<std::string, const Master*> byModel;
-			for (const auto& row : gRows) {
-				for (const auto& m : row.masters) {
-					byModel.emplace(ModelKey(m.model), &m);
+			std::map<std::string, std::pair<const Master*, std::size_t>> byModel;
+			for (std::size_t i = 0; i < kRows; ++i) {
+				if (a_looks && !(*a_looks)[i]) {
+					continue;
+				}
+				for (const auto& m : gRows[i].masters) {
+					byModel.emplace(ModelKey(m.model), std::pair{ &m, i });
 				}
 			}
-			std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const Master*>> live;
+			std::vector<std::tuple<RE::NiPointer<RE::NiAVObject>, const Master*, std::size_t>> live;
 			{
 				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
 				for (auto& temp : lists->magicEffects) {
@@ -476,12 +551,12 @@ namespace Plugin
 					}
 					const auto* model = m->artObject->GetModel();
 					if (const auto it = byModel.find(ModelKey(model ? model : "")); it != byModel.end()) {
-						live.emplace_back(m->artObject3D, it->second);
+						live.emplace_back(m->artObject3D, it->second.first, it->second.second);
 					}
 				}
 			}
 			std::size_t painted = 0;
-			for (const auto& [root, master] : live) {
+			for (const auto& [root, master, row] : live) {
 				std::vector<RE::BSEffectShaderProperty*> props;
 				EachEffectBlock(root.get(), [&](RE::BSGeometry*, RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial*) { props.push_back(a_prop); });
 				if (props.size() != master->blocks.size()) {
@@ -489,7 +564,20 @@ namespace Plugin
 				}
 				using F = RE::BSShaderProperty::EShaderPropertyFlag;
 				for (std::size_t i = 0; i < props.size(); ++i) {
-					auto* from = static_cast<RE::BSEffectShaderMaterial*>(master->blocks[i].prop->GetMaterial());
+					const auto& blk = master->blocks[i];
+					if (a_looks) {
+						bool  plain = false;
+						auto* fresh = Fresh(blk, master->hand, *(*a_looks)[row], plain);
+						if (!fresh) {
+							continue;
+						}
+						if (blk.vapourOne) {
+							VapourBits(props[i], blk, plain);
+						}
+						PutMaterial(props[i], fresh);
+						continue;
+					}
+					auto* from = static_cast<RE::BSEffectShaderMaterial*>(blk.prop->GetMaterial());
 					auto* fresh = from ? static_cast<RE::BSEffectShaderMaterial*>(from->Create()) : nullptr;
 					if (!fresh) {
 						continue;
@@ -497,17 +585,13 @@ namespace Plugin
 					fresh->CopyMembers(from);
 					// the gold vapour switch moves the palette bits on the master's block; the clone follows it
 					for (const auto f : { F::kGrayscaleToPaletteColor, F::kGrayscaleToPaletteAlpha }) {
-						if (master->blocks[i].prop->flags.any(f)) {
+						if (blk.prop->flags.any(f)) {
 							props[i]->flags.set(f);
 						} else {
 							props[i]->flags.reset(f);
 						}
 					}
-					props[i]->SetMaterial(fresh, true);
-					if (props[i]->GetMaterial() != fresh) {
-						fresh->~BSEffectShaderMaterial();
-						RE::free(fresh);
-					}
+					PutMaterial(props[i], fresh);
 				}
 				++painted;
 			}
@@ -561,12 +645,13 @@ namespace Plugin
 
 	bool ApplyColors(bool a_quiet)
 	{
-		const int        opacity = Opacity();
-		const int        transparency = Transparency();
-		const int        brightness = Brightness();
-		const int        castingGlow = CastingGlow();
-		bool             changed = false;
-		std::scoped_lock l{ gLock };
+		const int                              opacity = Opacity();
+		const int                              transparency = Transparency();
+		const int                              brightness = Brightness();
+		const int                              castingGlow = CastingGlow();
+		bool                                   changed = false, liveStale = false;
+		std::array<std::optional<Look>, kRows> drag{};
+		std::scoped_lock                       l{ gLock };
 		Bury();
 		for (std::size_t i = 0; i < kRows; ++i) {
 			auto&      row = gRows[i];
@@ -577,17 +662,31 @@ namespace Plugin
 			if (!row.loaded) {
 				LoadRow(row);
 			}
-			if (row.applied != *c || row.appliedOpacity != opacity || row.appliedTransparency != transparency || row.appliedBrightness != brightness || row.appliedCastingGlow != castingGlow ||
-				std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
-				PaintRow(row, *c, opacity, transparency, brightness, castingGlow);
+			const Setting want{ *c, opacity, transparency, brightness, castingGlow, DomeKept() };
+			if (a_quiet) {
+				// a color drag (~15 a second): the palettes and the live domes; the cached models follow when the mouse is let go
+				if (row.live != want) {
+					drag[i] = LookOf(want);
+					PaintPalettes(row, *drag[i]);
+					row.live = want;
+					changed = true;
+				}
+				continue;
+			}
+			const Setting painted{ row.applied, row.appliedOpacity, row.appliedTransparency, row.appliedBrightness, row.appliedCastingGlow,
+				row.appliedKept };
+			if (painted != want || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
+				PaintRow(row, want);
 				changed = true;
 			}
+			liveStale = liveStale || row.live != want;
+			row.live = want;
 		}
-		gLiveDomes = changed ? RepaintLive() : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
-		ColorHandLights();
 		if (a_quiet) {
-			return changed;  // a drag in the menu: ~15 a second, the log keeps the one made when the mouse is let go
+			gLiveDomes = changed ? RepaintLive(&drag) : 0;
+			return changed;  // the log keeps the apply made when the mouse is let go
 		}
+		gLiveDomes = changed || liveStale ? RepaintLive(nullptr) : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted{}", gSwaps, gSwapFails,
 			gEdits, gLiveDomes, gSwapFails ? " - " + gLastProblem : "");
 		return changed;
@@ -614,7 +713,18 @@ namespace Plugin
 				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
 				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
 		}
-		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
-			gSwaps, gSwapFails, gEdits, gLiveDomes, gMissing, gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);
+		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"domeKept":{:.2f},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
+			gSwaps, gSwapFails, gEdits, gLiveDomes, gMissing, DomeKept(), gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);
+	}
+
+	void SetDomeKeptTest(int a_percent)
+	{
+		gKeptTest = std::clamp(a_percent, -1, 100);
+	}
+
+	void ReleaseOldTextures()
+	{
+		std::scoped_lock l{ gLock };
+		Bury();
 	}
 }

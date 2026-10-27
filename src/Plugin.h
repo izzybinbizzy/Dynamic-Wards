@@ -127,7 +127,7 @@ namespace Plugin
 	std::optional<Color> RowColor(std::size_t a_row);  // what the row wears now; nothing = Vanilla
 	// Strange Wards (a vanilla ward replacer, Nexus 139921) installed: the five rank rows act as Vanilla, so its dome and the
 	// game's hand art (which reads the gradient its pick ships) show, and the game's ward hand light takes its pick's color
-	void NoteStrangeWards();  // data load, main thread, after MakeHandLights
+	void NoteStrangeWards();  // data load, main thread
 	bool StrangeWardsInstalled();
 	int  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
 
@@ -140,6 +140,8 @@ namespace Plugin
 	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call
 	std::array<bool, kRows> TakeHandLookChanges();
 	std::string             ColorsReport();
+	void                    SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
+	void                    ReleaseOldTextures();            // the palettes a recolor replaced, once nothing draws with them (the 2 s art watch)
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
 	// master's blocks and a live copy's pair up by index
@@ -163,21 +165,14 @@ namespace Plugin
 		kEnb = 1,      // an ENB light inside each ward mesh, and (since 2026-10-06) this plugin's lights as on Vanilla
 		kVanilla = 2,  // this plugin makes the lights, in the game's own lighting
 	};
-	void               ReadLighting();  // data load, before MakeArt
-	Lighting           LightingPick();
-	void               SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool               MeshLights();                      // ENB: the meshes carry an ENB light sprite as well
-	bool               OwnLights();                       // this plugin makes the hand and dome lights (every pick since 2026-10-06)
-	bool               Effects11();                       // Community Shaders' Effects 11 is installed
-	bool               HandLight1st();                    // the first-person hand light: every pick (his order 2026-10-05)
-	bool               InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
-	void               MakeHandLights();                  // data load: one copy of the game's ward light per row
-	void               ColorHandLights();                 // after a color change: each row's light in its color
-	RE::TESObjectLIGH* HandLightFor(std::size_t a_row);
-	bool               IsOurHandLight(const RE::TESObjectLIGH* a_light);
-	std::string        LightingReport();
-	std::string        ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
-	RE::NiColor        LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
+	void        ReadLighting();  // data load, before MakeArt
+	Lighting    LightingPick();
+	void        SetLightingPick(Lighting a_pick);  // devbench only, never saved
+	bool        MeshLights();                      // ENB: the meshes carry an ENB light sprite as well
+	bool        InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
+	std::string LightingReport();
+	std::string ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
+	RE::NiColor LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
 
 	// DomeLights.cpp: the colored light on each dome, and the hand lights (every pick)
 	enum class DomeMode : int
@@ -206,8 +201,8 @@ namespace Plugin
 
 	// Runs a_work and lets no exception out: inside a game callback, a task or one of our threads one would end the game (his
 	// C++ rule; Illuminated's LightKit::Guarded, the same code). The first failure at each place is logged, later ones there
-	// are skipped quietly. One flag per call site - each a_work is a lambda of its own type, so each call site has its own
-	// instance of this function.
+	// are skipped quietly. One flag per callable TYPE: a lambda is a type of its own, so each call site that passes one has its
+	// own flag - a plain function pointer would share one with every other, so pass a lambda.
 	template <class F>
 	inline void Guarded(const char* a_where, F&& a_work) noexcept
 	{
@@ -226,7 +221,7 @@ namespace Plugin
 	}
 
 	// a_job onto the game's main thread (the menu draws off it; DevBench and our two threads call from their own), run there
-	// inside Guarded under a_where - one flag per caller, as each caller's job is its own type. False when nothing was queued
+	// inside Guarded under a_where - one flag per caller when each caller's job is a lambda. False when nothing was queued
 	// (no task interface, or no memory for the task): a caller that raised a "queued" flag lowers it again, or it would stay up,
 	// and a caller that reports to someone (DevBench) says it did not happen - so the result is never dropped
 	template <class F>

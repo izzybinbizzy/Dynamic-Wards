@@ -18,6 +18,8 @@
 
 #include "Plugin.h"
 
+#include <cmath>
+
 namespace Plugin
 {
 	namespace
@@ -74,11 +76,13 @@ namespace Plugin
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
 		std::atomic_bool                           gQueued{ false };
 		RE::NiColor                                gLastAmbient{};
+		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
+		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
+		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
 
 		bool Wanted()
 		{
-			const auto mode = gMode.load();
-			return mode == DomeMode::kOn || (mode == DomeMode::kAuto && OwnLights());
+			return gMode.load() != DomeMode::kOff;  // every lighting pick gets this plugin's lights (since 2026-10-06)
 		}
 
 		void ReadSpecs()
@@ -95,24 +99,43 @@ namespace Plugin
 					f.emplace_back(line.substr(at, tab - at));
 				}
 				f.emplace_back(line.substr(at));
-				auto n = [&](std::size_t i) { return static_cast<float>(std::atof(f[i].c_str())); };
+				// a number that does not read, or is not finite, leaves the whole line out (atof took "nan" and the locale's comma)
+				bool bad = false;
+				auto n = [&](std::size_t i) {
+					float       v = 0.0f;
+					const auto& s = f[i];
+					const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+					bad = bad || ec != std::errc{} || end != s.data() + s.size() || !std::isfinite(v);
+					return v;
+				};
 				// vdome <model> <r> <g> <b> <fade> <radius> <x> <y> <z> - the colour columns are 2.x's; 3.0 colors at run time
 				if (f.size() == 10 && f[0] == "vdome") {
+					const float fade = n(5), radius = n(6);
+					if (bad) {
+						++gBadLines;
+						continue;
+					}
 					auto& s = gSpecs[ModelKey(f[1])];
 					s.plain = true;
-					s.plainFade = n(5);
-					s.plainRadius = n(6);
+					s.plainFade = fade;
+					s.plainRadius = radius;
 					continue;
 				}
 				// dome <model> <r> <g> <b> <fade> <reach> <size> <x> <y> <z>
 				if (f.size() != 11 || f[0] != "dome") {
 					continue;
 				}
+				const float        fade = n(5), reach = n(6), size = n(7);
+				const RE::NiPoint3 point{ n(8), n(9), n(10) };
+				if (bad) {
+					++gBadLines;
+					continue;
+				}
 				auto& s = gSpecs[ModelKey(f[1])];
-				s.fade = n(5);
-				s.reach = n(6);
-				s.size = n(7);
-				s.points.push_back({ n(8), n(9), n(10) });
+				s.fade = fade;
+				s.reach = reach;
+				s.size = size;
+				s.points.push_back(point);
 			}
 		}
 
@@ -219,20 +242,31 @@ namespace Plugin
 			Dress(a_light, a_color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true, HandDim());
 		}
 
-		void Hang(RE::ModelReferenceEffect* a_effect, std::size_t a_row, const Spec& a_spec, RE::ShadowSceneNode* a_scene)
+		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), its art
+		// and wearer are held while the lock is
+		struct Showing
 		{
-			auto*      parent = a_effect->artObject3D ? a_effect->artObject3D->AsNode() : nullptr;
-			const auto color = RowColor(a_row);
+			const RE::ModelReferenceEffect* effect{ nullptr };
+			RE::NiPointer<RE::NiAVObject>   art;
+			RE::ObjectRefHandle             target;
+			std::size_t                     row{ kRows };
+			const Spec*                     spec{ nullptr };
+		};
+
+		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene)
+		{
+			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
+			const auto color = RowColor(a_s.row);
 			if (!parent || !color) {
 				return;
 			}
-			for (const auto& at : a_spec.points) {
+			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				auto*                      light = Make(parent, kLightName, at, a_scene, bs, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, a_spec); });
+				auto*                      light = Make(parent, kLightName, at, a_scene, bs, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
 				if (!light) {
 					return;
 				}
-				gLit.push_back({ a_effect, a_effect->artObject3D, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_effect->target, a_row, &a_spec });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec });
 			}
 		}
 
@@ -286,6 +320,13 @@ namespace Plugin
 			return kRows;
 		}
 
+		// made on the first tick, after data load (the game's string cache is up by then)
+		const RE::BSFixedString& MagicNode(std::size_t a_slot)
+		{
+			static const std::array<RE::BSFixedString, 2> names{ RE::BSFixedString(kMagicNodes[0]), RE::BSFixedString(kMagicNodes[1]) };
+			return names[a_slot];
+		}
+
 		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
 			if (a_h.light) {
@@ -302,7 +343,7 @@ namespace Plugin
 				auto&      h = a_hands.h[slot];
 				const auto row = a_body ? CastingRow(a_actor, slot, alwaysOn) : kRows;
 				const auto color = row < kRows ? RowColor(row) : std::nullopt;
-				auto*      node = color ? a_body->GetObjectByName(RE::BSFixedString(kMagicNodes[slot])) : nullptr;
+				auto*      node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
 				auto*      parent = node ? node->AsNode() : nullptr;
 				if (!parent || (h.light && h.node.get() != parent)) {
 					DropHand(h, a_scene);
@@ -323,7 +364,7 @@ namespace Plugin
 		}
 
 		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too since
-		// 2026-10-06, OwnLights). Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
+		// 2026-10-06). Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
 		// on ENB (a user's report "the ENB light in first person did not work"): the same hand light hung under the
 		// first-person skeleton's magic nodes sat right (in front of her at camera height) yet lit nothing - the ground ON /
 		// OFF / ON 45.6 / 44.2 / 45.4 - while under the third-person nodes it doubled the ground (117.9 / 57.5 / 117.9).
@@ -339,17 +380,15 @@ namespace Plugin
 				auto* body = a_actor->Get3D(false);
 				auto& a = gHands[a_actor->GetFormID()];
 				a.seen = true;
-				TickActor(a_actor, OwnLights() ? body : nullptr, a, a_scene);
+				TickActor(a_actor, body, a, a_scene);
 			};
 			if (a_on) {
 				auto* player = RE::PlayerCharacter::GetSingleton();
 				visit(player);
-				if (OwnLights()) {
-					if (auto* lists = RE::ProcessLists::GetSingleton()) {
-						for (auto& handle : lists->highActorHandles) {
-							if (auto actor = handle.get(); actor && actor.get() != player) {
-								visit(actor.get());
-							}
+				if (auto* lists = RE::ProcessLists::GetSingleton()) {
+					for (auto& handle : lists->highActorHandles) {
+						if (auto actor = handle.get(); actor && actor.get() != player) {
+							visit(actor.get());
 						}
 					}
 				}
@@ -373,9 +412,9 @@ namespace Plugin
 			if (!scene || !lists) {
 				return;
 			}
-			const bool                                                                   on = Wanted() && ColoredLightsOn();
-			std::vector<std::tuple<RE::ModelReferenceEffect*, std::size_t, const Spec*>> live;
-			std::scoped_lock                                                             l{ gLock };
+			const bool           on = Wanted() && ColoredLightsOn();
+			std::vector<Showing> live;
+			std::scoped_lock     l{ gLock };
 			if (on) {
 				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
 				for (auto& temp : lists->magicEffects) {
@@ -387,26 +426,30 @@ namespace Plugin
 					if (m->finished || !m->artObject || !m->artObject3D || !m->artObject3D->parent) {
 						continue;
 					}
-					const auto* model = m->artObject->GetModel();
-					if (const auto it = gSpecs.find(ModelKey(model ? model : "")); it != gSpecs.end()) {
-						if (const auto row = RowOfModel(model); row < kRows) {
-							live.emplace_back(m, row, &it->second);
+					auto [it, fresh] = gDomeOf.try_emplace(m->artObject, nullptr, kRows);
+					if (fresh) {
+						const auto* model = m->artObject->GetModel();
+						if (const auto spec = gSpecs.find(ModelKey(model ? model : "")); spec != gSpecs.end()) {
+							it->second = { &spec->second, RowOfModel(model) };
 						}
+					}
+					if (const auto [spec, row] = it->second; spec && row < kRows) {
+						live.push_back({ m, m->artObject3D, m->target, row, spec });
 					}
 				}
 			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
-				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::any_of(live, [&](const auto& a_live) {
-					return std::get<0>(a_live) == a_lit.effect && std::get<0>(a_live)->artObject3D.get() == a_lit.art.get();
+				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::any_of(live, [&](const Showing& a_s) {
+					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
 				});
 				if (!keep) {
 					Drop(a_lit.light.get(), a_lit.bs, scene);
 				}
 				return !keep;
 			});
-			for (const auto& [effect, row, spec] : live) {
-				if (std::ranges::none_of(gLit, [effect](const Lit& a_lit) { return a_lit.effect == effect; })) {
-					Hang(effect, row, *spec, scene);
+			for (const auto& s : live) {
+				if (std::ranges::none_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; })) {
+					Hang(s, scene);
 				}
 			}
 			for (auto& lit : gLit) {
@@ -420,7 +463,7 @@ namespace Plugin
 					DressDome(lit.light.get(), *c, *lit.spec);
 				}
 			}
-			TickHands(scene, HandLight1st() && WardLightOn());
+			TickHands(scene, WardLightOn());
 		}
 	}
 
@@ -430,23 +473,19 @@ namespace Plugin
 			std::scoped_lock l{ gLock };
 			ReadSpecs();
 		}
-		SKSE::log::info("dome lights: {} dome model(s) in {}; {}; first-person hand light {}", gSpecs.size(), kPath,
+		SKSE::log::info("dome lights: {} dome model(s) in {}{}; {}; first-person hand light {}", gSpecs.size(), kPath,
+			gBadLines ? std::format(" ({} line(s) left out: a number that does not read)", gBadLines) : std::string(),
 			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" :
 															  "off",
-			!HandLight1st() ? "off" : MeshLights() ? "on (ENB)" :
-													 "on");
+			MeshLights() ? "on (ENB)" : "on");
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock. Nothing thrown in it
 		// may leave the thread (that ends the game): each round is guarded, and so is the tick on the main thread
 		std::thread([]() {
 			for (;;) {
 				std::this_thread::sleep_for(kTick);
 				Guarded("dome lights thread", []() {
-					bool active = false;
-					{
-						std::scoped_lock l{ gLock };
-						active = Wanted() || !gLit.empty() || !gHands.empty() || HandLight1st();
-					}
-					if (active && !gQueued.exchange(true) && !Later("dome and hand lights", Tick)) {
+					// every round: the hand lights are on every pick
+					if (!gQueued.exchange(true) && !Later("dome and hand lights", []() { Tick(); })) {
 						gQueued = false;  // nothing queued: the next round tries again
 					}
 				});
