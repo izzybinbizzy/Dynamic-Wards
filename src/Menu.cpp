@@ -382,6 +382,18 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s", T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
+
+			// off unless the player turns it up: in a place with normal color a boosted dome reads too strong
+			int boost = DomeBoost();
+			SetNextItemWidth(260.0f);
+			SliderInt(T("Dome color boost"), &boost, 0, 100, "%d%%");
+			if (boost != DomeBoost()) {
+				SetDomeBoost(boost);
+			}
+			if (IsItemDeactivatedAfterEdit()) {
+				Changed();
+			}
+			SetItemTooltip("%s", T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. 0 = off. In a place with normal color a boosted dome looks too strong."));
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);

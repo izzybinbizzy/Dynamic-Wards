@@ -99,6 +99,8 @@ namespace Plugin
 	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
 	int                  CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
 	void                 SetCastingGlow(int a_percent);
+	int                  DomeBoost();  // the menu's Dome color boost, 0-100 percent (0 = off): gold / yellow / green domes deepened
+	void                 SetDomeBoost(int a_percent);
 	float                HandDim();  // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
 	bool                 Dome360();
 	void                 SetDome360(bool a_on);
@@ -183,6 +185,7 @@ namespace Plugin
 	};
 	void        StartDomeLights();  // data load, after MakeArt
 	void        SetDomeMode(DomeMode a_mode);
+	void        SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	std::string DomeLightsReport();
 
 	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar

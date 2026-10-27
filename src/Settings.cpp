@@ -29,9 +29,9 @@ namespace Plugin
 		std::scoped_lock l{ gLock };
 		const auto       read = ReadSettingsText(in, gS);
 		SKSE::log::info(
-			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
+			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome color boost {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 			"Crusader shields {}, every ward {}, shield wards Spellbreaker {} Crusader {} Reman {} ({} line(s) read{})",
-			HexColor(gS.ladder), gS.stages, gS.reversed ? ", reversed" : "", gS.opacity, gS.transparency, gS.brightness, gS.castingGlow, gS.dome,
+			HexColor(gS.ladder), gS.stages, gS.reversed ? ", reversed" : "", gS.opacity, gS.transparency, gS.brightness, gS.castingGlow, gS.domeBoost, gS.dome,
 			gS.light ? "on" : "off", gS.coloredLights ? "on" : "off", static_cast<int>(gS.unlock), gS.perk.empty() ? "" : " " + gS.perk,
 			gS.crusader ? "on" : "off", gS.every ? "on" : "off", ShieldDomeName(SettingsText::ShieldPick(gS, 0)),
 			ShieldDomeName(SettingsText::ShieldPick(gS, 1)), ShieldDomeName(SettingsText::ShieldPick(gS, 2)), read.lines,
@@ -149,6 +149,16 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		gS.castingGlow = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+	}
+	int DomeBoost()
+	{
+		std::scoped_lock l{ gLock };
+		return gS.domeBoost;
+	}
+	void SetDomeBoost(int a_percent)
+	{
+		std::scoped_lock l{ gLock };
+		gS.domeBoost = std::clamp(a_percent, 0, 100);
 	}
 	float HandDim()
 	{

@@ -50,6 +50,7 @@ namespace Plugin
 			RE::ObjectRefHandle             target;
 			std::size_t                     row{ 0 };
 			const Spec*                     spec{ nullptr };
+			bool                            shadow{ false };  // hung as an engine shadow light (the domeShadow test switch)
 		};
 
 		struct Hand1st
@@ -74,6 +75,7 @@ namespace Plugin
 		std::size_t                                gHandsMade = 0;
 		RE::NiPointer<RE::NiPointLight>            gMaster;
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
+		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
 		std::atomic_bool                           gQueued{ false };
 		RE::NiColor                                gLastAmbient{};
 		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
@@ -201,7 +203,7 @@ namespace Plugin
 		// it. nullptr when the game could not make it or the scene refused it (then it is taken off again). Main thread.
 		template <class F>
 		RE::NiPointLight* Make(RE::NiNode* a_parent, const char* a_name, const RE::NiPoint3& a_at, RE::ShadowSceneNode* a_scene,
-			RE::NiPointer<RE::BSLight>& a_bs, F&& a_dress)
+			RE::NiPointer<RE::BSLight>& a_bs, bool a_shadow, F&& a_dress)
 		{
 			auto* light = CloneMaster();
 			if (!light) {
@@ -215,7 +217,7 @@ namespace Plugin
 			light->Update(update);
 			RE::ShadowSceneNode::LIGHT_CREATE_PARAMS params{};
 			params.dynamic = true;
-			params.shadowLight = false;
+			params.shadowLight = a_shadow;
 			params.portalStrict = true;
 			params.affectLand = true;
 			params.affectWater = true;
@@ -262,11 +264,12 @@ namespace Plugin
 			}
 			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				auto*                      light = Make(parent, kLightName, at, a_scene, bs, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
+				const bool                 shadow = gShadowTest.load();
+				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
 				if (!light) {
 					return;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow });
 			}
 		}
 
@@ -355,7 +358,7 @@ namespace Plugin
 					DressHand(h.light.get(), *color);
 				} else {
 					RE::NiPointer<RE::BSLight> bs;
-					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
 						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
 						++gHandsMade;
 					}
@@ -439,7 +442,7 @@ namespace Plugin
 				}
 			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
-				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::any_of(live, [&](const Showing& a_s) {
+				const bool keep = a_lit.light && a_lit.light->parent && a_lit.shadow == gShadowTest.load() && std::ranges::any_of(live, [&](const Showing& a_s) {
 					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
 				});
 				if (!keep) {
@@ -498,6 +501,11 @@ namespace Plugin
 		gMode = a_mode;
 	}
 
+	void SetDomeShadowTest(bool a_on)
+	{
+		gShadowTest = a_on;
+	}
+
 	std::string DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
@@ -508,8 +516,8 @@ namespace Plugin
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
 		}
-		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
-			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade,
+		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"shadow":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
+			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade, gShadowTest.load(),
 			gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue);
 	}
 }

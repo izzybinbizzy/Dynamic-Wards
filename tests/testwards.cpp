@@ -290,6 +290,9 @@ namespace
 		// no file: his defaults; the shields wear the dome the spell wards wear (the 360 dome by default)
 		const auto none = Read("");
 		CHECK(none.opacity == 100 && none.transparency == 0 && none.brightness == 100 && none.castingGlow == 100);
+		CHECK(none.domeBoost == 0);  // off unless the player turns it up
+		CHECK(Read("[Settings]\nDomeColorBoost=500\n").domeBoost == 100);
+		CHECK(Read("[Settings]\nDomeColorBoost=-5\n").domeBoost == 0);
 		CHECK(none.ladder == Color{ 0x2468FF } && none.stages == 3 && !none.reversed);
 		CHECK(none.dome == 0 && none.unlock == Unlock::kSkill75 && none.light && none.coloredLights && none.every);
 		CHECK(none.shieldDome[0] == 2 && none.shieldDome[1] == 2 && none.shieldDome[2] == 2);
@@ -352,6 +355,7 @@ namespace
 		w.transparency = 30;
 		w.brightness = 150;
 		w.castingGlow = 40;
+		w.domeBoost = 35;
 		w.dome = 1;
 		w.light = false;
 		w.coloredLights = false;
@@ -378,6 +382,7 @@ namespace
 		CHECK(!rr.old);
 		CHECK(back.ladder == w.ladder && back.stages == w.stages && back.reversed == w.reversed);
 		CHECK(back.opacity == w.opacity && back.transparency == w.transparency && back.brightness == w.brightness);
+		CHECK(back.domeBoost == w.domeBoost);
 		CHECK(back.castingGlow == w.castingGlow && back.dome == w.dome && back.light == w.light && back.coloredLights == w.coloredLights);
 		CHECK(back.unlock == w.unlock && back.perk == w.perk && back.crusader == w.crusader && back.every == w.every);
 		CHECK(back.keepRunes == w.keepRunes && back.mods == w.mods && back.shieldDome == w.shieldDome);
@@ -488,6 +493,10 @@ namespace
 		for (const Color c : { 0x2ED452u, 0xFF6A10u }) {  // too little of their weakest channel to take it all: much nearer
 			CHECK(screenSat(TrueOnScreen(c, 0.67f), 0.67f) > screenSat(c, 0.67f) + 0.05f);
 		}
+		// the menu's Dome color boost: 0 = the color as it is, full = corrected for a screen keeping half
+		CHECK(KeptForBoost(0) == 0.0f && TrueOnScreen(0xFFBE5A, KeptForBoost(0)) == 0xFFBE5A);
+		CHECK(std::fabs(KeptForBoost(100) - 0.5f) < 1e-6f && std::fabs(KeptForBoost(70) - 0.65f) < 1e-6f);
+		CHECK(KeptForBoost(500) == KeptForBoost(100) && KeptForBoost(-3) == 0.0f);
 		const Color gold = TrueOnScreen(0xFFBE5A, 0.67f);
 		CHECK(((gold >> 16) & 0xFF) == 0xFF);  // as bright as asked at its brightest channel
 	}

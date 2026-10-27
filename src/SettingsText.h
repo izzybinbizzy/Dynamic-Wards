@@ -38,6 +38,7 @@ namespace Plugin
 		int                                      transparency = kTransparencyDefault;
 		int                                      brightness = 100;
 		int                                      castingGlow = 100;  // the menu's Hand Brightness (the ini key stays CastingGlow)
+		int                                      domeBoost = 0;      // the menu's Dome color boost, 0-100 percent; 0 = off
 		int                                      dome = 0;           // 0 the 360 dome, 1 the normal dome
 		bool                                     light = true;       // Ward casting light
 		bool                                     coloredLights = true;
@@ -155,6 +156,8 @@ namespace Plugin
 					a_out.brightness = std::clamp(v, kBrightnessMin, kBrightnessMax);
 				} else if (is("CastingGlow")) {
 					a_out.castingGlow = std::clamp(v, kBrightnessMin, kBrightnessMax);
+				} else if (is("DomeColorBoost")) {
+					a_out.domeBoost = std::clamp(v, 0, 100);
 				} else if (is("Dome")) {
 					a_out.dome = std::clamp(v, 0, 1);
 				} else if (is("Unlock360")) {
@@ -211,7 +214,7 @@ namespace Plugin
 		a_out << "; Dynamic Wards - written by its menu (SKSE Menu Framework). Change these in game, not here.\n"
 			  << "[Settings]\nLadderColor=" << HexColor(a_s.ladder) << "\nLadderStages=" << a_s.stages << "\nLadderReversed=" << (a_s.reversed ? 1 : 0)
 			  << "\nOpacity=" << a_s.opacity << "\nTransparency=" << a_s.transparency << "\nBrightness=" << a_s.brightness
-			  << "\nCastingGlow=" << a_s.castingGlow << "\nDome=" << a_s.dome << "\nWardLight=" << (a_s.light ? 1 : 0)
+			  << "\nCastingGlow=" << a_s.castingGlow << "\nDomeColorBoost=" << a_s.domeBoost << "\nDome=" << a_s.dome << "\nWardLight=" << (a_s.light ? 1 : 0)
 			  << "\nColoredLights=" << (a_s.coloredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(a_s.unlock) << "\nUnlock360Perk=" << a_s.perk
 			  << "\nCrusaderShields=" << (a_s.crusader ? 1 : 0) << "\nEveryWard=" << (a_s.every ? 1 : 0)
 			  << "\nKeepStrangeRunesWards=" << (a_s.keepRunes ? 1 : 0);
