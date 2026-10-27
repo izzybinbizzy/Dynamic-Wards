@@ -32,7 +32,22 @@ namespace Plugin
 			if (n == 0 || a_at + n > a_text.size()) {
 				return 0;
 			}
-			for (std::size_t k = 1; k < n; ++k) {
+			// the second byte's range rules out overlong forms, the UTF-16 surrogates and anything past U+10FFFF
+			const auto    c1 = static_cast<unsigned char>(a_text[a_at + 1]);
+			unsigned char lo = 0x80, hi = 0xBF;
+			if (c == 0xE0) {
+				lo = 0xA0;
+			} else if (c == 0xED) {
+				hi = 0x9F;
+			} else if (c == 0xF0) {
+				lo = 0x90;
+			} else if (c == 0xF4) {
+				hi = 0x8F;
+			}
+			if (c1 < lo || c1 > hi) {
+				return 0;
+			}
+			for (std::size_t k = 2; k < n; ++k) {
 				if ((static_cast<unsigned char>(a_text[a_at + k]) & 0xC0) != 0x80) {
 					return 0;
 				}

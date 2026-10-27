@@ -114,13 +114,8 @@ namespace Plugin
 			std::vector<Master>      masters;
 			std::vector<Palette>     palettes;
 			bool                     loaded = false;
-			Color                    applied = 0xFFFFFFFF;
-			int                      appliedOpacity = -1;
-			int                      appliedTransparency = -1;
-			int                      appliedBrightness = -1;
-			int                      appliedCastingGlow = -1;
-			float                    appliedKept = -1.0f;
-			Setting                  live{};  // what its live domes show: a color drag paints them, never the cached models
+			Setting                  applied{};  // what its cached models wear
+			Setting                  live{};     // what its live domes show: a color drag paints them, never the cached models
 			// the hand look the hands were last seen in (TakeHandLookChanges): a ward in the hand is re-equipped only when its row's
 			// own look moved - never for a dome-only setting or another row
 			Color handSeen = 0xFFFFFFFF;
@@ -507,12 +502,7 @@ namespace Plugin
 					++gEdits;
 				}
 			}
-			a_row.applied = a_s.c;
-			a_row.appliedOpacity = a_s.opacity;
-			a_row.appliedTransparency = a_s.transparency;
-			a_row.appliedBrightness = a_s.brightness;
-			a_row.appliedCastingGlow = a_s.castingGlow;
-			a_row.appliedKept = a_s.kept;
+			a_row.applied = a_s;
 		}
 
 		// A dome already on screen (a held ward's, the menu's preview) is a CLONE of the cached model, made before the change:
@@ -521,7 +511,7 @@ namespace Plugin
 		// "skim through the color spectrum"). Every live dome of a row is given its row's look again, block for block - a clone
 		// walks its geometry in the same order as the model it was cloned from: a_looks[row] built aside during a color drag,
 		// else the cached model's materials. The cached models change only outside a drag: a loader thread copying one while
-		// its materials were replaced ~15 times a second could read one being freed (the senior audit). Main thread.
+		// its materials were replaced ~15 times a second could read one being freed. Main thread.
 		std::size_t RepaintLive(const std::array<std::optional<Look>, kRows>* a_looks)
 		{
 			auto* lists = RE::ProcessLists::GetSingleton();
@@ -625,12 +615,12 @@ namespace Plugin
 		std::array<bool, kRows> out{};
 		for (std::size_t i = 0; i < kRows; ++i) {
 			auto& r = gRows[i];
-			if (r.applied == 0xFFFFFFFF) {
+			if (r.applied.c == 0xFFFFFFFF) {
 				continue;  // not painted (a Vanilla row, or not loaded): our hand art is not what that row's hands wear
 			}
-			out[i] = r.applied != r.handSeen || r.appliedCastingGlow != r.handGlowSeen;
-			r.handSeen = r.applied;
-			r.handGlowSeen = r.appliedCastingGlow;
+			out[i] = r.applied.c != r.handSeen || r.applied.castingGlow != r.handGlowSeen;
+			r.handSeen = r.applied.c;
+			r.handGlowSeen = r.applied.castingGlow;
 		}
 		return out;
 	}
@@ -664,18 +654,19 @@ namespace Plugin
 			}
 			const Setting want{ *c, opacity, transparency, brightness, castingGlow, DomeKept() };
 			if (a_quiet) {
-				// a color drag (~15 a second): the palettes and the live domes; the cached models follow when the mouse is let go
+				// a color drag (~15 a second): the palettes and the live domes; the cached models follow when the mouse is let go.
+				// Every live dome of a dragged row is painted each round, so one cast mid-drag (a clone of the old model) follows too
 				if (row.live != want) {
-					drag[i] = LookOf(want);
-					PaintPalettes(row, *drag[i]);
+					PaintPalettes(row, LookOf(want));
 					row.live = want;
 					changed = true;
 				}
+				if (row.applied != want) {
+					drag[i] = LookOf(want);
+				}
 				continue;
 			}
-			const Setting painted{ row.applied, row.appliedOpacity, row.appliedTransparency, row.appliedBrightness, row.appliedCastingGlow,
-				row.appliedKept };
-			if (painted != want || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
+			if (row.applied != want || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
 				PaintRow(row, want);
 				changed = true;
 			}
@@ -683,7 +674,7 @@ namespace Plugin
 			row.live = want;
 		}
 		if (a_quiet) {
-			gLiveDomes = changed ? RepaintLive(&drag) : 0;
+			gLiveDomes = std::ranges::any_of(drag, [](const auto& a_d) { return a_d.has_value(); }) ? RepaintLive(&drag) : 0;
 			return changed;  // the log keeps the apply made when the mouse is let go
 		}
 		gLiveDomes = changed || liveStale ? RepaintLive(nullptr) : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
@@ -711,7 +702,7 @@ namespace Plugin
 			}
 			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"fills":{},"colourControllersOff":{},"applied":"{}","palettes":[{}]}})",
 				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
-				r.applied == 0xFFFFFFFF ? std::string() : HexColor(r.applied), pals);
+				r.applied.c == 0xFFFFFFFF ? std::string() : HexColor(r.applied.c), pals);
 		}
 		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"domeKept":{:.2f},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",
 			gSwaps, gSwapFails, gEdits, gLiveDomes, gMissing, DomeKept(), gGoldVapourBlocks, gGoldVapour != nullptr, JsonEscape(gLastProblem), rows);

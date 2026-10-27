@@ -82,7 +82,7 @@ namespace Plugin
 
 		bool Wanted()
 		{
-			return gMode.load() != DomeMode::kOff;  // every lighting pick gets this plugin's lights (since 2026-10-06)
+			return gMode.load() != DomeMode::kOff;  // every lighting pick gets this plugin's lights
 		}
 
 		void ReadSpecs()
@@ -363,8 +363,8 @@ namespace Plugin
 			}
 		}
 
-		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too since
-		// 2026-10-06). Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
+		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too).
+		// Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
 		// on ENB (a user's report "the ENB light in first person did not work"): the same hand light hung under the
 		// first-person skeleton's magic nodes sat right (in front of her at camera height) yet lit nothing - the ground ON /
 		// OFF / ON 45.6 / 44.2 / 45.4 - while under the third-person nodes it doubled the ground (117.9 / 57.5 / 117.9).

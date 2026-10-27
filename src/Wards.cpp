@@ -157,6 +157,7 @@ namespace Plugin
 			bool               ability;  // a spell the shield's script adds; else the shield's enchantment
 		};
 		std::vector<ShieldEntry> gShieldEntries;
+		bool                     gSharedEnchant = false;  // a shield's enchantment record is worn by something that is not a shield
 
 		RE::EffectSetting* InertCopy(const RE::EffectSetting* a_ward)
 		{
@@ -263,7 +264,7 @@ namespace Plugin
 				out.push_back(player);
 			}
 			// every process level: an NPC in a lower one keeps an effect too, and one switched under it never gives its Ward Power
-			// back (the senior audit)
+			// back
 			if (auto* lists = RE::ProcessLists::GetSingleton()) {
 				for (auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles, &lists->middleLowActorHandles, &lists->lowActorHandles }) {
 					for (auto& handle : *handles) {
@@ -901,6 +902,7 @@ namespace Plugin
 				s.ability ? "an ability" : "an enchantment");
 		}
 		// a shield's enchantment record worn by something that is not a shield follows that shield's switch too
+		bool shared = false;
 		if (!entries.empty()) {
 			std::unordered_set<const RE::MagicItem*> shieldEnchants;
 			for (const auto& s : entries) {
@@ -911,11 +913,13 @@ namespace Plugin
 			for (auto* armo : dh->GetFormArray<RE::TESObjectARMO>()) {
 				if (armo && !armo->IsShield() && armo->formEnchanting && shieldEnchants.contains(armo->formEnchanting)) {
 					SKSE::log::warn("[SHIELD] {} shares its enchantment with a shield: that shield's switch takes its ward too", Where(armo));
+					shared = true;
 				}
 			}
 		}
 		std::scoped_lock l{ gLock };
 		gShieldEntries = std::move(entries);
+		gSharedEnchant = shared;
 		gTargets = std::move(found);
 		gTargetOf.clear();
 		for (std::size_t i = 0; i < gTargets.size(); ++i) {
@@ -1003,7 +1007,7 @@ namespace Plugin
 		};
 
 		// gLock held. What calls out of this plugin (other plugins' art listeners, Papyrus, DevBench) is handed back to ApplyAll,
-		// which makes those calls once the lock is released: a listener that took gLock again would deadlock (the senior audit)
+		// which makes those calls once the lock is released: a listener that took gLock again would deadlock
 		Applied ApplyLocked(const char* a_why)
 		{
 			Applied out;
@@ -1129,6 +1133,12 @@ namespace Plugin
 			}
 			std::size_t reapplied = 0;
 			for (auto* actor : backOn.empty() ? std::vector<RE::Actor*>{} : ShieldActors()) {
+				// unless another armor shares one of those enchantments (FindWards warns), only an actor wearing such a shield needs
+				// its inventory read
+				const auto* shield = actor->GetWornArmor(RE::BGSBipedObjectForm::BipedObjectSlot::kShield);
+				if (!gSharedEnchant && (!shield || !shield->formEnchanting || !backOn.contains(shield->formEnchanting))) {
+					continue;
+				}
 				for (auto& [obj, item] : actor->GetInventory()) {
 					auto* armo = obj ? obj->As<RE::TESObjectARMO>() : nullptr;
 					auto* entry = item.second.get();
