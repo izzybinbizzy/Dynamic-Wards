@@ -348,6 +348,20 @@ namespace Plugin
 		return out;
 	}
 
+	// one colour key of a plain block: its own brightness a_grey against the brightest key of the block's tracks a_full, at the
+	// block's glow a_level - the brightest key wears exactly what the static color did, the fades scale down from it
+	[[nodiscard]] constexpr float TrackKey(float a_grey, float a_full, float a_level) noexcept
+	{
+		return a_full > 0.0f ? a_level * a_grey / a_full : 0.0f;
+	}
+
+	// the menu's Dome color boost (0-100 %) as the share of saturation the domes are corrected for (TrueOnScreen): 0 % = none,
+	// 100 % = a screen that keeps half of a color's saturation (a room graded like the Bards College cellar keeps about 65 %)
+	[[nodiscard]] constexpr float KeptForBoost(int a_boost) noexcept
+	{
+		return a_boost <= 0 ? 0.0f : 1.0f - 0.5f * static_cast<float>((std::min)(a_boost, 100)) / 100.0f;
+	}
+
 	// the color to hand the game so a dome READS a_c on screen. The game draws a glowing effect keeping only a_kept of a color's
 	// saturation and adding the rest back as a grey of the color's own brightness (Rec. 709 luminance), so green-heavy colors -
 	// gold, yellow, green - turn pale and red / blue / purple barely move. That grey is taken out beforehand, as far as the

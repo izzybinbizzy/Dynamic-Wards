@@ -30,10 +30,10 @@ namespace Plugin
 			R"json({"description":"Dynamic Wards - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, and the settings. Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
 
 		constexpr const char* kTool =
-			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default or vanilla), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, every (0/1), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), mod:<Plugin.esp> (0/1), perk:<0xID~Plugin>, and three test switches never saved: domeLights (0 auto, 1 on, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default). Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default or vanilla"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
+			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default or vanilla), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), domeboost (0-100, the menu's Dome color boost; 0 off), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, every (0/1), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), mod:<Plugin.esp> (0/1), perk:<0xID~Plugin>, and three test switches never saved: domeLights (0 auto, 1 on, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default), domeShadow (0/1: the dome lights cast shadows - a trial). Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default or vanilla"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
 
 		constexpr const char* kSetDescriptor =
-			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | domeKept (percent the domes are corrected for, 0 none, -1 the default; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
+			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default or vanilla) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | domeboost (0-100, the menu's Dome color boost; 0 off) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | every (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | mod:<Plugin.esp> (0/1) | perk:<0xID~Plugin> | domeLights (0 auto, 1 on, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | domeKept (percent the domes are corrected for, 0 none, -1 the default; a test, not saved) | domeShadow (0/1, the dome lights cast shadows; a test, not saved) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
 
 		// the color grading the frame is drawn with: the place's own (base) and the blend with any modifiers on top (now) -
 		// a dome's color read off a picture means something only beside these
@@ -74,8 +74,8 @@ namespace Plugin
 
 		json SettingNames()
 		{
-			return json::array({ "ladder", "stages", "reversed", "row:<Row>", "opacity", "transparency", "brightness", "castingglow", "dome", "unlock",
-				"wardLight", "lights", "crusader", "every", "shield:<Row>", "mod:<Plugin.esp>", "perk:<0xID~Plugin>", "domeLights", "lighting", "domeKept" });
+			return json::array({ "ladder", "stages", "reversed", "row:<Row>", "opacity", "transparency", "brightness", "castingglow", "domeboost", "dome", "unlock",
+				"wardLight", "lights", "crusader", "every", "shield:<Row>", "mod:<Plugin.esp>", "perk:<0xID~Plugin>", "domeLights", "lighting", "domeKept", "domeShadow" });
 		}
 
 		json RowNames()
@@ -150,6 +150,8 @@ namespace Plugin
 				SetBrightness(value);
 			} else if (a_key == "castingglow") {
 				SetCastingGlow(value);
+			} else if (a_key == "domeboost") {
+				SetDomeBoost(value);
 			} else if (a_key == "stages") {
 				SetLadderStages(value);
 			} else if (a_key == "reversed") {
@@ -186,6 +188,9 @@ namespace Plugin
 				a_saved = false;
 			} else if (a_key == "domeKept") {
 				SetDomeKeptTest(value);  // a test switch, never saved
+				a_saved = false;
+			} else if (a_key == "domeShadow") {
+				SetDomeShadowTest(value != 0);  // a test switch, never saved
 				a_saved = false;
 			} else if (a_key.starts_with("row:")) {
 				const auto row = RowIndex(std::string_view(a_key).substr(4));

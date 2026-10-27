@@ -19,9 +19,11 @@
 //   5. its TRANSPARENCY (domes only): a dome's FILL - a falloff block more opaque facing you than at its rim (the 360 dome's
 //      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
 //      tested on ENB, Vanilla and Community Shaders: `Temp\DW orb + transparency test\round 2*`).
-// The dome's colour controllers would write the neutral color back every frame (probe 2, 2026-10-02: clearing kActive
-// does not stop the sequence that drives them), so they are taken off the cached model once; every clone made after
-// that has none.
+// A colour controller writes its block's emissive from the keys of the model's sequences every frame (clearing kActive
+// does not stop the sequence that drives it). On a palette block that emissive is a row coordinate, so its controllers come
+// off the cached model once (a clone made after has none). On a plain block the keys ARE the fade in and the fade out - the
+// 360 dome's three outer layers fade only by their color - so its controllers stay and each key is written as the row's hue
+// at that key's own brightness.
 
 #include "Plugin.h"
 
@@ -88,6 +90,16 @@ namespace Plugin
 			bool                               paletteAlpha = false;
 			RE::NiPointer<RE::NiSourceTexture> source{};
 			RE::BSFixedString                  sourcePath{};
+			// a plain block's colour tracks: their place in the controller manager (a clone keeps the places) and each key's own
+			// brightness as the neutral model has it
+			struct Track
+			{
+				std::uint16_t      seq = 0;  // NiTArray's own index type
+				std::uint32_t      item = 0;
+				std::vector<float> grey;
+			};
+			std::vector<Track> tracks{};
+			float              full = 0.0f;  // the brightest key of its tracks
 		};
 
 		struct Master
@@ -96,6 +108,7 @@ namespace Plugin
 			RE::NiPointer<RE::NiNode> root;
 			std::vector<Block>        blocks;
 			std::size_t               controllersOff = 0;
+			std::size_t               tracks = 0;
 			bool                      hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
 		};
 
@@ -142,14 +155,14 @@ namespace Plugin
 		bool                               gGoldVapourTried = false;
 		std::size_t                        gGoldVapourBlocks = 0;
 
-		// the share of a color's saturation the game keeps when it draws a dome (WardMath.h TrueOnScreen); 0 = no correction.
-		// The devbench test switch domeKept (percent, -1 = this default) overrides it, never saved
+		// the share of a color's saturation the domes are corrected for (WardMath.h TrueOnScreen); 0 = no correction: the menu's
+		// Dome color boost, or the devbench test switch domeKept (percent, -1 = the boost), never saved
 		std::atomic<int> gKeptTest{ -1 };
 
 		float DomeKept()
 		{
 			const int test = gKeptTest.load();
-			return test >= 0 ? test / 100.0f : 0.0f;
+			return test >= 0 ? test / 100.0f : KeptForBoost(DomeBoost());
 		}
 
 		// a gold or orange ward on Community Shaders (WardMath.h GoldHue): ENB and Vanilla show the palette layer in its true
@@ -282,6 +295,96 @@ namespace Plugin
 			});
 		}
 
+		bool IsColour(const RE::NiTimeController* a_c)
+		{
+			const auto* rtti = a_c ? a_c->GetRTTI() : nullptr;
+			return rtti && rtti->name && std::string_view(rtti->name).find("ColorController") != std::string_view::npos;
+		}
+
+		std::size_t RemoveColour(RE::BSEffectShaderProperty* a_prop, const std::vector<RE::NiTimeController*>& a_keep = {})
+		{
+			std::vector<RE::NiTimeController*> colour;
+			for (auto* c = a_prop->GetControllers(); c; c = c->GetNext()) {
+				if (IsColour(c) && std::ranges::find(a_keep, c) == a_keep.end()) {
+					colour.push_back(c);
+				}
+			}
+			for (auto* c : colour) {
+				c->IncRefCount();  // a sequence may still name it
+				a_prop->RemoveController(c);
+			}
+			return colour.size();
+		}
+
+		RE::NiControllerManager* ManagerOf(RE::NiAVObject* a_root)
+		{
+			for (auto* c = a_root ? a_root->GetControllers() : nullptr; c; c = c->GetNext()) {
+				if (auto* m = netimmerse_cast<RE::NiControllerManager*>(c)) {
+					return m;
+				}
+			}
+			return nullptr;
+		}
+
+		// the colour controllers a plain block's recorded tracks drive - the ones TintTracks keeps in the row's hue
+		std::vector<RE::NiTimeController*> Tinted(const Master& a_m, const Block& a_b)
+		{
+			std::vector<RE::NiTimeController*> out;
+			auto*                              mgr = ManagerOf(a_m.root.get());
+			for (const auto& t : a_b.tracks) {
+				if (auto* seq = mgr ? mgr->sequenceArray[t.seq].get() : nullptr; seq && t.item < seq->arraySize) {
+					out.push_back(seq->interpArray[t.item].interpCtlr.get());
+				}
+			}
+			return out;
+		}
+
+		RE::NiKeyBasedInterpolator* ColourKeys(RE::NiInterpolator* a_interp)
+		{
+			auto* k = netimmerse_cast<RE::NiKeyBasedInterpolator*>(a_interp);
+			if (!k || k->GetKeyChannelCount() != 1 || k->GetKeyContent(0) != RE::NiKeyBasedInterpolator::KeyContent::kPos || !k->GetKeyArray(0) ||
+				k->GetKeyStride(0) < sizeof(float) + sizeof(RE::NiPoint3)) {
+				return nullptr;
+			}
+			return k;
+		}
+
+		// a key is its time, then its value
+		RE::NiPoint3& KeyValue(RE::NiKeyBasedInterpolator* a_keys, std::uint32_t a_index)
+		{
+			auto* at = static_cast<std::byte*>(a_keys->GetKeyArray(0)) + static_cast<std::size_t>(a_index) * a_keys->GetKeyStride(0) + sizeof(float);
+			return *reinterpret_cast<RE::NiPoint3*>(at);
+		}
+
+		void FindTracks(Master& a_m)
+		{
+			auto* mgr = ManagerOf(a_m.root.get());
+			if (!mgr) {
+				return;
+			}
+			for (std::uint16_t s = 0; s < mgr->sequenceArray.capacity(); ++s) {
+				auto* seq = mgr->sequenceArray[s].get();
+				for (std::uint32_t i = 0; seq && i < seq->arraySize; ++i) {
+					const auto& item = seq->interpArray[i];
+					if (!item.interpCtlr || !IsColour(item.interpCtlr.get())) {
+						continue;
+					}
+					const auto blk = std::ranges::find_if(a_m.blocks, [&](const Block& a_b) { return a_b.prop.get() == item.interpCtlr->target; });
+					auto*      keys = ColourKeys(item.interpolator.get());
+					if (blk == a_m.blocks.end() || blk->palette || !keys) {
+						continue;
+					}
+					Block::Track t{ s, i, {} };
+					for (std::uint32_t n = 0; n < keys->GetKeyCount(0); ++n) {
+						const auto& v = KeyValue(keys, n);
+						t.grey.push_back((std::max)({ v.x, v.y, v.z }));
+						blk->full = (std::max)(blk->full, t.grey.back());
+					}
+					blk->tracks.push_back(std::move(t));
+				}
+			}
+		}
+
 		void LoadRow(Row& a_row)
 		{
 			a_row.loaded = true;
@@ -338,21 +441,21 @@ namespace Plugin
 							normalDomePaths.insert(a_mat->greyscaleTexturePath.c_str());
 						}
 					}
-					// the colour controllers come off the cached model once: a clone of it has none
-					std::vector<RE::NiTimeController*> colour;
-					for (auto* c = a_prop->GetControllers(); c; c = c->GetNext()) {
-						const auto* rtti = c->GetRTTI();
-						if (rtti && rtti->name && std::string_view(rtti->name).find("ColorController") != std::string_view::npos) {
-							colour.push_back(c);
-						}
-					}
-					for (auto* c : colour) {
-						c->IncRefCount();  // a sequence may still name it
-						a_prop->RemoveController(c);
-						++m.controllersOff;
+					if (b.palette) {
+						m.controllersOff += RemoveColour(a_prop);
 					}
 					m.blocks.push_back(std::move(b));
 				});
+				FindTracks(m);
+				for (auto& blk : m.blocks) {
+					if (!blk.palette && (blk.tracks.empty() || blk.full <= 0.0f)) {
+						blk.tracks.clear();
+						m.controllersOff += RemoveColour(blk.prop.get());  // keys we could not read: the static color wins
+					} else if (!blk.palette) {
+						m.controllersOff += RemoveColour(blk.prop.get(), Tinted(m, blk));  // an unread one would write its neutral keys over ours
+					}
+					m.tracks += blk.tracks.size();
+				}
 				a_row.masters.push_back(std::move(m));
 			}
 			for (const auto& path : paths) {
@@ -461,6 +564,62 @@ namespace Plugin
 			return fresh;
 		}
 
+		// the hue a block's colour keys scale, at full brightness; nothing for a palette block (its emissive is a row coordinate)
+		std::optional<RE::NiPoint3> UnitHue(const Block& a_blk, bool a_hand, const Look& a_look)
+		{
+			if (a_blk.sprite) {
+				const float alpha = a_hand ? 1.0f : a_look.wardAlpha;
+				return RE::NiPoint3{ a_look.sprite[0] * alpha, a_look.sprite[1] * alpha, a_look.sprite[2] * alpha };
+			}
+			if (a_blk.palette) {
+				return std::nullopt;
+			}
+			const auto [r, g, b] = LightRgb(TrueOnScreen(a_look.c, a_hand ? 0.0f : a_look.kept), false);
+			const float m = (std::max)({ r, g, b, 0.001f });
+			return RE::NiPoint3{ r / m, g / m, b / m };
+		}
+
+		// a model's or a live clone's colour keys in a look (a_props: its blocks in the model's order)
+		void TintTracks(RE::NiAVObject* a_root, const Master& a_m, const std::vector<RE::BSEffectShaderProperty*>& a_props, const Look& a_look)
+		{
+			auto* mgr = ManagerOf(a_root);
+			if (!mgr || a_props.size() != a_m.blocks.size()) {
+				return;
+			}
+			for (std::size_t b = 0; b < a_m.blocks.size(); ++b) {
+				const auto& blk = a_m.blocks[b];
+				const auto  hue = blk.tracks.empty() ? std::nullopt : UnitHue(blk, a_m.hand, a_look);
+				if (!hue) {
+					continue;
+				}
+				// the brightest key wears the glow the block was painted with statically: its loaded emissive (a sprite: full)
+				const float level = blk.sprite ? 1.0f : (std::max)({ blk.base.red, blk.base.green, blk.base.blue });
+				for (const auto& t : blk.tracks) {
+					auto* seq = t.seq < mgr->sequenceArray.capacity() ? mgr->sequenceArray[t.seq].get() : nullptr;
+					if (!seq || t.item >= seq->arraySize) {
+						continue;
+					}
+					const auto& item = seq->interpArray[t.item];
+					auto*       keys = item.interpCtlr && item.interpCtlr->target == a_props[b] ? ColourKeys(item.interpolator.get()) : nullptr;
+					if (!keys || keys->GetKeyCount(0) != t.grey.size()) {
+						continue;  // not the shape the model was read from
+					}
+					for (std::uint32_t n = 0; n < t.grey.size(); ++n) {
+						KeyValue(keys, n) = *hue * TrackKey(t.grey[n], blk.full, level);
+					}
+				}
+			}
+		}
+
+		std::vector<RE::BSEffectShaderProperty*> PropsOf(const Master& a_m)
+		{
+			std::vector<RE::BSEffectShaderProperty*> out;
+			for (const auto& blk : a_m.blocks) {
+				out.push_back(blk.prop.get());
+			}
+			return out;
+		}
+
 		// vapour layer 1's palette bits: off while it wears the baked gold copy, as loaded otherwise
 		void VapourBits(RE::BSEffectShaderProperty* a_prop, const Block& a_blk, bool a_plain)
 		{
@@ -501,6 +660,7 @@ namespace Plugin
 					PutMaterial(blk.prop.get(), fresh);
 					++gEdits;
 				}
+				TintTracks(master.root.get(), master, PropsOf(master), look);
 			}
 			a_row.applied = a_s;
 		}
@@ -583,6 +743,7 @@ namespace Plugin
 					}
 					PutMaterial(props[i], fresh);
 				}
+				TintTracks(root.get(), *master, props, a_looks ? *(*a_looks)[row] : LookOf(gRows[row].applied));
 				++painted;
 			}
 			return painted;
@@ -691,10 +852,11 @@ namespace Plugin
 		std::string      rows;
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const auto& r = gRows[i];
-			std::size_t blocks = 0, off = 0, fills = 0;
+			std::size_t blocks = 0, off = 0, fills = 0, tracks = 0;
 			for (const auto& m : r.masters) {
 				blocks += m.blocks.size();
 				off += m.controllersOff;
+				tracks += m.tracks;
 				fills += std::ranges::count_if(m.blocks, [](const Block& a_b) { return a_b.fill; });
 			}
 			std::string pals;
@@ -702,8 +864,8 @@ namespace Plugin
 				pals += std::format(R"({}{{"path":"{}","stem":"{}","loaded":{},"applied":"{}"}})", pals.empty() ? "" : ",", JsonEscape(p.path),
 					JsonEscape(p.stem), p.tex && p.tex->rendererTexture, p.applied == 0xFFFFFFFF ? std::string() : HexColor(p.applied));
 			}
-			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"fills":{},"colourControllersOff":{},"applied":"{}","palettes":[{}]}})",
-				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off,
+			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"fills":{},"colourControllersOff":{},"colourTracks":{},"applied":"{}","palettes":[{}]}})",
+				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off, tracks,
 				r.applied.c == 0xFFFFFFFF ? std::string() : HexColor(r.applied.c), pals);
 		}
 		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"domeKept":{:.2f},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",

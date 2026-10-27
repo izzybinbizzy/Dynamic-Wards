@@ -19,6 +19,7 @@
 #include "Plugin.h"
 
 #include <cmath>
+#include <numbers>
 
 namespace Plugin
 {
@@ -50,6 +51,8 @@ namespace Plugin
 			RE::ObjectRefHandle             target;
 			std::size_t                     row{ 0 };
 			const Spec*                     spec{ nullptr };
+			bool                            shadow{ false };      // hung as an engine shadow light (the domeShadow test switch)
+			bool                            shadowable{ false };  // the player's dome, its first point: the light the switch decides
 		};
 
 		struct Hand1st
@@ -74,6 +77,7 @@ namespace Plugin
 		std::size_t                                gHandsMade = 0;
 		RE::NiPointer<RE::NiPointLight>            gMaster;
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
+		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
 		std::atomic_bool                           gQueued{ false };
 		RE::NiColor                                gLastAmbient{};
 		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
@@ -201,7 +205,7 @@ namespace Plugin
 		// it. nullptr when the game could not make it or the scene refused it (then it is taken off again). Main thread.
 		template <class F>
 		RE::NiPointLight* Make(RE::NiNode* a_parent, const char* a_name, const RE::NiPoint3& a_at, RE::ShadowSceneNode* a_scene,
-			RE::NiPointer<RE::BSLight>& a_bs, F&& a_dress)
+			RE::NiPointer<RE::BSLight>& a_bs, bool a_shadow, F&& a_dress)
 		{
 			auto* light = CloneMaster();
 			if (!light) {
@@ -215,12 +219,12 @@ namespace Plugin
 			light->Update(update);
 			RE::ShadowSceneNode::LIGHT_CREATE_PARAMS params{};
 			params.dynamic = true;
-			params.shadowLight = false;
+			params.shadowLight = a_shadow;
 			params.portalStrict = true;
 			params.affectLand = true;
 			params.affectWater = true;
 			params.neverFades = true;
-			params.fov = 90.0f;
+			params.fov = a_shadow ? 2.0f * std::numbers::pi_v<float> : 90.0f;  // a shadow light's field of view, radians: omni
 			params.falloff = 1.0f;
 			params.nearDistance = 5.0f;
 			params.depthBias = 1.0f;
@@ -253,20 +257,31 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 		};
 
-		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene)
+		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
 			const auto color = RowColor(a_s.row);
 			if (!parent || !color) {
 				return;
 			}
+			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
+			const auto* wearer = a_s.target.get().get();
+			const bool  playerDome = wearer && wearer == RE::PlayerCharacter::GetSingleton();
 			for (const auto& at : a_s.spec->points) {
 				RE::NiPointer<RE::BSLight> bs;
-				auto*                      light = Make(parent, kLightName, at, a_scene, bs, [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); });
+				bool                       shadowable = playerDome && &at == &a_s.spec->points.front();
+				bool                       shadow = shadowable && a_shadowOn;
+				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); };
+				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, dress);
+				if (!light && shadow) {
+					// the renderer had no shadow map left: a plain light, and the switch leaves this one alone until the next cast
+					shadow = shadowable = false;
+					light = Make(parent, kLightName, at, a_scene, bs, false, dress);
+				}
 				if (!light) {
 					return;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable });
 			}
 		}
 
@@ -355,7 +370,7 @@ namespace Plugin
 					DressHand(h.light.get(), *color);
 				} else {
 					RE::NiPointer<RE::BSLight> bs;
-					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
 						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
 						++gHandsMade;
 					}
@@ -438,8 +453,16 @@ namespace Plugin
 					}
 				}
 			}
+			// a dome whose light no longer matches the shadow switch is hung again whole, in both directions
+			const bool                                   shadowOn = gShadowTest.load();
+			std::vector<const RE::ModelReferenceEffect*> flip;
+			for (const auto& lit : gLit) {
+				if (lit.shadow != (lit.shadowable && shadowOn)) {
+					flip.push_back(lit.effect);
+				}
+			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
-				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::any_of(live, [&](const Showing& a_s) {
+				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::find(flip, a_lit.effect) == flip.end() && std::ranges::any_of(live, [&](const Showing& a_s) {
 					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
 				});
 				if (!keep) {
@@ -449,7 +472,7 @@ namespace Plugin
 			});
 			for (const auto& s : live) {
 				if (std::ranges::none_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; })) {
-					Hang(s, scene);
+					Hang(s, scene, shadowOn);
 				}
 			}
 			for (auto& lit : gLit) {
@@ -498,6 +521,11 @@ namespace Plugin
 		gMode = a_mode;
 	}
 
+	void SetDomeShadowTest(bool a_on)
+	{
+		gShadowTest = a_on;
+	}
+
 	std::string DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
@@ -508,8 +536,8 @@ namespace Plugin
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
 		}
-		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
-			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade,
+		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"shadow":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
+			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade, gShadowTest.load(),
 			gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue);
 	}
 }
