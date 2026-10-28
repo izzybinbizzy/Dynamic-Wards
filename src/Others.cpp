@@ -80,6 +80,7 @@ namespace Plugin
 		std::atomic_bool         gAnyGame{ false };
 		std::atomic_int          gTest{ 0 };  // devbench's others: 1 = every other caster wears the game's art
 		std::atomic<std::size_t> gSwapped{ 0 };
+		std::thread::id          gMainThread;  // InstallOthers runs on it
 
 		// the ward an art effect belongs to: a dome through its active effect; the hand's casting art has none, so the spell the
 		// caster holds whose effect wears that art
@@ -166,8 +167,14 @@ namespace Plugin
 
 		struct InitHook
 		{
-			static void thunk(RE::ModelReferenceEffect* a_self)
+			static bool thunk(RE::ModelReferenceEffect* a_self)
 			{
+				// the engine picks the thread an art effect starts on, and the caster's look is read here: logged once each way
+				static std::atomic_bool onMain{ false }, offMain{ false };
+				const bool              mainThread = std::this_thread::get_id() == gMainThread;
+				if (!(mainThread ? onMain : offMain).exchange(true)) {
+					SKSE::log::info("other casters: an art effect started {} the main thread", mainThread ? "on" : "OFF");
+				}
 				Guarded("other casters' art", [a_self]() {
 					if (!a_self->artObject) {
 						return;
@@ -198,7 +205,7 @@ namespace Plugin
 						}
 					}
 				});
-				func(a_self);
+				return func(a_self);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -234,6 +241,7 @@ namespace Plugin
 	void InstallOthers()
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ModelReferenceEffect[0] };
+		gMainThread = std::this_thread::get_id();
 		InitHook::func = vtbl.write_vfunc(0x36, InitHook::thunk);
 		SKSE::log::info("other casters: the art effect hook is in");
 	}

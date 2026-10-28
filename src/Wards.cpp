@@ -125,12 +125,12 @@ namespace Plugin
 		RE::BGSReferenceEffect* gNoFlash = nullptr;
 		std::vector<Target>     gTargets;
 		std::size_t             gSkipped = 0;
-		bool                    gHas360 = false;        // 360 Ward.esp loaded AND its Universal Patch
+		std::atomic_bool        gHas360{ false };       // 360 Ward.esp loaded AND its Universal Patch
 		bool                    gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
 		// our 360 domes are installed (any row's): the installer puts them in only when 360 Ward.esp was in the plugin list, so a
 		// player who adds 360 Ward later has the plugin and the patch but no 360 dome to wear - the outside review's "360 menu choice
 		// shown without the 360 meshes" (3.5: the menu then says how to get them, and never offers a choice that changes nothing)
-		bool                                                             gHas360Meshes = false;
+		std::atomic_bool                                                 gHas360Meshes{ false };
 		bool                                                             gUnlocked = true;
 		std::size_t                                                      gDressed = 0;
 		std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> gShields;
@@ -305,9 +305,13 @@ namespace Plugin
 					}
 				}
 				for (auto* ae : dispel) {
-					ae->Dispel(true);
+					// one dispel may end another: only one still in her list is dispelled (as RecheckShieldWards)
+					auto* list = actor->AsMagicTarget()->GetActiveEffectList();
+					if (list && std::find(list->begin(), list->end(), ae) != list->end() && ae->flags.none(RE::ActiveEffect::Flag::kDispelled)) {
+						ae->Dispel(true);
+						++r.dispelled;
+					}
 				}
-				r.dispelled += dispel.size();
 				for (auto* spell : abilities) {
 					if (actor->HasSpell(spell) && actor->RemoveSpell(spell)) {
 						r.giveBack.emplace_back(actor, spell);
@@ -468,6 +472,9 @@ namespace Plugin
 
 		RE::TESGlobal* MakeGlobal(const char* a_id)
 		{
+			if (auto* had = RE::TESForm::LookupByEditorID<RE::TESGlobal>(a_id)) {
+				return had;  // registered already (a reload of the data, or another mod's form of that name)
+			}
 			auto* g = NewForm<RE::TESGlobal>();
 			if (!g) {
 				return nullptr;
@@ -958,53 +965,43 @@ namespace Plugin
 	// are never touched here, so two mods never fight over one.
 	void WatchArt()
 	{
-		static std::atomic<bool> queued{ false };  // one check waiting at a time: a long load would queue one every 2 s
-		std::thread([]() {
-			for (;;) {
-				std::this_thread::sleep_for(std::chrono::seconds(2));
-				Guarded("art watch thread", []() {  // nothing thrown may leave the thread (that ends the game)
-					if (queued.exchange(true)) {
-						return;
+		// one check waiting at a time: a long load would otherwise queue one every 2 s
+		Every(std::chrono::seconds(2), "art watch", []() {
+			std::size_t swapped = 0;
+			{
+				std::scoped_lock l{ gLock };
+				for (const auto& t : gTargets) {
+					const Art* a = Worn(t);
+					if (!a) {
+						continue;
 					}
-					const bool sent = Later("art watch", []() {
-						queued = false;
-						std::size_t swapped = 0;
-						{
-							std::scoped_lock l{ gLock };
-							for (const auto& t : gTargets) {
-								const Art* a = t.how == How::kSilent ? nullptr : Worn(t);
-								if (!a) {
-									continue;
-								}
-								const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
-								const auto& e = t.effect->data;
-								if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
-									++swapped;
-								}
-							}
-						}
-						if (swapped) {
-							SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
-							ApplyAll(kWhyArtSwapped);
-						} else {
-							// the 360 unlock follows the skill (or the perk) within 2 s: until 3.5 it was read again only when a
-							// menu closed, so a Restoration level-up mid-fight changed nothing (the outside review). Cheap: one
-							// actor value read; ApplyAll runs only when the answer changed
-							CheckUnlock(kWhyUnlock);
-						}
-						WatchBlocking();       // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
-						ReleaseOldTextures();  // a color drag's retired palettes, without waiting for the next recolor
-					});
-					if (!sent) {
-						queued = false;  // nothing queued: the next round tries again
+					const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
+					const auto& e = t.effect->data;
+					if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
+						++swapped;
 					}
-				});
+				}
 			}
-		}).detach();  // never joined: a join from a DLL's static destructor at exit can hang on the loader lock
+			if (swapped) {
+				SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
+				ApplyAll(kWhyArtSwapped);
+			} else {
+				// the 360 unlock follows the skill (or the perk) within 2 s: until 3.5 it was read again only when a
+				// menu closed, so a Restoration level-up mid-fight changed nothing (the outside review). Cheap: one
+				// actor value read; ApplyAll runs only when the answer changed
+				CheckUnlock(kWhyUnlock);
+			}
+			WatchBlocking();       // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
+			ReleaseOldTextures();  // a color drag's retired palettes, without waiting for the next recolor
+		});
 	}
 
 	namespace
 	{
+		// casting art a background apply moved (another mod's swap, the unlock), which takes no hand looks: the next menu or
+		// devbench apply re-equips those hands, as it would have found nothing moved (gLock)
+		std::unordered_set<const RE::EffectSetting*> gCastPending;
+
 		struct Applied
 		{
 			bool                  artChanged = false;
@@ -1082,6 +1079,12 @@ namespace Plugin
 			out.artChanged = c.art != 0;
 			// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
 			// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
+			if (background) {
+				gCastPending.insert(castChanged.begin(), castChanged.end());
+			} else {
+				castChanged.insert(gCastPending.begin(), gCastPending.end());
+				gCastPending.clear();  // a load or a loading screen equips everything afresh
+			}
 			if (why == "menu" || why == "devbench") {
 				out.hands = HandsToRefresh(handRows, castChanged);
 			}
@@ -1092,7 +1095,7 @@ namespace Plugin
 				// too - our config lights the hand in the ward's color, behind the Ward casting light switch (kHandGlobal).
 				// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
 				// decides it. A Vanilla row only gets back a light the switch took.
-				// 2.3, the installer's lighting pick (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
+				// The lighting (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
 				// no light framework loaded) a colored ward casts with the game's ward light in its own color. Since 2026-10-06
 				// every pick (ENB too) gets this plugin's hand light, so a dressed ward's own light always goes.
 				auto&       slot = t.effect->data.light;
@@ -1193,15 +1196,12 @@ namespace Plugin
 			if (gHandGlobal) {
 				gHandGlobal->value = light ? 1.0f : 0.0f;
 			}
-			if (gPresentGlobal) {
-				gPresentGlobal->value = 1.0f;
-			}
 			gDressed = dressed;
 			gLastApply = a_why ? a_why : "?";
 			SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) to re-equip; ward light {}, colored lights {}; dome {}; unlisted mods {}",
 				gLastApply, dressed, c.art, c.light, c.shield, out.hands.size(), light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
-				!use360 ? "vanilla" : gUnlocked ? "360 (unlocked)" :
-												  "360 (locked)",
+				!use360 ? "normal" : gUnlocked ? "360 (unlocked)" :
+												 "360 (locked)",
 				every ? "on" : "off");
 			out.why = gLastApply;
 			out.targets = gTargets.size();
@@ -1237,8 +1237,7 @@ namespace Plugin
 
 	bool Has360Ward()
 	{
-		std::scoped_lock l{ gLock };
-		return Can360();
+		return Can360();  // two flags set once at data load: no lock, so ApplyColors may ask it under the wards lock
 	}
 
 	bool Missing360Meshes()
@@ -1251,12 +1250,6 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return gHas360Plugin && !gHas360;
-	}
-
-	bool LightPlacerLoaded()
-	{
-		std::scoped_lock l{ gLock };
-		return gLightPlacer;
 	}
 
 	bool Unlocked360()
@@ -1389,7 +1382,7 @@ namespace Plugin
 		}
 		const auto token = key.substr(dash + 3, dot - dash - 3);
 		for (std::size_t i = 0; i < kSlots; ++i) {
-			if (Lower(SlotToken(i)) == token) {
+			if (SameText(SlotToken(i), token)) {
 				return i;
 			}
 		}
@@ -1452,7 +1445,7 @@ namespace Plugin
 			R"("unlocked360":{},"unlockRule":{},"unlockPerk":"{}","ladder":"{}","wardLight":{},"coloredLights":{},"lightsGlobal":{},)"
 			R"("lightPlacer":{},"everyWard":{},"crusader":{},"strangeWards":"{}","rows":{{{}}},"shields":[{}],"shieldWards":[{}],"wards":[{}]}})",
 			gTargets.size(), gDressed, gSkipped, JsonEscape(gLastApply), std::ranges::count_if(gArt, [](const Art& a) { return a.hand != nullptr; }),
-			JsonEscape(gFlashTemplate), gHas360, gHas360Meshes, Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
+			JsonEscape(gFlashTemplate), gHas360.load(), gHas360Meshes.load(), Dome360(), gUnlocked, static_cast<int>(UnlockRule()), JsonEscape(UnlockPerk()),
 			std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()), WardLightOn(), ColoredLightsOn(),
 			gLightsGlobal ? std::format("{}", gLightsGlobal->value) : std::string("null"), gLightPlacer, EveryWard(), CrusaderOn(), PickName(gStrangePick.load()), rows,
 			shields, shieldWards, wards);
@@ -1522,16 +1515,7 @@ namespace Plugin
 			ShieldWards wards;
 			target->VisitEffects(wards);
 			auto*      list = target->GetActiveEffectList();
-			const auto inList = [list](const RE::ActiveEffect* a_effect) {
-				if (list) {
-					for (const auto* e : *list) {
-						if (e == a_effect) {
-							return true;
-						}
-					}
-				}
-				return false;
-			};
+			const auto inList = [list](RE::ActiveEffect* a_effect) { return list && std::find(list->begin(), list->end(), a_effect) != list->end(); };
 			for (auto* effect : wards.found) {
 				// one effect's change can end another: only one still in her list is checked
 				if (inList(effect) && effect->flags.none(RE::ActiveEffect::Flag::kDispelled)) {
@@ -1543,8 +1527,8 @@ namespace Plugin
 		// both graphs send each block start, so the checks are merged: one queued check at a time, and one helper thread (made
 		// at the first block, asleep between blocks) for the check a moment later and the look for the block's end. A task
 		// queued from a task runs in the same frame, hence a thread for the waits
-		std::atomic<bool>          gCheckQueued{ false };
-		std::atomic<bool>          gLookQueued{ false };
+		std::atomic_bool           gCheckQueued{ false };
+		std::atomic_bool           gLookQueued{ false };
 		std::atomic<bool>          gBlockEnded{ false };
 		std::atomic<std::uint32_t> gBlockStarts{ 0 };
 		// the first look ~150 ms after a block starts can come before the game sets her blocking: a block ends only once she was
@@ -1555,20 +1539,15 @@ namespace Plugin
 
 		void QueueCheck(const char* a_why)
 		{
-			if (!gCheckQueued.exchange(true) && !Later(a_why, []() {
-					gCheckQueued = false;
-					RecheckShieldWards();
-				})) {
-				gCheckQueued = false;
-			}
+			(void)LaterOnce(gCheckQueued, a_why, []() { RecheckShieldWards(); });
 		}
 
 		// main thread: once she no longer blocks, the shield wards are checked so they end at once
-		void LookForBlockEnd()
+		// a_block: the block it was queued for - a check still waiting when the next block starts does nothing
+		void LookForBlockEnd(std::uint32_t a_block)
 		{
-			gLookQueued = false;
 			const auto* player = RE::PlayerCharacter::GetSingleton();
-			if (gBlockEnded) {
+			if (gBlockEnded || gBlockStarts.load() != a_block) {
 				return;
 			}
 			if (player && player->IsBlocking()) {
@@ -1594,9 +1573,7 @@ namespace Plugin
 				gBlockEnded = false;
 				while (!gBlockEnded && gBlockStarts.load() == seen) {
 					std::this_thread::sleep_for(kBlockLook);
-					if (!gLookQueued.exchange(true) && !Later("block end check", []() { LookForBlockEnd(); })) {
-						gLookQueued = false;
-					}
+					(void)LaterOnce(gLookQueued, "block end check", [seen]() { LookForBlockEnd(seen); });
 				}
 			}
 		}

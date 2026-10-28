@@ -17,7 +17,7 @@
 //   Settings.cpp       the live settings table and its accessors, the file read at load and saved after each change
 //   Wards.cpp          which effects are wards, what each wears, the shields' switches, the 360 unlock, the hand refresh
 //   Colors.cpp         each row's color made in memory: palettes on the graphics card, glow on the cached model
-//   Lighting.cpp       the installer's lighting pick and the hand-light records      DomeLights.cpp  the lights we hang
+//   Lighting.cpp       which lighting runs (found, never picked)                   DomeLights.cpp  the lights we hang
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
 //   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, JSON text, form lookups
 //   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)

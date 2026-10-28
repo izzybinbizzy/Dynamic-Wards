@@ -210,6 +210,9 @@ namespace
 		std::memcpy(raw.data() + 12, &a_h, 4);
 		std::memcpy(raw.data() + 16, &a_w, 4);
 		std::memcpy(raw.data() + 88, &a_bits, 4);
+		const std::uint32_t red = 0x00FF0000, blue = 0x000000FF;  // B, G, R, A: the shipped palettes' order
+		std::memcpy(raw.data() + 92, &red, 4);
+		std::memcpy(raw.data() + 100, &blue, 4);
 		raw.insert(raw.end(), a_bgra.begin(), a_bgra.end());
 		return raw;
 	}
@@ -240,6 +243,14 @@ namespace
 		CHECK(why.find("too large") != std::string::npos);
 		CHECK(!PaletteFromDds(Dds(2, 1, 24, std::vector<std::uint8_t>(8, 0)), why));
 		CHECK(!PaletteFromDds(Dds(2, 2, 32, std::vector<std::uint8_t>(8, 0)), why));  // shorter than its size says
+		auto                rgba = Dds(2, 1, 32, std::vector<std::uint8_t>(8, 0));
+		const std::uint32_t rFirst = 0x000000FF, bLast = 0x00FF0000;
+		std::memcpy(rgba.data() + 92, &rFirst, 4);
+		std::memcpy(rgba.data() + 100, &bLast, 4);
+		CHECK(!PaletteFromDds(rgba, why));  // red and blue the other way round
+		// one mip down: the 2x2 average; a side of one keeps its texels, an odd side's edge texel counts twice
+		CHECK(NextMip({ 0, 0, 0, 0, 100, 100, 100, 100, 200, 200, 200, 200, 40, 40, 40, 40 }, 2, 2) == std::vector<std::uint8_t>(4, 85));
+		CHECK(NextMip({ 10, 10, 10, 10, 30, 30, 30, 30, 90, 90, 90, 90 }, 3, 1) == std::vector<std::uint8_t>(4, 20));
 		// a 4x1 grey ramp: black, dark, mid, white
 		const std::vector<std::uint8_t> grey{ 0, 0, 0, 255, 64, 64, 64, 200, 128, 128, 128, 100, 255, 255, 255, 50 };
 		const auto                      img = PaletteFromDds(Dds(4, 1, 32, grey), why);
@@ -482,6 +493,40 @@ namespace
 		CHECK(NearRgb(SpriteRgb(0x00FFFF, 0.75f), 0.0f, 1.0f, 1.0f));
 		CHECK(NearRgb(SpriteRgb(0xFF00FF, 0.75f), 1.0f, 0.0f, 1.0f));
 		CHECK(NearRgb(SpriteRgb(0x8000FF, 0.75f), 128.0f / 255.0f, 0.0f, 1.0f));
+		// the closed form against the HSV route it replaced (hue, the floored saturation, back at full value), over a grid
+		const auto viaHsv = [](Color a_color, float a_minSat) {
+			const auto  rgb = LightRgb(a_color, false);
+			const float r = rgb[0], g = rgb[1], b = rgb[2];
+			const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), spread = mx - mn;
+			float       sat = mx <= 0.0f ? 0.0f : spread / mx;
+			float       hue = 0.0f;
+			if (spread > 0.0f) {
+				hue = mx == r ? std::fmod((g - b) / spread, 6.0f) : mx == g ? (b - r) / spread + 2.0f :
+				                                                              (r - g) / spread + 4.0f;
+				hue = hue < 0.0f ? hue + 6.0f : hue;
+			}
+			sat = sat > 0.02f ? (std::max)(sat, a_minSat) : 0.0f;
+			const float          x = sat * (1.0f - std::fabs(std::fmod(hue, 2.0f) - 1.0f)), base = 1.0f - sat;
+			std::array<float, 3> out{ base, base, base };
+			constexpr int        kSat[6][2] = { { 0, 1 }, { 1, 0 }, { 1, 2 }, { 2, 1 }, { 2, 0 }, { 0, 2 } };  // the full and the x channel
+			const auto&          pair = kSat[static_cast<int>(hue) % 6];
+			out[static_cast<std::size_t>(pair[0])] += sat;
+			out[static_cast<std::size_t>(pair[1])] += x;
+			return out;
+		};
+		int differ = 0;
+		for (Color r = 0; r < 256; r += 17) {
+			for (Color g = 0; g < 256; g += 17) {
+				for (Color b = 0; b < 256; b += 17) {
+					for (const float floor : { 0.0f, 0.75f }) {
+						const auto c = (r << 16) | (g << 8) | b;
+						const auto want = viaHsv(c, floor);
+						differ += NearRgb(SpriteRgb(c, floor), want[0], want[1], want[2]) ? 0 : 1;
+					}
+				}
+			}
+		}
+		CHECK(differ == 0);
 	}
 
 	// the dome's screen correction: on a screen that keeps only `kept` of a color's saturation (the rest back as a grey of its

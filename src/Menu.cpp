@@ -4,7 +4,7 @@
 //
 // The SKSE Menu Framework pages (3.0): the ladder and every ward in any color - a drawn spectrum bar, color pickers,
 // quick picks, live swatches of each rank - the opacity slider, the dome, the lights and the compatibility page. A color
-// is applied when the pick is let go (a drag does not rebuild palettes every frame). The HUD swatch is gone (his call 2026-10-03).
+// drag shows on the wards live (at most ~15 times a second) and is saved when the pick is let go.
 // His layout 2026-10-05: a Colors page first (presets, then the ladder and every ward, the rankless ones with their mod
 // named), then Settings (Lights, Dome, Opacity - Transparency right below Opacity, greyed out without 360 Ward), then
 // Compatibility. Every change is saved the moment it is made (a slider or a color when it is let go), so closing the menu loses
@@ -78,17 +78,11 @@ namespace Plugin
 		// changes made before it runs ride the same task (Illuminated's SetSetting); the setters above already hold the value
 		void Changed()
 		{
-			static std::atomic<bool> queued{ false };
-			if (queued.exchange(true)) {
-				return;
-			}
-			const bool sent = Later("menu change", []() {
-				queued = false;
-				SaveSettings();
-				ApplyAll("menu");
-			});
-			if (!sent) {
-				queued = false;
+			static std::atomic_bool queued{ false };
+			if (!LaterOnce(queued, "menu change", []() {
+					SaveSettings();
+					ApplyAll("menu");
+				})) {
 				SKSE::log::warn("menu: the change could not reach the main thread - it is kept for this session but not saved or applied");
 			}
 		}
@@ -145,6 +139,8 @@ namespace Plugin
 				a_set(c);
 				LiveRecolor();
 				gHeldEdit = true;
+			} else if (a_held && LivePending()) {
+				LiveRecolor();  // the drag stopped inside the throttle: its last color still reaches the wards
 			}
 			if (a_held && (done || !IsAnyItemActive())) {
 				a_held.reset();
@@ -163,7 +159,33 @@ namespace Plugin
 			if (IsItemDeactivatedAfterEdit()) {
 				gHeldEdit = false;
 				Changed();
+			} else if (IsItemDeactivated()) {
+				gHeldEdit = false;  // let go without a change: nothing to save
 			}
+		}
+
+		// one setting's slider: changed live while held, saved when let go (SliderDone)
+		void SettingSlider(const char* a_label, int (*a_get)(), void (*a_set)(int), int a_min, int a_max, const char* a_tip)
+		{
+			int value = a_get();
+			SetNextItemWidth(260.0f);
+			SliderInt(a_label, &value, a_min, a_max, "%d%%");
+			if (value != a_get()) {
+				a_set(value);
+			}
+			SliderDone();
+			SetItemTooltip("%s", a_tip);
+		}
+
+		// one setting's switch: saved and applied when clicked
+		void SettingToggle(const char* a_label, bool (*a_get)(), void (*a_set)(bool), const char* a_tip)
+		{
+			bool on = a_get();
+			if (Checkbox(a_label, &on)) {
+				a_set(on);
+				Changed();
+			}
+			SetItemTooltip("%s", a_tip);
 		}
 
 		// the five ranks as they will look, white end to color end
@@ -185,7 +207,7 @@ namespace Plugin
 		static_assert(std::size(kRowFrom) == kRows);
 
 		// The Colors page (his ask 2026-10-05: its own page above Settings): the presets first, then the ladder and every ward
-		void __stdcall RenderColors()
+		void DrawColors()
 		{
 			MenuStyle::Page page;
 
@@ -235,12 +257,8 @@ namespace Plugin
 				T("3: Lesser, Steadfast and Greater each a step. 4 or 5: Expert and Master wards (magic overhauls) get steps of "
 				  "their own, so a Greater ward stops short of the full color."));
 			SameLine();
-			bool reversed = LadderReversed();
-			if (Checkbox(T("Reverse the ladder"), &reversed)) {
-				SetLadderReversed(reversed);
-				Changed();
-			}
-			SetItemTooltip("%s", T("Off: Lesser wards are white and the strongest take the color. On: the other way round."));
+			SettingToggle(T("Reverse the ladder"), LadderReversed, SetLadderReversed,
+				T("Off: Lesser wards are white and the strongest take the color. On: the other way round."));
 			EndDisabled();
 			LadderSwatches();
 
@@ -310,19 +328,20 @@ namespace Plugin
 		}
 
 		// Followers, Enemies and Neutral: one look each (his answer 2026-10-27)
-		void __stdcall RenderOthers()
+		void DrawOthers()
 		{
 			MenuStyle::Page                                  page;
 			static std::array<std::optional<Color>, kGroups> held;
 			Header(Icon::kShield, T("Other casters"));
-			TextColored(kMuted, "%s", T("The ward look other casters wear. Your look: the same colors as your own wards. Vanilla: the game's own ward."));
+			TextColored(kMuted, "%s", T("The ward look other casters wear. Your look: the same colors as your own wards. Vanilla: the game's own ward. A ward you leave to "
+										"another mod (Strange Wards' ranks, Strange Runes' look, a mod unticked on Compatibility) keeps that mod's look on everyone."));
 			for (std::size_t i = 0; i < kGroups; ++i) {
 				LookRow(i, held[i]);
 			}
 		}
 
 		// one look per faction group; a group whose mod is not loaded is left out
-		void __stdcall RenderFactions()
+		void DrawFactions()
 		{
 			MenuStyle::Page                                 page;
 			static std::array<std::optional<Color>, kLooks> held;
@@ -344,7 +363,7 @@ namespace Plugin
 		}
 
 		// The Settings page: Lights first, then the dome, then Opacity and Brightness
-		void __stdcall RenderSettings()
+		void DrawSettings()
 		{
 			MenuStyle::Page page;
 
@@ -353,18 +372,9 @@ namespace Plugin
 			TextColored(kMuted, "%s", Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
 			{  // every pick: ENB gets the plugin's lights too (Lighting.cpp), so its switches show
-				bool light = WardLightOn();
-				if (Checkbox(T("Ward casting light"), &light)) {
-					SetWardLightOn(light);
-					Changed();
-				}
-				SetItemTooltip("%s", T("The light on your hand while you raise a ward, in the ward's color."));
-				bool colored = ColoredLightsOn();
-				if (Checkbox(T("Colored ward lights"), &colored)) {
-					SetColoredLightsOn(colored);
-					Changed();
-				}
-				SetItemTooltip("%s", T("Each ward's dome lights the area around you in its own color."));
+				SettingToggle(T("Ward casting light"), WardLightOn, SetWardLightOn,
+					T("The light on the hands of anyone raising one of these wards, yours and other casters', in the ward's color."));
+				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around you in its own color."));
 			}
 
 			if (Has360Ward()) {
@@ -425,27 +435,13 @@ namespace Plugin
 			}
 
 			Header(Icon::kEye, T("Opacity"));
-			int opacity = Opacity();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Opacity"), &opacity, kOpacityMin, 100, "%d%%");
-			if (opacity != Opacity()) {
-				SetOpacity(opacity);
-			}
-			SliderDone();
-			SetItemTooltip("%s", T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
+			SettingSlider(T("Opacity"), Opacity, SetOpacity, kOpacityMin, 100,
+				T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
 			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
 			const bool has360 = Has360Ward();
-			BeginDisabled(!has360);
-			int transparency = Transparency();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Transparency"), &transparency, 0, kTransparencyMax, "%d%%");
-			if (has360 && transparency != Transparency()) {
-				SetTransparency(transparency);
-			}
-			if (has360) {
-				SliderDone();
-			}
-			SetItemTooltip("%s", T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
+			BeginDisabled(!has360);  // a disabled slider is never active: nothing set or saved
+			SettingSlider(T("Transparency"), Transparency, SetTransparency, 0, kTransparencyMax,
+				T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
 			EndDisabled();
 			if (!has360) {
 				TextColored(kMuted, "%s", Missing360Meshes() ? T("Needs the 360 dome's files (install Dynamic Wards again).") : T("Needs 360 Ward."));
@@ -454,43 +450,25 @@ namespace Plugin
 			// his order 2026-10-06: Ward brightness moves down under the old "Casting art" heading, now "Brightness", and
 			// Casting glow is "Hand Brightness" (the ini key stays CastingGlow so saved settings carry over)
 			Header(Icon::kStar, T("Brightness"));
-			int brightness = Brightness();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Ward brightness"), &brightness, kBrightnessMin, kBrightnessMax, "%d%%");
-			if (brightness != Brightness()) {
-				SetBrightness(brightness);
-			}
-			SliderDone();
-			SetItemTooltip("%s", T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
+			SettingSlider(T("Ward brightness"), Brightness, SetBrightness, kBrightnessMin, kBrightnessMax,
+				T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
 
 			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
-			int castingGlow = CastingGlow();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Hand Brightness"), &castingGlow, kBrightnessMin, kBrightnessMax, "%d%%");
-			if (castingGlow != CastingGlow()) {
-				SetCastingGlow(castingGlow);
-			}
-			SliderDone();
-			SetItemTooltip("%s", T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
+			SettingSlider(T("Hand Brightness"), CastingGlow, SetCastingGlow, kBrightnessMin, kBrightnessMax,
+				T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
 
 			// off unless the player turns it up: in a place with normal color a boosted dome reads too strong
-			int boost = DomeBoost();
-			SetNextItemWidth(260.0f);
-			SliderInt(T("Dome color boost"), &boost, 0, 100, "%d%%");
-			if (boost != DomeBoost()) {
-				SetDomeBoost(boost);
-			}
-			SliderDone();
-			SetItemTooltip("%s", T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. A color already at full strength stays as it is. 0 = off. In a place with normal color a boosted dome looks too strong."));
+			SettingSlider(T("Dome color boost"), DomeBoost, SetDomeBoost, 0, 100,
+				T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. A color already at full strength stays as it is. 0 = off. In a place with normal color a boosted dome looks too strong."));
 		}
 
 		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
 		// unticked, that mod's wards keep their own art. The Legacy shields live here too.
-		void __stdcall RenderCompatibility()
+		void DrawCompatibility()
 		{
 			MenuStyle::Page page;
 			Header(Icon::kPuzzle, T("Wards from other mods"));
-			const auto mods = FoundMods();
+			static const auto mods = FoundMods();  // found once, at data load
 			if (mods.empty()) {
 				TextDisabled("%s", T("No mod in your load order adds wards of its own."));
 			}
@@ -509,12 +487,7 @@ namespace Plugin
 			TextColored(kMuted, "%s", Fill(T("{} ward effect(s) found, {} colored"), std::to_string(FoundCount()), std::to_string(DressedCount())).c_str());
 			if (StrangeRunesLoaded()) {
 				Separator();
-				bool keep = KeepStrangeRunes();
-				if (Checkbox(T("Keep Strange Runes' ward look"), &keep)) {
-					SetKeepStrangeRunes(keep);
-					Changed();
-				}
-				SetItemTooltip("%s",
+				SettingToggle(T("Keep Strange Runes' ward look"), KeepStrangeRunes, SetKeepStrangeRunes,
 					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
 					  "Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
 			}
@@ -548,16 +521,16 @@ namespace Plugin
 			}
 			if (CrusaderAvailable()) {
 				Separator();
-				bool cru = CrusaderOn();
-				if (Checkbox(T("Legacy Crusader shields raise the Crusader ward"), &cru)) {
-					SetCrusaderOn(cru);
-					Changed();
-				}
-				SetItemTooltip("%s",
+				SettingToggle(T("Legacy Crusader shields raise the Crusader ward"), CrusaderOn, SetCrusaderOn,
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					  "also take that ward's strength instead of Spellbreaker's."));
 			}
 		}
+	}
+
+	bool ColorHeld()
+	{
+		return gHeldEdit;
 	}
 
 	// a menu closed (main.cpp's watch): a color still held then - the menu shut mid-drag - is saved and applied now, not only
@@ -577,11 +550,11 @@ namespace Plugin
 			return;
 		}
 		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
-		SKSEMenuFramework::AddSectionItem(T("Colors"), RenderColors);  // first (his ask 2026-10-05)
-		SKSEMenuFramework::AddSectionItem(T("Settings"), RenderSettings);
-		SKSEMenuFramework::AddSectionItem(T("Other casters"), RenderOthers);
-		SKSEMenuFramework::AddSectionItem(T("Factions"), RenderFactions);
-		SKSEMenuFramework::AddSectionItem(T("Compatibility"), RenderCompatibility);
+		SKSEMenuFramework::AddSectionItem(T("Colors"), []() { Guarded("menu: Colors", DrawColors); });  // first (his ask 2026-10-05)
+		SKSEMenuFramework::AddSectionItem(T("Settings"), []() { Guarded("menu: Settings", DrawSettings); });
+		SKSEMenuFramework::AddSectionItem(T("Other casters"), []() { Guarded("menu: Other casters", DrawOthers); });
+		SKSEMenuFramework::AddSectionItem(T("Factions"), []() { Guarded("menu: Factions", DrawFactions); });
+		SKSEMenuFramework::AddSectionItem(T("Compatibility"), []() { Guarded("menu: Compatibility", DrawCompatibility); });
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
 }

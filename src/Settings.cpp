@@ -13,8 +13,9 @@ namespace Plugin
 	{
 		constexpr const char* kPath = "Data/SKSE/Plugins/DynamicWards.ini";
 
-		std::mutex     gLock;
-		SettingsValues gS;  // under gLock
+		std::mutex       gLock;
+		SettingsValues   gS;                // under gLock
+		std::atomic_bool gLoaded{ false };  // nothing is saved before the file was read: an early save would write the defaults
 
 		const char* ShieldDomeName(int a_dome)
 		{
@@ -28,6 +29,7 @@ namespace Plugin
 		std::ifstream    in(kPath);
 		std::scoped_lock l{ gLock };
 		const auto       read = ReadSettingsText(in, gS);
+		gLoaded = true;
 		SKSE::log::info(
 			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome color boost {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
 			"Crusader shields {}, every ward {}, shield wards Spellbreaker {} Crusader {} Reman {} ({} line(s) read{})",
@@ -43,6 +45,10 @@ namespace Plugin
 	// of one. One save at a time, and each takes its snapshot inside that turn, so the last file written holds the newest settings
 	void SaveSettings()
 	{
+		if (!gLoaded) {
+			SKSE::log::warn("settings: not saved - {} has not been read yet", kPath);
+			return;
+		}
 		static std::mutex  writing;
 		std::scoped_lock   w{ writing };
 		std::ostringstream out;
@@ -68,211 +74,196 @@ namespace Plugin
 		}
 	}
 
+	namespace
+	{
+		template <class F>
+		auto Read(F a_f)
+		{
+			std::scoped_lock l{ gLock };
+			return a_f(std::as_const(gS));
+		}
+
+		// every change ends in Normalize: the ranges live in one place, shared with the ini reader
+		template <class F>
+		void Change(F a_f)
+		{
+			std::scoped_lock l{ gLock };
+			a_f(gS);
+			Normalize(gS);
+		}
+	}
+
 	RowMode RowModeOf(std::size_t a_row)
 	{
-		std::scoped_lock l{ gLock };
-		return a_row < kRows ? gS.rows[a_row].mode : RowMode::kDefault;
+		return Read([&](const auto& s) { return a_row < kRows ? s.rows[a_row].mode : RowMode::kDefault; });
 	}
 	Color RowCustom(std::size_t a_row)
 	{
-		std::scoped_lock l{ gLock };
-		return a_row < kRows ? gS.rows[a_row].color : kWhite;
+		return Read([&](const auto& s) { return a_row < kRows ? s.rows[a_row].color : kWhite; });
 	}
 	void SetRow(std::size_t a_row, RowMode a_mode, Color a_color)
 	{
-		std::scoped_lock l{ gLock };
-		if (a_row < kRows) {
-			gS.rows[a_row] = { a_mode, a_color & 0xFFFFFF };
-		}
+		Change([&](auto& s) {
+			if (a_row < kRows) {
+				s.rows[a_row] = { a_mode, a_color };
+			}
+		});
 	}
 	LookPick LookOf(std::size_t a_look)
 	{
-		std::scoped_lock l{ gLock };
-		return a_look < kLooks ? gS.looks[a_look] : LookPick{};
+		return Read([&](const auto& s) { return a_look < kLooks ? s.looks[a_look] : LookPick{}; });
 	}
 	std::array<LookPick, kLooks> Looks()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.looks;
+		return Read([](const auto& s) { return s.looks; });
 	}
 	void SetLook(std::size_t a_look, LookPick a_pick)
 	{
-		std::scoped_lock l{ gLock };
-		if (a_look < kLooks && (a_pick.mode != LookMode::kDefault || a_look >= kGroups)) {
-			gS.looks[a_look] = { a_pick.mode, a_pick.color & 0xFFFFFF };
-		}
+		Change([&](auto& s) {
+			if (a_look < kLooks && (a_pick.mode != LookMode::kDefault || a_look >= kGroups)) {
+				s.looks[a_look] = a_pick;
+			}
+		});
 	}
 	Color LadderColor()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.ladder;
+		return Read([](const auto& s) { return s.ladder; });
 	}
 	void SetLadderColor(Color a_color)
 	{
-		std::scoped_lock l{ gLock };
-		gS.ladder = a_color & 0xFFFFFF;
+		Change([&](auto& s) { s.ladder = a_color; });
 	}
 	int LadderStages()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.stages;
+		return Read([](const auto& s) { return s.stages; });
 	}
 	void SetLadderStages(int a_stages)
 	{
-		std::scoped_lock l{ gLock };
-		gS.stages = std::clamp(a_stages, kMinStages, kMaxStages);
+		Change([&](auto& s) { s.stages = a_stages; });
 	}
 	bool LadderReversed()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.reversed;
+		return Read([](const auto& s) { return s.reversed; });
 	}
 	void SetLadderReversed(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.reversed = a_on;
+		Change([&](auto& s) { s.reversed = a_on; });
 	}
 	int Opacity()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.opacity;
+		return Read([](const auto& s) { return s.opacity; });
 	}
 	void SetOpacity(int a_percent)
 	{
-		std::scoped_lock l{ gLock };
-		gS.opacity = std::clamp(a_percent, kOpacityMin, 100);
+		Change([&](auto& s) { s.opacity = a_percent; });
 	}
 	int Brightness()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.brightness;
+		return Read([](const auto& s) { return s.brightness; });
 	}
 	void SetBrightness(int a_percent)
 	{
-		std::scoped_lock l{ gLock };
-		gS.brightness = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+		Change([&](auto& s) { s.brightness = a_percent; });
 	}
 	float LightDim()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.opacity / 100.0f * gS.brightness / 100.0f;
+		return Read([](const auto& s) { return s.opacity / 100.0f * s.brightness / 100.0f; });
 	}
 	int CastingGlow()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.castingGlow;
+		return Read([](const auto& s) { return s.castingGlow; });
 	}
 	void SetCastingGlow(int a_percent)
 	{
-		std::scoped_lock l{ gLock };
-		gS.castingGlow = std::clamp(a_percent, kBrightnessMin, kBrightnessMax);
+		Change([&](auto& s) { s.castingGlow = a_percent; });
 	}
 	int DomeBoost()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.domeBoost;
+		return Read([](const auto& s) { return s.domeBoost; });
 	}
 	void SetDomeBoost(int a_percent)
 	{
-		std::scoped_lock l{ gLock };
-		gS.domeBoost = std::clamp(a_percent, 0, 100);
+		Change([&](auto& s) { s.domeBoost = a_percent; });
 	}
 	float HandDim()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.castingGlow / 100.0f;
+		return Read([](const auto& s) { return s.castingGlow / 100.0f; });
 	}
 	int Transparency()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.transparency;
+		return Read([](const auto& s) { return s.transparency; });
 	}
 	void SetTransparency(int a_percent)
 	{
-		std::scoped_lock l{ gLock };
-		gS.transparency = std::clamp(a_percent, 0, kTransparencyMax);
+		Change([&](auto& s) { s.transparency = a_percent; });
 	}
 	bool Dome360()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.dome == 0;
+		return Read([](const auto& s) { return s.dome == 0; });
 	}
 	void SetDome360(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.dome = a_on ? 0 : 1;
+		Change([&](auto& s) { s.dome = a_on ? 0 : 1; });
 	}
 	bool WardLightOn()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.light;
+		return Read([](const auto& s) { return s.light; });
 	}
 	void SetWardLightOn(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.light = a_on;
+		Change([&](auto& s) { s.light = a_on; });
 	}
 	bool ColoredLightsOn()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.coloredLights;
+		return Read([](const auto& s) { return s.coloredLights; });
 	}
 	void SetColoredLightsOn(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.coloredLights = a_on;
+		Change([&](auto& s) { s.coloredLights = a_on; });
 	}
 	Unlock UnlockRule()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.unlock;
+		return Read([](const auto& s) { return s.unlock; });
 	}
 	void SetUnlockRule(Unlock a_rule)
 	{
-		std::scoped_lock l{ gLock };
-		gS.unlock = a_rule;
+		Change([&](auto& s) { s.unlock = a_rule; });
 	}
 	std::string UnlockPerk()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.perk;
+		return Read([](const auto& s) { return s.perk; });
 	}
 	void SetUnlockPerk(std::string a_perk)
 	{
-		std::scoped_lock l{ gLock };
-		gS.perk = std::move(a_perk);
+		Change([&](auto& s) { s.perk = std::move(a_perk); });
 	}
 	bool CrusaderOn()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.crusader;
+		return Read([](const auto& s) { return s.crusader; });
 	}
 	void SetCrusaderOn(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.crusader = a_on;
+		Change([&](auto& s) { s.crusader = a_on; });
 	}
 	bool EveryWard()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.every;
+		return Read([](const auto& s) { return s.every; });
 	}
 	void SetEveryWard(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.every = a_on;
-		for (auto& [plugin, on] : gS.mods) {
-			on = a_on;
-		}
+		Change([&](auto& s) {
+			s.every = a_on;
+			for (auto& [plugin, on] : s.mods) {
+				on = a_on;
+			}
+		});
 	}
 	ShieldDome ShieldDomeOf(std::size_t a_row)
 	{
-		std::scoped_lock l{ gLock };
-		const auto       i = SettingsText::ShieldIndex(a_row);
-		if (i >= gS.shieldDome.size()) {
-			return ShieldDome::kNormal;  // not a shield row
-		}
-		return static_cast<ShieldDome>(SettingsText::ShieldPick(gS, i));
+		return Read([&](const auto& s) {
+			const auto i = SettingsText::ShieldIndex(a_row);
+			return i < s.shieldDome.size() ? static_cast<ShieldDome>(SettingsText::ShieldPick(s, i)) : ShieldDome::kNormal;  // not a shield row: normal
+		});
 	}
 	bool Any360Wanted()
 	{
@@ -284,33 +275,30 @@ namespace Plugin
 	}
 	void SetShieldDome(std::size_t a_row, ShieldDome a_dome)
 	{
-		std::scoped_lock l{ gLock };
-		if (const auto i = SettingsText::ShieldIndex(a_row); i < gS.shieldDome.size()) {
-			gS.shieldDome[i] = std::clamp(static_cast<int>(a_dome), 0, 2);
-		}
+		Change([&](auto& s) {
+			if (const auto i = SettingsText::ShieldIndex(a_row); i < s.shieldDome.size()) {
+				s.shieldDome[i] = static_cast<int>(a_dome);
+			}
+		});
 	}
 	bool KeepStrangeRunes()
 	{
-		std::scoped_lock l{ gLock };
-		return gS.keepRunes;
+		return Read([](const auto& s) { return s.keepRunes; });
 	}
 	void SetKeepStrangeRunes(bool a_on)
 	{
-		std::scoped_lock l{ gLock };
-		gS.keepRunes = a_on;
+		Change([&](auto& s) { s.keepRunes = a_on; });
 	}
 	bool ModOn(std::string_view a_plugin)
 	{
-		const auto       k = Lower(a_plugin);
-		std::scoped_lock l{ gLock };
-		const auto       it = gS.mods.find(k);
-		return it == gS.mods.end() ? gS.every : it->second;
+		return Read([k = Lower(a_plugin)](const auto& s) {
+			const auto it = s.mods.find(k);
+			return it == s.mods.end() ? s.every : it->second;
+		});
 	}
 	void SetModOn(std::string_view a_plugin, bool a_on)
 	{
-		const auto       k = Lower(a_plugin);
-		std::scoped_lock l{ gLock };
-		gS.mods[k] = a_on;
+		Change([k = Lower(a_plugin), a_on](auto& s) { s.mods[k] = a_on; });
 	}
 
 	void ApplyScheme(const Scheme& a_scheme)
@@ -319,6 +307,9 @@ namespace Plugin
 		gS.ladder = a_scheme.ladder & 0xFFFFFF;  // colors only - stages and Reverse are the player's (his rule 2026-10-05)
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const Color c = a_scheme.rows[i];
+			if (gS.rows[i].mode == RowMode::kVanilla) {
+				continue;  // a preset changes colors only; a row the player set to the game's own art stays so
+			}
 			gS.rows[i] = c ? RowPick{ RowMode::kCustom, c & 0xFFFFFF } : RowPick{ RowMode::kDefault, gS.rows[i].color };
 		}
 	}

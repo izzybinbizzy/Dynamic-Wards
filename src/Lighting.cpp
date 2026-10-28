@@ -116,14 +116,15 @@ namespace Plugin
 		const bool shaderFile = Exists(kIslShader);
 		const bool inLlf = IslBuiltIntoLightLimitFix();
 		gCs = CommunityShadersLoaded();
-		gIsl = shaderFile || inLlf || gCs;
+		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not it
+		gIsl = gCs.load();
 		gE11 = Exists(kEffects11);
 		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
 		const auto running = EnbRunning();
 		gEnbRunning = running.value_or(gEnbFiles.load());
 		// a shader file a running ENB sits beside is a leftover: Community Shaders only when its DLL is loaded or no ENB runs
-		gSeen = gCs || (gIsl && !gEnbRunning) ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
-		                                                                           Lighting::kVanilla;
+		gSeen = gCs ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
+		                                                 Lighting::kVanilla;
 		gPick = gSeen.load();
 		if (!running) {
 			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
@@ -143,11 +144,6 @@ namespace Plugin
 	void SetLightingPick(Lighting a_pick)
 	{
 		gPick = a_pick;
-	}
-
-	bool MeshLights()
-	{
-		return gPick.load() == Lighting::kEnb;
 	}
 
 	bool InverseSquare()
