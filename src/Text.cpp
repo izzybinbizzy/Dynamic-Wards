@@ -2,8 +2,7 @@
 // Copyright (C) 2026 izzydoingit
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
-// The helpers that need the game: a form's name for the log and reports, JSON text for DevBench, a form by its
-// "0xID~Plugin" text. The game-free text helpers are in WardMath.h (tested off the game).
+// The helpers that need the game: a form's name for the log and reports, a form by its "0xID~Plugin" text. The game-free text helpers are in WardMath.h (tested off the game).
 
 #include "Plugin.h"
 
@@ -18,88 +17,6 @@ namespace Plugin
 		const auto* file = a_form->GetFile(0);
 		return std::format("{} | {:08X} | {}", id && *id ? id : "(no editor ID)", a_form->GetFormID(),
 			file ? file->GetFilename() : "(created)");
-	}
-
-	namespace
-	{
-		// the length of a well-formed UTF-8 sequence starting at a_at, 0 when it is not one
-		std::size_t Utf8Length(std::string_view a_text, std::size_t a_at)
-		{
-			const auto        c = static_cast<unsigned char>(a_text[a_at]);
-			const std::size_t n = c >= 0xF5 ? 0 : c >= 0xF0 ? 4 :
-			                                  c >= 0xE0     ? 3 :
-			                                  c >= 0xC2     ? 2 :
-			                                                  0;
-			if (n == 0 || a_at + n > a_text.size()) {
-				return 0;
-			}
-			// the second byte's range rules out overlong forms, the UTF-16 surrogates and anything past U+10FFFF
-			const auto    c1 = static_cast<unsigned char>(a_text[a_at + 1]);
-			unsigned char lo = 0x80, hi = 0xBF;
-			if (c == 0xE0) {
-				lo = 0xA0;
-			} else if (c == 0xED) {
-				hi = 0x9F;
-			} else if (c == 0xF0) {
-				lo = 0x90;
-			} else if (c == 0xF4) {
-				hi = 0x8F;
-			}
-			if (c1 < lo || c1 > hi) {
-				return 0;
-			}
-			for (std::size_t k = 2; k < n; ++k) {
-				if ((static_cast<unsigned char>(a_text[a_at + k]) & 0xC0) != 0x80) {
-					return 0;
-				}
-			}
-			return n;
-		}
-	}
-
-	std::string JsonEscape(std::string_view a_text)
-	{
-		std::string out;
-		out.reserve(a_text.size() + 8);
-		for (std::size_t i = 0; i < a_text.size(); ++i) {
-			const auto c = static_cast<unsigned char>(a_text[i]);
-			if (c >= 0x80) {
-				// a UTF-8 name goes as it is; a byte of the game's own code page (a localized form name) would make the reply
-				// invalid UTF-8, so it goes as \u00XX
-				if (const auto n = Utf8Length(a_text, i)) {
-					out += a_text.substr(i, n);
-					i += n - 1;
-				} else {
-					out += std::format("\\u{:04x}", static_cast<unsigned>(c));
-				}
-				continue;
-			}
-			switch (c) {
-			case '"':
-				out += "\\\"";
-				break;
-			case '\\':
-				out += "\\\\";
-				break;
-			case '\n':
-				out += "\\n";
-				break;
-			case '\r':
-				out += "\\r";
-				break;
-			case '\t':
-				out += "\\t";
-				break;
-			default:
-				if (c < 0x20) {
-					out += std::format("\\u{:04x}", static_cast<unsigned>(c));
-				} else {
-					out += static_cast<char>(c);
-				}
-				break;
-			}
-		}
-		return out;
 	}
 
 	RE::TESForm* ResolveForm(std::string_view a_text)

@@ -47,8 +47,9 @@ namespace Plugin
 		std::string                              perk;
 		bool                                     crusader = true;
 		bool                                     every = true;
-		bool                                     keepRunes = false;  // Strange Runes loaded: leave the wards it restyles to it
-		std::map<std::string, bool, std::less<>> mods;               // [Compatibility] plugin=0/1, lowercased; missing = every
+		bool                                     keepRunes = false;    // Strange Runes loaded: leave the wards it restyles to it
+		bool                                     alwaysOnBar = false;  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
+		std::map<std::string, bool, std::less<>> mods;                 // [Compatibility] plugin=0/1, lowercased; missing = every
 		// ShieldDome per kShieldRows entry (0 off, 1 normal, 2 360); -1 = not set yet - ReadSettingsText always sets it, so only a
 		// table that was never read (a test's) meets ShieldPick's -1 branch
 		std::array<int, kShieldRows.size()> shieldDome{ -1, -1, -1 };
@@ -249,6 +250,8 @@ namespace Plugin
 					a_out.every = v != 0;
 				} else if (is("KeepStrangeRunesWards")) {
 					a_out.keepRunes = v != 0;
+				} else if (is("AlwaysOnWardBar")) {
+					a_out.alwaysOnBar = v != 0;
 				} else {
 					for (const auto row : kShieldRows) {
 						if (is(ShieldKey(row))) {
@@ -303,7 +306,7 @@ namespace Plugin
 			  << "\nCastingGlow=" << a_s.castingGlow << "\nDomeColorBoost=" << a_s.domeBoost << "\nDome=" << a_s.dome << "\nWardLight=" << (a_s.light ? 1 : 0)
 			  << "\nColoredLights=" << (a_s.coloredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(a_s.unlock) << "\nUnlock360Perk=" << a_s.perk
 			  << "\nCrusaderShields=" << (a_s.crusader ? 1 : 0) << "\nEveryWard=" << (a_s.every ? 1 : 0)
-			  << "\nKeepStrangeRunesWards=" << (a_s.keepRunes ? 1 : 0);
+			  << "\nKeepStrangeRunesWards=" << (a_s.keepRunes ? 1 : 0) << "\nAlwaysOnWardBar=" << (a_s.alwaysOnBar ? 1 : 0);
 		for (const auto row : kShieldRows) {
 			// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
 			const int pick = ShieldPick(a_s, ShieldIndex(row));

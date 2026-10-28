@@ -8,6 +8,8 @@
 #include "SettingsText.h"
 #include "WardMath.h"
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace Plugin
 {
 	template <class T>
@@ -70,12 +72,13 @@ namespace Plugin
 	bool                                             ShieldFound(std::size_t a_row);  // a shield in this load order raises that row's ward
 	std::size_t                                      DressedCount();
 	std::size_t                                      FoundCount();
-	std::string                                      WardsReport();
+	nlohmann::json                                   WardsReport();
 	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect, RE::Actor* a_caster);  // a_caster: his look's flash (none known: the player's)
 	bool                                             PreviewRow(std::size_t a_row, float a_seconds);              // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
 	std::size_t                                      RowOfModel(std::string_view a_model);                        // a row's or a look's slot; kSlots when not ours
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);                         // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);                // the row a ward of ours wears, kRows when it is not one
+	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
 	void                                             WatchBlocking();                                             // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
@@ -123,6 +126,8 @@ namespace Plugin
 	ShieldDome                   ShieldDomeOf(std::size_t a_row);  // a kShieldRows row: off, the normal dome or the 360 dome
 	bool                         Any360Wanted();                   // the Dome pick or any shield's pick asks for the 360 dome (the unlock matters)
 	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
+	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
+	void                         SetAlwaysOnBar(bool a_on);
 	bool                         KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
 	void                         SetKeepStrangeRunes(bool a_on);
 	bool                         StrangeRunesLoaded();
@@ -142,18 +147,19 @@ namespace Plugin
 	bool StrangeWardsInstalled();
 	int  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
 
-	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on the
-	// cached model every copy is cloned from
-	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
-	bool ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
-	bool LivePending();                                                            // a throttled live recolor the menu sends again while the color is held
-	void LiveRecolor();                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
+	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on each
+	// copy of its model the frame the copy appears (the cached model is painted once, before anything copies it)
+	void RegisterRowArt(std::size_t a_slot, std::vector<std::pair<const RE::BGSArtObject*, std::string>> a_arts);  // data load, from MakeArt: a row's or a look's art and models
+	void InstallCopyPaint();                                                                                       // SKSE's post-load: the art effect's update hook
+	bool ApplyColors(bool a_quiet = false);                                                                        // main thread; true when a row changed
+	bool LivePending();                                                                                            // a throttled live recolor the menu sends again while the color is held
+	void LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	// the rows whose ward-in-the-hand look (its color or Hand Brightness) changed since the last call: a ward already in a hand
 	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call
 	std::array<bool, kRows> TakeHandLookChanges();
-	std::string             ColorsReport();
+	nlohmann::json          ColorsReport();
 	void                    SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
-	void                    ReleaseOldTextures();            // the palettes a recolor replaced, once nothing draws with them (the 2 s art watch)
+	void                    ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the 2 s art watch)
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
 	// master's blocks and a live copy's pair up by index
@@ -177,13 +183,13 @@ namespace Plugin
 		kEnb = 1,      // an ENB light inside each ward mesh, and (since 2026-10-06) this plugin's lights as on Vanilla
 		kVanilla = 2,  // this plugin makes the lights, in the game's own lighting
 	};
-	void        ReadLighting();  // data load, before MakeArt
-	Lighting    LightingPick();
-	void        SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool        InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
-	std::string LightingReport();
-	std::string ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
-	RE::NiColor LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
+	void           ReadLighting();  // data load, before MakeArt
+	Lighting       LightingPick();
+	void           SetLightingPick(Lighting a_pick);  // devbench only, never saved
+	bool           InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
+	nlohmann::json LightingReport();
+	std::string    ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
+	RE::NiColor    LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
 
 	// DomeLights.cpp: the colored light on each dome, and the hand lights (every pick)
 	enum class DomeMode : int
@@ -191,10 +197,10 @@ namespace Plugin
 		kAuto = 0,
 		kOff = 2,
 	};
-	void        StartDomeLights();  // data load, after MakeArt
-	void        SetDomeMode(DomeMode a_mode);
-	void        SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
-	std::string DomeLightsReport();
+	void           StartDomeLights();  // data load, after MakeArt
+	void           SetDomeMode(DomeMode a_mode);
+	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
+	nlohmann::json DomeLightsReport();
 
 	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
 	void InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
@@ -210,22 +216,21 @@ namespace Plugin
 	void                 ResolveFactions();                           // data load, after MakeArt
 	bool                 FactionLoaded(std::size_t a_look);           // a group look, or a faction look whose plugin is loaded
 	bool                 LookArtInstalled(std::size_t a_look);
-	std::string          OthersReport();
+	nlohmann::json       OthersReport();
 	void                 SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
-	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
+	void           RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
+	bool           ArcBarRegistered();
+	nlohmann::json ArcBarReport();
 
 	void RegisterMenu();
-	bool ColorHeld();         // Menu.cpp: a color or a slider is held - a background apply leaves the cached models alone
-	void CatchUpAfterHold();  // Colors.cpp: a held color or slider let go - an apply that left the cached models alone meanwhile is queued (nothing saved)
-	void FlushHeldColor();    // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
+	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
 
 	// Text.cpp (the game-free text helpers - Lower, SameText, HexColor, ParseColor, Mix ... - are in WardMath.h)
 	std::string  Where(const RE::TESForm* a_form);
-	std::string  JsonEscape(std::string_view a_text);
 	RE::TESForm* ResolveForm(std::string_view a_text);  // "0x1540E~Dawnguard.esm"
 	std::string  FormText(const RE::TESForm* a_form);
 

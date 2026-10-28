@@ -4,13 +4,15 @@
 //
 // The ward's strength as an add-on bar for Reticle Arcs - only its published interface (ReticleArcsAPI.h, Reticle Arcs by
 // Chiktabba, https://codeberg.org/chiktabba/ReticleArcs, MIT, copied unchanged). Reticle Arcs draws the bar in the player's
-// own look, asks for its state every frame and shows or hides it on its own settings page; this plugin has no setting for it.
-// While a ward is up on the player (an active effect that raises Ward Power - the game's wards and every mod's, not a passive
-// bonus), the bar is
-// what the ward can still take: the Ward Power left of what it gave. It wears the ward's row color, or the player's when the
-// row is Vanilla or the ward is not one of ours.
+// own look, asks for its state every frame and shows or hides it on its own settings page. While a ward is up on the player
+// (an active effect that raises Ward Power - the game's wards and every mod's, not a passive bonus), the bar is what the ward
+// can still take: the Ward Power left of what it gave. It wears the ward's row color, or the player's when the row is
+// Vanilla or the ward is not one of ours. The plugin's one setting for it (its Settings page) shows it for an always-on ward
+// that wears a dome of ours too.
 
 #include "Plugin.h"
+
+#include <nlohmann/json.hpp>
 
 // Reticle Arcs' own header (theirs, MIT) needs GetModuleHandleW / GetProcAddress; its warnings are not ours
 #include <Windows.h>
@@ -36,7 +38,8 @@ namespace
 		       !a_base.conditions.head;
 	}
 
-	// the ward up on the player now (its base effect), or nullptr
+	// the ward up on the player now (its base effect), or nullptr. An always-on ward counts only with the menu's switch on and
+	// only when it wears a dome of ours (Reliquary of Myth's Staff of Magnus while held, its always-on Spellbreaker)
 	[[nodiscard]] const RE::EffectSetting* WardUp(RE::PlayerCharacter& a_player)
 	{
 		auto* list = a_player.AsMagicTarget()->GetActiveEffectList();
@@ -44,9 +47,11 @@ namespace
 			return nullptr;
 		}
 		using Flag = RE::ActiveEffect::Flag;
+		const bool alwaysOn = Plugin::AlwaysOnBar();
 		for (auto* ae : *list) {
 			const auto* base = ae && ae->effect && ae->flags.none(Flag::kInactive, Flag::kDispelled) ? ae->GetBaseObject() : nullptr;
-			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental() && !Passive(*ae, *base)) {
+			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental() &&
+				(!Passive(*ae, *base) || (alwaysOn && Plugin::AlwaysOnDome(base)))) {
 				return base;
 			}
 		}
@@ -72,12 +77,18 @@ namespace
 	};
 	RowColorSeen gSeen;
 
+	// what the bar showed last frame, for devbench's report
+	std::atomic_bool   gRegistered{ false };
+	std::atomic_bool   gShown{ false };
+	std::atomic<float> gPercent{ 0.0f };
+
 	// Reticle Arcs calls this on the main thread every frame
 	void Update(float a_delta, BarState& a_state)
 	{
 		Plugin::Guarded("reticle arcs bar", [&]() {
 			auto*       player = RE::PlayerCharacter::GetSingleton();
 			const auto* ward = player ? WardUp(*player) : nullptr;
+			gShown = false;
 			if (!ward) {
 				gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
 				return;
@@ -96,6 +107,8 @@ namespace
 				a_state.useColor = true;
 				a_state.color = *gSeen.color & 0xFFFFFF;
 			}
+			gShown = a_state.active;
+			gPercent = a_state.percent;
 		});
 	}
 
@@ -128,6 +141,17 @@ namespace Plugin
 		bar.update = Update;
 		bar.preview = Preview;
 		const bool taken = arcs->RegisterBar(bar);
+		gRegistered = taken;
 		SKSE::log::info("Reticle Arcs (interface {}) {} the ward bar", arcs->GetVersion(), taken ? "took" : "refused");
+	}
+
+	bool ArcBarRegistered()
+	{
+		return gRegistered;
+	}
+
+	nlohmann::json ArcBarReport()
+	{
+		return { { "registered", gRegistered.load() }, { "shown", gShown.load() }, { "percent", gPercent.load() }, { "alwaysOnBar", AlwaysOnBar() } };
 	}
 }

@@ -10,6 +10,8 @@
 
 #include "Plugin.h"
 
+#include <nlohmann/json.hpp>
+
 namespace Plugin
 {
 	namespace
@@ -353,18 +355,17 @@ namespace Plugin
 		gTest = a_value;
 	}
 
-	std::string OthersReport()
+	nlohmann::json OthersReport()
 	{
-		const auto  looks = Looks();
-		std::string out;
+		const auto looks = Looks();
+		auto       out = nlohmann::json::object();
 		for (std::size_t i = 0; i < kLooks; ++i) {
 			const auto& p = looks[i];
 			const char* mode = p.mode == LookMode::kCustom ? "custom" : p.mode == LookMode::kVanilla ? "vanilla" :
 			                                                        p.mode == LookMode::kDefault     ? "default" :
 			                                                                                           "mine";
-			out += std::format(R"({}"{}":{{"mode":"{}","color":"{}","installed":{},"loaded":{}}})", out.empty() ? "" : ",", kLookTokens[i], mode,
-				HexColor(p.color), LookInstalled(i), FactionLoaded(i));
+			out[std::string(kLookTokens[i])] = { { "mode", mode }, { "color", HexColor(p.color) }, { "installed", LookInstalled(i) }, { "loaded", FactionLoaded(i) } };
 		}
-		return std::format(R"({{"test":{},"swapped":{},"looks":{{{}}}}})", gTest.load(), gSwapped.load(), out);
+		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "looks", std::move(out) } };
 	}
 }

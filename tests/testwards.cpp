@@ -394,6 +394,7 @@ namespace
 		w.crusader = false;
 		w.every = false;
 		w.keepRunes = true;
+		w.alwaysOnBar = true;
 		w.mods["a.esp"] = true;
 		w.mods["b.esp"] = false;
 		w.shieldDome = { 0, 2, 1 };
@@ -404,6 +405,7 @@ namespace
 		const auto text = out.str();
 		CHECK(text.find("SpellbreakerWard=0") != std::string::npos);  // the old key too, for a version before the pick
 		CHECK(text.find("CrusaderWard=1") != std::string::npos);
+		CHECK(text.find("AlwaysOnWardBar=1") != std::string::npos);
 		CHECK(text.find("Novice=123456") != std::string::npos);
 		CHECK(text.find("Expert=vanilla") != std::string::npos);
 		CHECK(text.find("Adept=default") != std::string::npos);
@@ -415,7 +417,7 @@ namespace
 		CHECK(back.domeBoost == w.domeBoost && back.looks == w.looks);
 		CHECK(back.castingGlow == w.castingGlow && back.dome == w.dome && back.light == w.light && back.coloredLights == w.coloredLights);
 		CHECK(back.unlock == w.unlock && back.perk == w.perk && back.crusader == w.crusader && back.every == w.every);
-		CHECK(back.keepRunes == w.keepRunes && back.mods == w.mods && back.shieldDome == w.shieldDome);
+		CHECK(back.keepRunes == w.keepRunes && back.mods == w.mods && back.shieldDome == w.shieldDome && back.alwaysOnBar == w.alwaysOnBar);
 		bool rows = true;
 		for (std::size_t i = 0; i < kRows; ++i) {
 			rows = rows && back.rows[i].mode == w.rows[i].mode && (w.rows[i].mode != RowMode::kCustom || back.rows[i].color == w.rows[i].color);
@@ -425,7 +427,7 @@ namespace
 		std::ostringstream d;
 		WriteSettingsText(SettingsValues{}, d);
 		const auto dflt = Read(d.str());
-		CHECK(dflt.opacity == 100 && dflt.transparency == 0 && dflt.shieldDome[0] == 2 && dflt.mods.empty());
+		CHECK(dflt.opacity == 100 && dflt.transparency == 0 && dflt.shieldDome[0] == 2 && dflt.mods.empty() && !dflt.alwaysOnBar);
 
 		// what a row wears
 		SettingsValues s;

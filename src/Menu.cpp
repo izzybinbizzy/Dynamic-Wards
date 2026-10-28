@@ -161,7 +161,6 @@ namespace Plugin
 				Changed();
 			} else if (IsItemDeactivated()) {
 				gHeldEdit = false;  // let go without a change: nothing to save
-				CatchUpAfterHold();
 			}
 		}
 
@@ -378,6 +377,14 @@ namespace Plugin
 				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around you in its own color."));
 			}
 
+			// the ward's strength as Reticle Arcs' bar: shown for a ward she raises, and with this on for an always-on one too
+			if (ArcBarRegistered()) {
+				Header(Icon::kGauge, T("Reticle Arcs"));
+				SettingToggle(T("Ward strength bar for always-on wards"), AlwaysOnBar, SetAlwaysOnBar,
+					T("Reticle Arcs' Ward strength bar also shows for a ward that is always up and wears a dome, like Reliquary of Myth's "
+					  "Staff of Magnus while you hold it or its Spellbreaker. Off: only for wards you raise."));
+			}
+
 			if (Has360Ward()) {
 				Header(Icon::kShield, T("Dome"));
 				int         dome = Dome360() ? 0 : 1;
@@ -527,11 +534,6 @@ namespace Plugin
 					  "also take that ward's strength instead of Spellbreaker's."));
 			}
 		}
-	}
-
-	bool ColorHeld()
-	{
-		return gHeldEdit;
 	}
 
 	// a menu closed (main.cpp's watch): a color still held then - the menu shut mid-drag - is saved and applied now, not only
