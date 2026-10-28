@@ -473,7 +473,8 @@ namespace Plugin
 		RE::TESGlobal* MakeGlobal(const char* a_id)
 		{
 			if (auto* had = RE::TESForm::LookupByEditorID<RE::TESGlobal>(a_id)) {
-				return had;  // registered already (a reload of the data, or another mod's form of that name)
+				had->value = 1.0f;  // registered already (a reload, an old ESP's form of that name): its value is ours from here
+				return had;
 			}
 			auto* g = NewForm<RE::TESGlobal>();
 			if (!g) {

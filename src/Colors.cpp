@@ -851,7 +851,9 @@ namespace Plugin
 		}
 		gLiveDomes = changed || liveStale ? RepaintLive(nullptr) : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted{}", gSwaps - swaps,
-			gSwapFails - fails, gEdits - edits, gLiveDomes, gSwapFails > fails ? " - " + gLastProblem : "");
+			gSwapFails - fails, gEdits - edits, gLiveDomes,
+			held ? " - a drag is held, the cached models wait for its end" : gSwapFails > fails ? " - " + gLastProblem :
+																								  "");
 		return changed;
 	}
 

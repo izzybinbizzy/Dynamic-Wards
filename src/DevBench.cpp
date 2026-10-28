@@ -53,6 +53,15 @@ namespace Plugin
 			return std::format(R"fmt({{"base":{},"now":{}}})fmt", base ? grading(*base) : "null", grading(is->GetImageSpaceData().baseData));
 		}
 
+		// a catch's reply: a literal, since building a refusal can itself throw (out of memory); a plain string, as raw ones are
+		// descriptors (glue check)
+		void Refuse(void* a_sink, DevBenchAPI::WriteFn a_write, const char* a_reply = "{\"ok\":false,\"error\":\"Dynamic Wards could not handle that\"}") noexcept
+		{
+			if (a_write) {
+				a_write(a_sink, a_reply);
+			}
+		}
+
 		void Handler(void*, const char*, void* a_sink, DevBenchAPI::WriteFn a_write) noexcept
 		{
 			if (!a_write) {
@@ -70,7 +79,7 @@ namespace Plugin
 				report += R"(,"others":)" + OthersReport() + "}";
 				a_write(a_sink, report.c_str());
 			} catch (...) {
-				a_write(a_sink, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");  // a plain string: raw ones are descriptors (glue check)
+				Refuse(a_sink, a_write, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");
 			}
 		}
 
@@ -278,14 +287,6 @@ namespace Plugin
 				return out;
 			}
 			return DevBenchGlue::Refusal("unknown action '" + action + "'", json::array({ "set", "apply", "preview" }));
-		}
-
-		// a catch's reply: a literal, since building a refusal can itself throw (out of memory)
-		void Refuse(void* a_sink, DevBenchAPI::WriteFn a_write) noexcept
-		{
-			if (a_write) {
-				a_write(a_sink, "{\"ok\":false,\"error\":\"Dynamic Wards could not handle that\"}");
-			}
 		}
 
 		void Control(void*, const char* a_args, void* a_sink, DevBenchAPI::WriteFn a_write) noexcept
