@@ -69,11 +69,10 @@ namespace Plugin
 		// lock - an art effect made meanwhile reads the last apply's, never a half-filled one
 		struct Theirs
 		{
-			std::unordered_map<const RE::EffectSetting*, std::vector<ArtPair>> of;     // our art -> the effect's own (the empty art for none)
-			std::unordered_map<const RE::BGSArtObject*, RE::BGSArtObject*>     first;  // the same, the first effect's: no effect known
-			std::unordered_map<const RE::BGSArtObject*, Ours>                  game;   // a Vanilla row's own art, so a look still reaches it
-			std::unordered_set<const RE::BGSArtObject*>                        keep;   // art a ward we leave alone wears: never in game
-			std::unordered_map<const RE::EffectSetting*, Color>                light;  // the light the effect's own record carried
+			std::unordered_map<const RE::EffectSetting*, std::vector<ArtPair>>                                  of;     // our art -> the effect's own (the empty art for none)
+			std::unordered_map<const RE::BGSArtObject*, RE::BGSArtObject*>                                      first;  // the same, the first effect's: no effect known
+			std::unordered_map<const RE::EffectSetting*, std::vector<std::pair<const RE::BGSArtObject*, Ours>>> game;   // a Vanilla row's own art, per ward
+			std::unordered_map<const RE::EffectSetting*, Color>                                                 light;  // the light the effect's own record carried
 		};
 		std::mutex               gLock;
 		Theirs                   gTheirs;
@@ -82,12 +81,29 @@ namespace Plugin
 		std::atomic_int          gTest{ 0 };  // devbench's others: 1 = every other caster wears the game's art
 		std::atomic<std::size_t> gSwapped{ 0 };
 
-		// the effect an art effect belongs to: only a magic effect's (its dome) carries one; the hand's casting art has none
-		const RE::EffectSetting* EffectOf(const RE::ModelReferenceEffect* a_self)
+		// the ward an art effect belongs to: a dome through its active effect; the hand's casting art has none, so the spell the
+		// caster holds whose effect wears that art
+		const RE::EffectSetting* EffectOf(const RE::ModelReferenceEffect* a_self, RE::TESObjectREFR* a_ref)
 		{
-			const auto* c = skyrim_cast<RE::ActiveEffectReferenceEffectController*>(a_self->controller);
-			const auto* e = c && c->effect ? c->effect->effect : nullptr;
-			return e ? e->baseEffect : nullptr;
+			if (const auto* c = skyrim_cast<RE::ActiveEffectReferenceEffectController*>(a_self->controller); c && c->effect && c->effect->effect) {
+				return c->effect->effect->baseEffect;
+			}
+			auto* actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return nullptr;
+			}
+			for (auto* caster : actor->GetActorRuntimeData().magicCasters) {
+				const auto* spell = caster ? caster->currentSpell : nullptr;
+				if (!spell) {
+					continue;
+				}
+				for (auto* e : spell->effects) {
+					if (e && e->baseEffect && e->baseEffect->data.castingArt == a_self->artObject) {
+						return e->baseEffect;
+					}
+				}
+			}
+			return nullptr;
 		}
 
 		RE::BGSArtObject* GameArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art)
@@ -102,17 +118,16 @@ namespace Plugin
 			return it != gTheirs.first.end() ? it->second : nullptr;
 		}
 
-		std::optional<Ours> OursOf(const RE::BGSArtObject* a_art)
+		// a Vanilla row's own art of this very ward (the game's ward art is shared: only the effect tells whose it is)
+		std::optional<Ours> GameOurs(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art)
 		{
-			if (const auto it = gOurs.find(a_art); it != gOurs.end()) {
-				return it->second;
-			}
-			if (!gAnyGame) {
+			std::scoped_lock l{ gLock };
+			const auto       mine = gTheirs.game.find(a_effect);
+			if (mine == gTheirs.game.end()) {
 				return std::nullopt;
 			}
-			std::scoped_lock l{ gLock };
-			const auto       it = gTheirs.game.find(a_art);
-			return it != gTheirs.game.end() ? std::optional(it->second) : std::nullopt;
+			const auto it = std::ranges::find(mine->second, a_art, &std::pair<const RE::BGSArtObject*, Ours>::first);
+			return it != mine->second.end() ? std::optional(it->second) : std::nullopt;
 		}
 
 		// a look the build shipped whole: its hand, its dome and both looping copies (the always-on wards wear those - the cast
@@ -154,15 +169,25 @@ namespace Plugin
 			static void thunk(RE::ModelReferenceEffect* a_self)
 			{
 				Guarded("other casters' art", [a_self]() {
-					const auto ours = a_self->artObject ? OursOf(a_self->artObject) : std::nullopt;
+					if (!a_self->artObject) {
+						return;
+					}
+					const auto               ref = a_self->target.get();
+					const RE::EffectSetting* effect = nullptr;
+					std::optional<Ours>      ours;
+					if (const auto it = gOurs.find(a_self->artObject); it != gOurs.end()) {
+						ours = it->second;
+					} else if (gAnyGame && ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
+						effect = EffectOf(a_self, ref.get());
+						ours = effect ? GameOurs(effect, a_self->artObject) : std::nullopt;
+					}
 					if (!ours) {
 						return;
 					}
-					const auto        ref = a_self->target.get();
 					const auto        slot = TheirSlot(ref.get(), ours->row);
 					RE::BGSArtObject* swap = nullptr;
 					if (slot >= kSlots) {
-						swap = GameArt(EffectOf(a_self), a_self->artObject);
+						swap = GameArt(effect ? effect : EffectOf(a_self, ref.get()), a_self->artObject);
 					} else if (slot >= kRows) {
 						swap = LookArt(slot - kRows, ours->kind);
 					}
@@ -282,14 +307,14 @@ namespace Plugin
 		}
 	}
 
-	void NoteGameArt(const RE::BGSArtObject* a_theirs, std::size_t a_row, bool a_hand, bool a_looping, bool a_360)
+	void NoteGameArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_theirs, std::size_t a_row, bool a_hand, bool a_looping, bool a_360)
 	{
-		if (a_theirs && a_row < kRows && !gOurs.contains(a_theirs)) {
+		if (a_effect && a_theirs && a_row < kRows && !gOurs.contains(a_theirs)) {
 			const Kind kind = a_hand    ? (a_looping ? Kind::kWornHand : Kind::kHand) :
 			                  a_looping ? Kind::kWornDome :
 			                  a_360     ? Kind::kDome360 :
 			                              Kind::kDome;
-			gNext.game.try_emplace(a_theirs, Ours{ a_row, kind });
+			gNext.game[a_effect].emplace_back(a_theirs, Ours{ a_row, kind });
 		}
 	}
 
@@ -301,20 +326,8 @@ namespace Plugin
 		}
 	}
 
-	void NoteKeepArt(const RE::BGSArtObject* a_theirs)
-	{
-		if (a_theirs) {
-			gNext.keep.insert(a_theirs);
-		}
-	}
-
 	void PublishTheirs()
 	{
-		// the game's ward art is one object for many wards: one that Strange Wards, an unticked mod or Strange Runes keeps is
-		// never dressed for another caster's look, even where a Vanilla row shares it
-		for (const auto* art : gNext.keep) {
-			gNext.game.erase(art);
-		}
 		std::scoped_lock l{ gLock };
 		gAnyGame = !gNext.game.empty();
 		gTheirs = std::exchange(gNext, {});

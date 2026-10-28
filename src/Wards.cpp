@@ -1044,13 +1044,9 @@ namespace Plugin
 					// still dresses it (a Strange Wards rank, a mod unticked or Strange Runes' own stay theirs)
 					if (t.row < kRows && !RowColor(t.row) && !(t.row < kRanks && StrangeWardsInstalled()) && (t.how != How::kFound || ModOn(t.plugin)) && !RunesOwn(t)) {
 						const bool looping = WearsWorn(t) || std::ranges::find(kShieldRows, t.row) != kShieldRows.end();
-						NoteGameArt(t.ownCast, t.row, true, looping, false);
-						NoteGameArt(t.ownHit, t.row, false, looping, use360);
-						NoteGameArt(t.ownEnch, t.row, false, looping, use360);
-					} else {
-						NoteKeepArt(t.ownCast);
-						NoteKeepArt(t.ownHit);
-						NoteKeepArt(t.ownEnch);
+						NoteGameArt(t.effect, t.ownCast, t.row, true, looping, false);
+						NoteGameArt(t.effect, t.ownHit, t.row, false, looping, use360);
+						NoteGameArt(t.effect, t.ownEnch, t.row, false, looping, use360);
 					}
 				} else {
 					// another caster on the Vanilla look wears what the effect itself had: the empty art where it had none
@@ -1298,22 +1294,28 @@ namespace Plugin
 		if (!a_effect) {
 			return nullptr;
 		}
-		std::scoped_lock l{ gLock };
-		const Target*    t = TargetOf(a_effect);
-		const Art*       a = t ? Worn(*t) : nullptr;
-		if (!a) {
-			return nullptr;  // 360 Ward's own flash plays
+		std::size_t             row = kRows;
+		RE::BGSReferenceEffect* own = nullptr;
+		{
+			std::scoped_lock l{ gLock };
+			const Target*    t = TargetOf(a_effect);
+			const Art*       a = t ? Worn(*t) : nullptr;
+			if (!a) {
+				return nullptr;  // 360 Ward's own flash plays
+			}
+			if (!a->dome360 || DomeOf(t->row, a) != a->dome360) {
+				return gNoFlash;  // the vanilla-shaped dome never flashed
+			}
+			row = t->row;
+			own = a->flash;
 		}
-		const bool on360 = a->dome360 && DomeOf(t->row, a) == a->dome360;
-		if (!on360) {
-			return gNoFlash;  // the vanilla-shaped dome never flashed
-		}
-		// another caster's ward flashes in his look: the game's art plays 360 Ward's own flash, a look's own color its own
-		const auto slot = TheirSlot(a_caster, t->row);
+		// another caster's ward flashes in his look, asked outside the lock (it reads his factions); the art objects never change
+		// after data load. The game's art plays 360 Ward's own flash, a look's own color its own
+		const auto slot = TheirSlot(a_caster, row);
 		if (slot >= kSlots) {
 			return nullptr;
 		}
-		auto* flash = slot >= kRows ? gArt[slot].flash : a->flash;
+		auto* flash = slot >= kRows ? gArt[slot].flash : own;
 		return flash ? flash : gNoFlash;
 	}
 
