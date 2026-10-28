@@ -58,6 +58,7 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 			bool                            shadow{ false };      // hung as an engine shadow light (the domeShadow test switch)
 			bool                            shadowable{ false };  // the player's dome, its first point: the light the switch decides
+			std::size_t                     point{ 0 };           // which of the spec's points
 		};
 
 		struct Hand1st
@@ -70,10 +71,12 @@ namespace Plugin
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
 		std::vector<Lit>                      gLit;
-		// a dome the scene had no light for: tried again after kRetry, not on every tick
+		// a dome the scene had no light for: tried again after kRetry, not on every tick. Its art is held, so a new effect made at
+		// the same address (with art of its own) is never taken for it
 		struct Refused
 		{
 			const RE::ModelReferenceEffect*       effect{ nullptr };
+			RE::NiPointer<RE::NiAVObject>         art;
 			std::chrono::steady_clock::time_point at{};
 		};
 		std::vector<Refused> gRefused;
@@ -269,7 +272,7 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 		};
 
-		// false when the scene refused a light (Tick takes the points hung before it off again)
+		// the dome's points not hung yet; false when the scene refused one (the ones hung stay, the rest wait for kRetry)
 		bool Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
@@ -280,9 +283,13 @@ namespace Plugin
 			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
 			const auto* wearer = a_s.target.get().get();
 			const bool  playerDome = wearer && wearer == RE::PlayerCharacter::GetSingleton();
-			for (const auto& at : a_s.spec->points) {
+			for (std::size_t i = 0; i < a_s.spec->points.size(); ++i) {
+				if (std::ranges::any_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == a_s.effect && a_lit.point == i; })) {
+					continue;
+				}
+				const auto&                at = a_s.spec->points[i];
 				RE::NiPointer<RE::BSLight> bs;
-				bool                       shadowable = playerDome && &at == &a_s.spec->points.front();
+				bool                       shadowable = playerDome && i == 0;
 				bool                       shadow = shadowable && a_shadowOn;
 				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec, LightDim()); };
 				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, dress);
@@ -294,7 +301,7 @@ namespace Plugin
 				if (!light) {
 					return false;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable, i });
 			}
 			return true;
 		}
@@ -501,21 +508,15 @@ namespace Plugin
 				return !keep;
 			});
 			const auto now = std::chrono::steady_clock::now();
+			const auto same = [](const Showing& a_s, const Refused& a_r) { return a_s.effect == a_r.effect && a_s.art.get() == a_r.art.get(); };
 			std::erase_if(gRefused, [&](const Refused& a_r) {
-				return now - a_r.at > kRetry || std::ranges::none_of(live, [&](const Showing& a_s) { return a_s.effect == a_r.effect; });
+				return now - a_r.at > kRetry || std::ranges::none_of(live, [&](const Showing& a_s) { return same(a_s, a_r); });
 			});
 			for (const auto& s : live) {
-				if (std::ranges::none_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }) &&
-					std::ranges::none_of(gRefused, [&](const Refused& a_r) { return a_r.effect == s.effect; }) && !Hang(s, scene, shadowOn)) {
-					// all or nothing: the points hung before the refusal come off, so the whole dome is tried again after kRetry
-					std::erase_if(gLit, [&](Lit& a_lit) {
-						if (a_lit.effect != s.effect) {
-							return false;
-						}
-						Drop(a_lit.light.get(), a_lit.bs, scene);
-						return true;
-					});
-					gRefused.push_back({ s.effect, now });
+				// a dome the scene gave only part of its lights keeps them: the missing points are tried again after kRetry
+				const auto hung = static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }));
+				if (hung < s.spec->points.size() && std::ranges::none_of(gRefused, [&](const Refused& a_r) { return same(s, a_r); }) && !Hang(s, scene, shadowOn)) {
+					gRefused.push_back({ s.effect, s.art, now });
 				}
 			}
 			// read once a tick, not once a light

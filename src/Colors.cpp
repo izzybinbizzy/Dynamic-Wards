@@ -751,7 +751,8 @@ namespace Plugin
 		}
 
 		std::atomic_bool                      gLiveQueued{ false };
-		std::atomic_bool                      gLivePending{ false };  // a throttled recolor the menu still owes
+		std::atomic_bool                      gLivePending{ false };       // a throttled recolor the menu still owes
+		std::atomic_bool                      gSkippedWhileHeld{ false };  // an apply left the cached models alone while a color or a slider was held
 		std::chrono::steady_clock::time_point gLiveLast{};
 	}
 
@@ -803,7 +804,7 @@ namespace Plugin
 		const int                               transparency = Has360Ward() ? Transparency() : 0;  // the menu greys it out otherwise
 		const int                               brightness = Brightness();
 		const int                               castingGlow = CastingGlow();
-		bool                                    changed = false, liveStale = false;
+		bool                                    changed = false, liveStale = false, skipped = false;
 		const bool                              held = !a_quiet && ColorHeld();
 		std::array<std::optional<Look>, kSlots> drag{};
 		std::scoped_lock                        l{ gLock };
@@ -834,11 +835,13 @@ namespace Plugin
 				}
 				continue;
 			}
+			const bool stale = row.applied != want || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; });
 			// a background apply while the menu holds a color or a slider: the cached models wait for the drag's end
 			if (held) {
+				skipped = skipped || stale;
 				continue;
 			}
-			if (row.applied != want || std::ranges::any_of(row.palettes, [&](const Palette& p) { return p.applied != *c; })) {
+			if (stale) {
 				PaintRow(row, want);
 				changed = true;
 			}
@@ -849,12 +852,18 @@ namespace Plugin
 			gLiveDomes = std::ranges::any_of(drag, [](const auto& a_d) { return a_d.has_value(); }) ? RepaintLive(&drag) : 0;
 			return changed;  // the log keeps the apply made when the mouse is let go
 		}
+		gSkippedWhileHeld = skipped;                                   // a held slider let go unchanged applies them (SkippedWhileHeld)
 		gLiveDomes = changed || liveStale ? RepaintLive(nullptr) : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted{}", gSwaps - swaps,
 			gSwapFails - fails, gEdits - edits, gLiveDomes,
 			held ? " - a drag is held, the cached models wait for its end" : gSwapFails > fails ? " - " + gLastProblem :
 																								  "");
 		return changed;
+	}
+
+	bool SkippedWhileHeld()
+	{
+		return gSkippedWhileHeld.exchange(false);
 	}
 
 	std::string ColorsReport()

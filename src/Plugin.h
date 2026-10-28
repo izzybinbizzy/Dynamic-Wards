@@ -210,8 +210,9 @@ namespace Plugin
 	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 
 	void RegisterMenu();
-	bool ColorHeld();       // Menu.cpp: a color or a slider is held - a background apply leaves the cached models alone
-	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
+	bool ColorHeld();         // Menu.cpp: a color or a slider is held - a background apply leaves the cached models alone
+	bool SkippedWhileHeld();  // Colors.cpp: an apply left the cached models alone while something was held (asking clears it)
+	void FlushHeldColor();    // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event

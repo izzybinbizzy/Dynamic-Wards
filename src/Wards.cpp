@@ -1071,23 +1071,24 @@ namespace Plugin
 			}
 			// 3.0: the art is the same objects whatever the color - Colors.cpp recolors it (palettes live, glow on the cached model)
 			ApplyColors();
-			// the hand looks are taken on every apply but the two background ones (the 2 s re-dress after another mod swapped the art,
-			// the 360 unlock check): one of those landing during a color drag would mark the dragged color as seen, and the menu's
-			// apply when the drag ends would then re-equip nothing (the 3.5 code review)
+			// a ward already in the hand takes its new art or color now, not at the next equip: the hand looks and the casting art
+			// a background apply moved are taken by a menu or devbench apply, which re-equips only the hands they changed, and dropped
+			// by a load, a new game or a loading screen, which equip everything afresh. Every other apply (the 2 s re-dress after
+			// another mod swapped the art, an unlock check) keeps them: one landing during a color drag would mark the dragged color
+			// as seen, and the menu's apply when the drag ends would re-equip nothing (the 3.5 code review)
 			const std::string_view why = a_why ? a_why : "";
-			const bool             background = why == kWhyArtSwapped || why == kWhyUnlock;
-			const auto             handRows = background ? std::array<bool, kRows>{} : TakeHandLookChanges();
+			const bool             takesHands = why == "menu" || why == "devbench";
+			const bool             fresh = why == "game loaded" || why == "new game" || why == "loading screen closed" || why == "data loaded";
+			const auto             handRows = takesHands || fresh ? TakeHandLookChanges() : std::array<bool, kRows>{};
 			out.artChanged = c.art != 0;
-			// a ward already in the hand takes its new art or color now, not at the next equip - only for a change made in the menu
-			// (or devbench's setter; a load or a loading screen equips everything afresh anyway), and only the hand whose ward changed
-			if (background) {
-				gCastPending.insert(castChanged.begin(), castChanged.end());
-			} else {
+			if (takesHands) {
 				castChanged.insert(gCastPending.begin(), gCastPending.end());
-				gCastPending.clear();  // a load or a loading screen equips everything afresh
-			}
-			if (why == "menu" || why == "devbench") {
+				gCastPending.clear();
 				out.hands = HandsToRefresh(handRows, castChanged);
+			} else if (fresh) {
+				gCastPending.clear();
+			} else {
+				gCastPending.insert(castChanged.begin(), castChanged.end());
 			}
 			for (auto& t : gTargets) {
 				// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
