@@ -26,6 +26,7 @@
 //   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
 
 #include "Plugin.h"
+#include "RuntimeGuard.h"
 #include "Translation.h"
 
 using namespace Plugin;
@@ -135,6 +136,9 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
+	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
+		return false;
+	}
 	// the version the DLL declares (xmake.lua set_version), never a typed number - 3.1's log still said "3.0"
 	const auto* decl = SKSE::PluginDeclaration::GetSingleton();
 	const auto  ver = decl ? std::format("{}.{}", decl->GetVersion().major(), decl->GetVersion().minor()) : std::string("?");

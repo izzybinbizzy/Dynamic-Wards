@@ -131,10 +131,6 @@ namespace Plugin
 			bool                     loaded = false;
 			Setting                  applied{};  // the look the last apply (not a color drag) settled on
 			Setting                  live{};     // the look its copies wear: the applied one, or a color drag's
-			// the hand look the hands were last seen in (TakeHandLookChanges): a ward in the hand is re-equipped only when its row's
-			// own look moved - never for a dome-only setting or another row
-			Color handSeen = 0xFFFFFFFF;
-			int   handGlowSeen = -1;
 		};
 
 		struct Grave
@@ -751,9 +747,10 @@ namespace Plugin
 			return painted;
 		}
 
-		// Every copy of ours on screen (a held ward's, the menu's preview), listed under the game's lock with gLock NOT held: the
-		// art hook takes gLock inside the game's update, so holding ours here while asking for the game's could deadlock.
-		// gArtOf is read-only once gReady
+		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
+		// with gLock NOT held: the art hook takes gLock inside the game's update, so holding ours here while asking for the
+		// game's could deadlock. gArtOf is read-only once gReady. Another caster's hands follow at his next update (the menu is
+		// open only while the game stands still, and then only hers are on show)
 		std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> LiveCopies()
 		{
 			std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> live;
@@ -771,6 +768,14 @@ namespace Plugin
 					}
 				}
 			}
+			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+				for (auto* caster : player->GetActorRuntimeData().magicCasters) {
+					const auto art = caster && caster->castingArt && caster->castingArtData.attachedArt ? gArtOf.find(caster->castingArt) : gArtOf.end();
+					if (art != gArtOf.end()) {
+						live.emplace_back(caster->castingArtData.attachedArt, &art->second);
+					}
+				}
+			}
 			return live;
 		}
 
@@ -783,13 +788,8 @@ namespace Plugin
 				if (gReady && a_self->artObject3D && !a_self->finished) {
 					Guarded("a new ward copy", [a_self]() {
 						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
-							// the engine picks the thread an art effect updates on: logged once each way
-							static std::atomic_bool onMain{ false }, offMain{ false };
-							const auto              task = gTaskThread.load();
-							const bool              mainThread = std::this_thread::get_id() == task;
-							if (task != std::thread::id{} && !(mainThread ? onMain : offMain).exchange(true)) {
-								SKSE::log::info("colors: a ward copy updated {} the main thread", mainThread ? "on" : "OFF");
-							}
+							static std::array<std::atomic_bool, 2> seen{};
+							NoteThread(seen, "colors: a ward copy updated");
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(a_self->artObject3D.get(), art->second) ? 1 : 0;
 						}
@@ -801,16 +801,21 @@ namespace Plugin
 		};
 
 		// a magic caster's update: the ward in the hand - attached by the caster itself (its casting art), never as an art
-		// effect - painted the frame it appears
+		// effect - painted the frame it appears, in its caster's look (another caster's from his look's own model and palettes)
 		struct HandHook
 		{
 			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
 			{
 				func(a_self, a_delta);
 				auto* root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				if (root && a_self->castingArt) {
+				if (root && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
 					Guarded("a new ward in the hand", [a_self, root]() {
-						if (const auto art = gArtOf.find(a_self->castingArt); art != gArtOf.end()) {
+						static std::array<std::atomic_bool, 2> seen{};
+						NoteThread(seen, "colors: a ward in the hand updated");
+						// before gLock: his look reads the settings
+						const auto* wear = ArtFor(a_self->actor, a_self->castingArt);
+						const auto  art = wear ? gArtOf.find(wear) : gArtOf.end();
+						if (art != gArtOf.end()) {
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(root, art->second) ? 1 : 0;
 						}
@@ -841,22 +846,6 @@ namespace Plugin
 	bool LivePending()
 	{
 		return gLivePending;
-	}
-
-	std::array<bool, kRows> TakeHandLookChanges()
-	{
-		std::scoped_lock        l{ gLock };
-		std::array<bool, kRows> out{};
-		for (std::size_t i = 0; i < kRows; ++i) {
-			auto& r = gRows[i];
-			if (r.applied.c == 0xFFFFFFFF) {
-				continue;  // never painted: our hand art has not been on that row's hands
-			}
-			out[i] = r.applied.c != r.handSeen || r.applied.castingGlow != r.handGlowSeen;
-			r.handSeen = r.applied.c;
-			r.handGlowSeen = r.applied.castingGlow;
-		}
-		return out;
 	}
 
 	void RegisterRowArt(std::size_t a_slot, std::vector<std::pair<const RE::BGSArtObject*, std::string>> a_arts)

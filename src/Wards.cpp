@@ -529,38 +529,22 @@ namespace Plugin
 			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
 		}
 
-		// Only a hand whose ward changed what it wears in the hand is re-equipped (3.5, the outside review's "broad hand refresh":
-		// every hand holding any ward of ours was re-equipped after ANY change - an Opacity or Transparency drag, a row it does not
-		// wear, a shield's switch - and each re-equip restarts the hand's casting art): its effect's casting art was swapped
-		// (a_castChanged - a row turned Vanilla, a Compatibility tick), or its row's hand look moved (a_handRows - the row's color
-		// or Hand Brightness; Colors.cpp TakeHandLookChanges). gLock held; SendHands makes the calls once it is released.
+		// Only a hand whose effect's casting art was swapped is re-equipped (a_castChanged - a row turned Vanilla, a Compatibility
+		// tick): each re-equip restarts the hand's casting art. A new color or Hand Brightness needs none - the copy in the hand is
+		// repainted where it is (Colors.cpp HandHook). gLock held; SendHands makes the calls once it is released.
 		struct HandCall
 		{
 			RE::SpellItem* spell;
 			std::int32_t   hand;  // Papyrus: 0 left, 1 right
 		};
 
-		std::vector<HandCall> HandsToRefresh(const std::array<bool, kRows>& a_handRows, const std::unordered_set<const RE::EffectSetting*>& a_castChanged)
+		std::vector<HandCall> HandsToRefresh(const std::unordered_set<const RE::EffectSetting*>& a_castChanged)
 		{
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (!player || !player->Get3D()) {
 				return {};
 			}
-			const auto changed = [&](const RE::Effect* e) {
-				if (!e || !e->baseEffect) {
-					return false;
-				}
-				if (a_castChanged.contains(e->baseEffect)) {
-					return true;
-				}
-				const auto it = gTargetOf.find(e->baseEffect);
-				if (it == gTargetOf.end()) {
-					return false;
-				}
-				const auto& t = gTargets[it->second];
-				// a hand that wears our casting art of that row (a ward wearing its own hand art keeps it whatever our colors do)
-				return t.row < kRows && a_handRows[t.row] && Worn(t) && (t.how == How::kTable || t.castWard);
-			};
+			const auto            changed = [&](const RE::Effect* e) { return e && e->baseEffect && a_castChanged.contains(e->baseEffect); };
 			std::vector<HandCall> out;
 			for (const std::int32_t hand : { 0, 1 }) {
 				auto* spell = skyrim_cast<RE::SpellItem*>(player->GetEquippedObject(hand == 0));
@@ -1161,21 +1145,19 @@ namespace Plugin
 			return out;
 		}
 
-		// a ward already in the hand takes its new art or color now, not at the next equip: the hand looks and the casting art
-		// a background apply moved are taken by a menu or devbench apply, which re-equips only the hands they changed, and dropped
-		// by a load, a new game or a loading screen, which equip everything afresh. Every other apply (the 2 s re-dress after
-		// another mod swapped the art, an unlock check) keeps them: one landing during a color drag would mark the dragged color
-		// as seen, and the menu's apply when the drag ends would re-equip nothing (the 3.5 code review)
+		// a ward already in the hand takes its new art now, not at the next equip: the casting art a background apply swapped is
+		// taken by a menu or devbench apply, which re-equips only the hands it changed, and dropped by a load, a new game or a
+		// loading screen, which equip everything afresh. Every other apply (the 2 s re-dress after another mod swapped the art, an
+		// unlock check) keeps it for the next menu or devbench apply
 		// gLock held, after the colors were applied
 		std::vector<HandCall> HandsAfterColors(std::string_view a_why, std::unordered_set<const RE::EffectSetting*> a_castChanged)
 		{
 			const bool takesHands = a_why == "menu" || a_why == "devbench";
 			const bool fresh = a_why == kWhyGameLoaded || a_why == kWhyNewGame || a_why == kWhyLoadingScreen || a_why == kWhyDataLoaded;
-			const auto handRows = takesHands || fresh ? TakeHandLookChanges() : std::array<bool, kRows>{};
 			if (takesHands) {
 				a_castChanged.insert(gCastPending.begin(), gCastPending.end());
 				gCastPending.clear();
-				return HandsToRefresh(handRows, a_castChanged);
+				return HandsToRefresh(a_castChanged);
 			}
 			if (fresh) {
 				gCastPending.clear();

@@ -170,13 +170,9 @@ namespace Plugin
 		{
 			static bool thunk(RE::ModelReferenceEffect* a_self)
 			{
-				// the engine picks the thread an art effect starts on, and the caster's look is read here: logged once each way
-				static std::atomic_bool onMain{ false }, offMain{ false };
-				const auto              task = gTaskThread.load();
-				const bool              mainThread = std::this_thread::get_id() == task;
-				if (task != std::thread::id{} && !(mainThread ? onMain : offMain).exchange(true)) {
-					SKSE::log::info("other casters: an art effect started {} the main thread", mainThread ? "on" : "OFF");
-				}
+				// the caster's look is read here, on whichever thread the engine starts an art effect
+				static std::array<std::atomic_bool, 2> seen{};
+				NoteThread(seen, "other casters: an art effect started");
 				Guarded("other casters' art", [a_self]() {
 					if (!a_self->artObject) {
 						return;
@@ -238,6 +234,20 @@ namespace Plugin
 		default:
 			return a_row;
 		}
+	}
+
+	const RE::BGSArtObject* ArtFor(RE::TESObjectREFR* a_caster, const RE::BGSArtObject* a_art)
+	{
+		const auto it = gOurs.find(a_art);
+		if (it == gOurs.end()) {
+			return a_art;
+		}
+		const auto slot = TheirSlot(a_caster, it->second.row);
+		if (slot >= kSlots) {
+			return nullptr;
+		}
+		const auto* look = slot >= kRows ? LookArt(slot - kRows, it->second.kind) : nullptr;
+		return look ? look : a_art;
 	}
 
 	void InstallOthers()

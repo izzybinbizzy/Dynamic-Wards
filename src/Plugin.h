@@ -149,17 +149,14 @@ namespace Plugin
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on each
 	// copy of its model the frame the copy appears (the cached model is painted once, before anything copies it)
-	void RegisterRowArt(std::size_t a_slot, std::vector<std::pair<const RE::BGSArtObject*, std::string>> a_arts);  // data load, from MakeArt: a row's or a look's art and models
-	void InstallCopyPaint();                                                                                       // SKSE's post-load: the art effect's update hook
-	bool ApplyColors(bool a_quiet = false);                                                                        // main thread; true when a row changed
-	bool LivePending();                                                                                            // a throttled live recolor the menu sends again while the color is held
-	void LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
-	// the rows whose ward-in-the-hand look (its color or Hand Brightness) changed since the last call: a ward already in a hand
-	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call
-	std::array<bool, kRows> TakeHandLookChanges();
-	nlohmann::json          ColorsReport();
-	void                    SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
-	void                    ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the 2 s art watch)
+	void           RegisterRowArt(std::size_t a_slot, std::vector<std::pair<const RE::BGSArtObject*, std::string>> a_arts);  // data load, from MakeArt: a row's or a look's art and models
+	void           InstallCopyPaint();                                                                                       // SKSE's post-load: the art effect's update hook
+	bool           ApplyColors(bool a_quiet = false);                                                                        // main thread; true when a row changed
+	bool           LivePending();                                                                                            // a throttled live recolor the menu sends again while the color is held
+	void           LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
+	nlohmann::json ColorsReport();
+	void           SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
+	void           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the 2 s art watch)
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
 	// master's blocks and a live copy's pair up by index
@@ -211,13 +208,16 @@ namespace Plugin
 	void                 PublishTheirs();
 	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
 	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	void                 NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
+	// the art of ours a caster's ward wears in his look (the hand hook: his magic caster attaches the casting art itself, past
+	// the art effect's Init); a_art when it is the player's look or not ours, nullptr for the game's own art
+	const RE::BGSArtObject* ArtFor(RE::TESObjectREFR* a_caster, const RE::BGSArtObject* a_art);
+	void                    NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
-	void                 ResolveFactions();                           // data load, after MakeArt
-	bool                 FactionLoaded(std::size_t a_look);           // a group look, or a faction look whose plugin is loaded
-	bool                 LookArtInstalled(std::size_t a_look);
-	nlohmann::json       OthersReport();
-	void                 SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
+	void                    ResolveFactions();                        // data load, after MakeArt
+	bool                    FactionLoaded(std::size_t a_look);        // a group look, or a faction look whose plugin is loaded
+	bool                    LookArtInstalled(std::size_t a_look);
+	nlohmann::json          OthersReport();
+	void                    SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
 	void           RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 	bool           ArcBarRegistered();
@@ -275,6 +275,16 @@ namespace Plugin
 	// the thread SKSE's tasks run on - the game's own loop - noted by every 2 s art watch round (a task); the art hooks' thread
 	// lines are measured against it (unset until the first round)
 	inline std::atomic<std::thread::id> gTaskThread{};
+
+	// the thread a hook runs on, against gTaskThread: logged once each way (the engine picks it), "<a_what> on / OFF the main thread"
+	inline void NoteThread(std::array<std::atomic_bool, 2>& a_seen, std::string_view a_what)
+	{
+		const auto task = gTaskThread.load();
+		const bool mainThread = std::this_thread::get_id() == task;
+		if (task != std::thread::id{} && !a_seen[mainThread ? 0 : 1].exchange(true)) {
+			SKSE::log::info("{} {} the main thread", a_what, mainThread ? "on" : "OFF");
+		}
+	}
 
 	// Later, but one job of this caller at a time (a_queued): the flag drops as the job starts, or at once when nothing could be
 	// queued, so a slow frame never stacks copies. False only when nothing was queued; a job still waiting counts as queued
