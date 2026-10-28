@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 251;
+	constexpr int kFloor = 251 + 10;
 
 	using namespace Plugin;
 
@@ -291,6 +291,16 @@ namespace
 		const auto none = Read("");
 		CHECK(none.opacity == 100 && none.transparency == 0 && none.brightness == 100 && none.castingGlow == 100);
 		CHECK(none.domeBoost == 0);  // off unless the player turns it up
+		CHECK(none.looks == DefaultLooks() && none.looks[kEnemies].mode == LookMode::kMine && none.looks[kGroups].mode == LookMode::kDefault);
+		const auto others = Read("[Others]\nEnemies=FF0000\nthalmor=Vanilla\nNeutral=default\nBandits=default\nNope=FF00FF\n");
+		CHECK((others.looks[kEnemies] == LookPick{ LookMode::kCustom, 0xFF0000 }));
+		CHECK(others.looks[LookOfToken("Thalmor")].mode == LookMode::kVanilla);
+		CHECK(others.looks[kNeutral].mode == LookMode::kMine);  // Default is a faction's only: a group keeps its pick
+		CHECK(others.looks[LookOfToken("Bandits")].mode == LookMode::kDefault && LookOfToken("Nope") == kLooks);
+		CHECK(LookFor(true, true, LookOfToken("Thalmor")) == kFollowers);  // a follower always wears the Followers look
+		CHECK(LookFor(false, true, LookOfToken("Thalmor")) == LookOfToken("Thalmor") && LookFor(false, true, kLooks) == kEnemies);
+		CHECK(LookFor(false, false, kLooks) == kNeutral && LookFor(false, false, kEnemies) == kNeutral);
+		CHECK(SlotToken(kRows) == "Followers" && SlotToken(kSlots - 1) == "HostileMages" && SlotToken(kSlots).empty() && SlotToken(0) == "Novice");
 		CHECK(Read("[Settings]\nDomeColorBoost=500\n").domeBoost == 100);
 		CHECK(Read("[Settings]\nDomeColorBoost=-5\n").domeBoost == 0);
 		CHECK(none.ladder == Color{ 0x2468FF } && none.stages == 3 && !none.reversed);
@@ -356,6 +366,9 @@ namespace
 		w.brightness = 150;
 		w.castingGlow = 40;
 		w.domeBoost = 35;
+		w.looks[kFollowers] = { LookMode::kCustom, 0x2DC846 };
+		w.looks[kEnemies] = { LookMode::kVanilla, 0xFFFFFF };
+		w.looks[kGroups] = { LookMode::kCustom, 0x9646FF };
 		w.dome = 1;
 		w.light = false;
 		w.coloredLights = false;
@@ -382,7 +395,7 @@ namespace
 		CHECK(!rr.old);
 		CHECK(back.ladder == w.ladder && back.stages == w.stages && back.reversed == w.reversed);
 		CHECK(back.opacity == w.opacity && back.transparency == w.transparency && back.brightness == w.brightness);
-		CHECK(back.domeBoost == w.domeBoost);
+		CHECK(back.domeBoost == w.domeBoost && back.looks == w.looks);
 		CHECK(back.castingGlow == w.castingGlow && back.dome == w.dome && back.light == w.light && back.coloredLights == w.coloredLights);
 		CHECK(back.unlock == w.unlock && back.perk == w.perk && back.crusader == w.crusader && back.every == w.every);
 		CHECK(back.keepRunes == w.keepRunes && back.mods == w.mods && back.shieldDome == w.shieldDome);

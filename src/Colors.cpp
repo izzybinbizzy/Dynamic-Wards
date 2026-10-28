@@ -143,7 +143,7 @@ namespace Plugin
 		};
 
 		std::mutex                    gLock;
-		std::array<Row, kRows>        gRows;
+		std::array<Row, kSlots>       gRows;
 		std::map<std::string, Source> gSources;
 		std::vector<Grave>            gGrave;
 		std::size_t                   gSwaps = 0, gSwapFails = 0, gEdits = 0, gMissing = 0, gLiveDomes = 0;
@@ -672,14 +672,14 @@ namespace Plugin
 		// walks its geometry in the same order as the model it was cloned from: a_looks[row] built aside during a color drag,
 		// else the cached model's materials. The cached models change only outside a drag: a loader thread copying one while
 		// its materials were replaced ~15 times a second could read one being freed. Main thread.
-		std::size_t RepaintLive(const std::array<std::optional<Look>, kRows>* a_looks)
+		std::size_t RepaintLive(const std::array<std::optional<Look>, kSlots>* a_looks)
 		{
 			auto* lists = RE::ProcessLists::GetSingleton();
 			if (!lists) {
 				return 0;
 			}
 			std::map<std::string, std::pair<const Master*, std::size_t>> byModel;
-			for (std::size_t i = 0; i < kRows; ++i) {
+			for (std::size_t i = 0; i < kSlots; ++i) {
 				if (a_looks && !(*a_looks)[i]) {
 					continue;
 				}
@@ -789,24 +789,24 @@ namespace Plugin
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models)
 	{
 		std::scoped_lock l{ gLock };
-		if (a_row < kRows) {
+		if (a_row < kSlots) {
 			gRows[a_row].models = std::move(a_models);
 		}
 	}
 
 	bool ApplyColors(bool a_quiet)
 	{
-		const int                              opacity = Opacity();
-		const int                              transparency = Transparency();
-		const int                              brightness = Brightness();
-		const int                              castingGlow = CastingGlow();
-		bool                                   changed = false, liveStale = false;
-		std::array<std::optional<Look>, kRows> drag{};
-		std::scoped_lock                       l{ gLock };
+		const int                               opacity = Opacity();
+		const int                               transparency = Transparency();
+		const int                               brightness = Brightness();
+		const int                               castingGlow = CastingGlow();
+		bool                                    changed = false, liveStale = false;
+		std::array<std::optional<Look>, kSlots> drag{};
+		std::scoped_lock                        l{ gLock };
 		Bury();
-		for (std::size_t i = 0; i < kRows; ++i) {
+		for (std::size_t i = 0; i < kSlots; ++i) {
 			auto&      row = gRows[i];
-			const auto c = RowColor(i);
+			const auto c = SlotColor(i);
 			if (!c || row.models.empty()) {
 				continue;  // a Vanilla row wears no art of ours
 			}
@@ -850,7 +850,7 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		std::string      rows;
-		for (std::size_t i = 0; i < kRows; ++i) {
+		for (std::size_t i = 0; i < kSlots; ++i) {
 			const auto& r = gRows[i];
 			std::size_t blocks = 0, off = 0, fills = 0, tracks = 0;
 			for (const auto& m : r.masters) {
@@ -865,7 +865,7 @@ namespace Plugin
 					JsonEscape(p.stem), p.tex && p.tex->rendererTexture, p.applied == 0xFFFFFFFF ? std::string() : HexColor(p.applied));
 			}
 			rows += std::format(R"({}"{}":{{"models":{},"masters":{},"blocks":{},"fills":{},"colourControllersOff":{},"colourTracks":{},"applied":"{}","palettes":[{}]}})",
-				rows.empty() ? "" : ",", kTokens[i], r.models.size(), r.masters.size(), blocks, fills, off, tracks,
+				rows.empty() ? "" : ",", SlotToken(i), r.models.size(), r.masters.size(), blocks, fills, off, tracks,
 				r.applied.c == 0xFFFFFFFF ? std::string() : HexColor(r.applied.c), pals);
 		}
 		return std::format(R"({{"swaps":{},"swapFails":{},"glowEdits":{},"liveDomes":{},"missingModels":{},"domeKept":{:.2f},"goldVapour":{{"blocks":{},"texture":{}}},"lastProblem":"{}","rows":{{{}}}}})",

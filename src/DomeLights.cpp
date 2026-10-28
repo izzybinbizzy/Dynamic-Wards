@@ -260,7 +260,7 @@ namespace Plugin
 		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
-			const auto color = RowColor(a_s.row);
+			const auto color = SlotColor(a_s.row);
 			if (!parent || !color) {
 				return;
 			}
@@ -354,10 +354,14 @@ namespace Plugin
 		void TickActor(RE::Actor* a_actor, RE::NiAVObject* a_body, ActorHands& a_hands, RE::ShadowSceneNode* a_scene)
 		{
 			std::optional<std::size_t> alwaysOn;  // AlwaysOnWardRow, read at most once for both hands
+			// another caster's hand light follows his look (Others.cpp TheirSlot), not the spell record's row: the player's row,
+			// his look's color, or none while he wears the game's own art - a drawn staff's always-on ward too
+			const bool ours = a_body != nullptr;
 			for (std::size_t slot = 0; slot < 2; ++slot) {
 				auto&      h = a_hands.h[slot];
-				const auto row = a_body ? CastingRow(a_actor, slot, alwaysOn) : kRows;
-				const auto color = row < kRows ? RowColor(row) : std::nullopt;
+				const auto row = ours ? CastingRow(a_actor, slot, alwaysOn) : kRows;
+				const auto use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
+				const auto color = use < kSlots ? SlotColor(use) : std::nullopt;
 				auto*      node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
 				auto*      parent = node ? node->AsNode() : nullptr;
 				if (!parent || (h.light && h.node.get() != parent)) {
@@ -441,14 +445,14 @@ namespace Plugin
 					if (m->finished || !m->artObject || !m->artObject3D || !m->artObject3D->parent) {
 						continue;
 					}
-					auto [it, fresh] = gDomeOf.try_emplace(m->artObject, nullptr, kRows);
+					auto [it, fresh] = gDomeOf.try_emplace(m->artObject, nullptr, kSlots);
 					if (fresh) {
 						const auto* model = m->artObject->GetModel();
 						if (const auto spec = gSpecs.find(ModelKey(model ? model : "")); spec != gSpecs.end()) {
 							it->second = { &spec->second, RowOfModel(model) };
 						}
 					}
-					if (const auto [spec, row] = it->second; spec && row < kRows) {
+					if (const auto [spec, row] = it->second; spec && row < kSlots) {
 						live.push_back({ m, m->artObject3D, m->target, row, spec });
 					}
 				}
@@ -482,7 +486,7 @@ namespace Plugin
 				if (lit.light->GetAppCulled() != hide) {
 					lit.light->SetAppCulled(hide);
 				}
-				if (const auto c = RowColor(lit.row)) {
+				if (const auto c = SlotColor(lit.row)) {
 					DressDome(lit.light.get(), *c, *lit.spec);
 				}
 			}

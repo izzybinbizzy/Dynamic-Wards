@@ -68,7 +68,7 @@ namespace Plugin
 	std::string                                      WardsReport();
 	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect);
 	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
-	std::size_t                                      RowOfModel(std::string_view a_model);            // kRows when it is not one of ours
+	std::size_t                                      RowOfModel(std::string_view a_model);            // a row's or a look's slot; kSlots when not ours
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);    // the row a ward of ours wears, kRows when it is not one
 	void                                             WatchBlocking();                                 // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
@@ -97,36 +97,40 @@ namespace Plugin
 	// the casting art (the ward in the hands) and its light have their own slider and nothing else touches them - his rule
 	// 2026-10-05: "opacity should not be affecting casting art brightness, neither should ward brightness ... make it the sole
 	// light handler for casting art, opacity and ward brightness should only be affecting the wards themselves"
-	int                  CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
-	void                 SetCastingGlow(int a_percent);
-	int                  DomeBoost();  // the menu's Dome color boost, 0-100 percent (0 = off): gold / yellow / green domes deepened
-	void                 SetDomeBoost(int a_percent);
-	float                HandDim();  // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
-	bool                 Dome360();
-	void                 SetDome360(bool a_on);
-	bool                 WardLightOn();
-	void                 SetWardLightOn(bool a_on);
-	bool                 ColoredLightsOn();
-	void                 SetColoredLightsOn(bool a_on);
-	Unlock               UnlockRule();
-	void                 SetUnlockRule(Unlock a_rule);
-	std::string          UnlockPerk();
-	void                 SetUnlockPerk(std::string a_perk);
-	bool                 CrusaderOn();
-	void                 SetCrusaderOn(bool a_on);
-	bool                 ShieldWardOn(std::size_t a_row);  // a kShieldRows row: off = the shield raises no ward at all
-	ShieldDome           ShieldDomeOf(std::size_t a_row);  // a kShieldRows row: off, the normal dome or the 360 dome
-	bool                 Any360Wanted();                   // the Dome pick or any shield's pick asks for the 360 dome (the unlock matters)
-	void                 SetShieldDome(std::size_t a_row, ShieldDome a_dome);
-	bool                 KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
-	void                 SetKeepStrangeRunes(bool a_on);
-	bool                 StrangeRunesLoaded();
-	void                 WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
-	bool                 EveryWard();
-	void                 SetEveryWard(bool a_on);
-	bool                 ModOn(std::string_view a_plugin);
-	void                 SetModOn(std::string_view a_plugin, bool a_on);
-	std::optional<Color> RowColor(std::size_t a_row);  // what the row wears now; nothing = Vanilla
+	int                          CastingGlow();  // the menu's Hand Brightness (ini key CastingGlow), kBrightnessMin-kBrightnessMax, percent (100 = as built)
+	void                         SetCastingGlow(int a_percent);
+	int                          DomeBoost();  // the menu's Dome color boost, 0-100 percent (0 = off): gold / yellow / green domes deepened
+	void                         SetDomeBoost(int a_percent);
+	float                        HandDim();  // what a hand light's strength (and the hand art's glow) is multiplied by: Hand Brightness alone
+	bool                         Dome360();
+	void                         SetDome360(bool a_on);
+	bool                         WardLightOn();
+	void                         SetWardLightOn(bool a_on);
+	bool                         ColoredLightsOn();
+	void                         SetColoredLightsOn(bool a_on);
+	Unlock                       UnlockRule();
+	void                         SetUnlockRule(Unlock a_rule);
+	std::string                  UnlockPerk();
+	void                         SetUnlockPerk(std::string a_perk);
+	bool                         CrusaderOn();
+	void                         SetCrusaderOn(bool a_on);
+	bool                         ShieldWardOn(std::size_t a_row);  // a kShieldRows row: off = the shield raises no ward at all
+	ShieldDome                   ShieldDomeOf(std::size_t a_row);  // a kShieldRows row: off, the normal dome or the 360 dome
+	bool                         Any360Wanted();                   // the Dome pick or any shield's pick asks for the 360 dome (the unlock matters)
+	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
+	bool                         KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
+	void                         SetKeepStrangeRunes(bool a_on);
+	bool                         StrangeRunesLoaded();
+	void                         WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
+	bool                         EveryWard();
+	void                         SetEveryWard(bool a_on);
+	bool                         ModOn(std::string_view a_plugin);
+	void                         SetModOn(std::string_view a_plugin, bool a_on);
+	std::optional<Color>         RowColor(std::size_t a_row);    // what the row wears now; nothing = Vanilla
+	std::optional<Color>         SlotColor(std::size_t a_slot);  // a row's (RowColor) or a look's own color; nothing = no art of ours
+	LookPick                     LookOf(std::size_t a_look);
+	std::array<LookPick, kLooks> Looks();
+	void                         SetLook(std::size_t a_look, LookPick a_pick);
 	// Strange Wards (a vanilla ward replacer, Nexus 139921) installed: the five rank rows act as Vanilla, so its dome and the
 	// game's hand art (which reads the gradient its pick ships) show, and the game's ward hand light takes its pick's color
 	void NoteStrangeWards();  // data load, main thread
@@ -187,6 +191,18 @@ namespace Plugin
 	void        SetDomeMode(DomeMode a_mode);
 	void        SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	std::string DomeLightsReport();
+
+	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
+	void        InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
+	void        NoteTheirArt(const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs);
+	std::size_t TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
+	void        NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
+		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
+	void        ResolveFactions();                                    // data load, after MakeArt
+	bool        FactionLoaded(std::size_t a_look);                    // a group look, or a faction look whose plugin is loaded
+	bool        LookArtInstalled(std::size_t a_look);
+	std::string OthersReport();
+	void        SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
 	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 

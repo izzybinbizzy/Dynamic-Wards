@@ -73,6 +73,7 @@ namespace
 		ReadLighting();
 		NoteStrangeWards();
 		MakeArt();
+		ResolveFactions();
 		FindWards();
 		ApplyAll("data loaded");
 		StartDomeLights();
@@ -101,6 +102,7 @@ namespace
 	{
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
+			InstallOthers();
 			OfferToDevBench();
 			RegisterArcBar();
 			break;

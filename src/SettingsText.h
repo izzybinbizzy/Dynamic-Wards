@@ -31,6 +31,7 @@ namespace Plugin
 	struct SettingsValues
 	{
 		std::array<RowPick, kRows>               rows{};
+		std::array<LookPick, kLooks>             looks = DefaultLooks();  // [Others]: other casters' looks
 		Color                                    ladder = kPresets[0].color;
 		int                                      stages = kMinStages;
 		bool                                     reversed = false;
@@ -97,6 +98,49 @@ namespace Plugin
 			}
 			return {};
 		}
+	}
+
+	// a look's line in [Others]: mine / vanilla / default (a faction only) / RRGGBB
+	inline std::optional<LookPick> ParseLook(std::string_view a_text, std::size_t a_look, Color a_keep)
+	{
+		if (SameText(a_text, "mine")) {
+			return LookPick{ LookMode::kMine, a_keep };
+		}
+		if (SameText(a_text, "vanilla")) {
+			return LookPick{ LookMode::kVanilla, a_keep };
+		}
+		if (SameText(a_text, "default")) {
+			return a_look >= kGroups ? std::optional<LookPick>(LookPick{ LookMode::kDefault, a_keep }) : std::nullopt;
+		}
+		if (const auto c = ParseColor(a_text)) {
+			return LookPick{ LookMode::kCustom, *c };
+		}
+		return std::nullopt;
+	}
+
+	inline std::string LookText(const LookPick& a_p)
+	{
+		switch (a_p.mode) {
+		case LookMode::kVanilla:
+			return "vanilla";
+		case LookMode::kDefault:
+			return "default";
+		case LookMode::kCustom:
+			return HexColor(a_p.color);
+		default:
+			return "mine";
+		}
+	}
+
+	// a look of a token ("Thalmor" -> its index), any case; kLooks when it is none
+	inline std::size_t LookOfToken(std::string_view a_token)
+	{
+		for (std::size_t i = 0; i < kLooks; ++i) {
+			if (SameText(kLookTokens[i], a_token)) {
+				return i;
+			}
+		}
+		return kLooks;
 	}
 
 	// The file's text into a_out, over the values it already holds (the defaults, for a fresh table). Sections and keys in
@@ -181,6 +225,12 @@ namespace Plugin
 				}
 			} else if (SameText(section, "Compatibility")) {
 				a_out.mods[Lower(key)] = number && v != 0;  // a word ("off") reads as off, as it always did
+			} else if (SameText(section, "Others")) {
+				if (const auto look = LookOfToken(key); look < kLooks) {
+					if (const auto p = ParseLook(val, look, a_out.looks[look].color)) {
+						a_out.looks[look] = *p;
+					}
+				}
 			} else if (const auto row = RowOfToken(key); row < kRows && SameText(section, "Colors")) {
 				auto& r = a_out.rows[row];
 				if (SameText(val, "vanilla")) {
@@ -231,6 +281,10 @@ namespace Plugin
 			a_out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
 																																HexColor(r.color))
 				  << "\n";
+		}
+		a_out << "[Others]\n";
+		for (std::size_t i = 0; i < kLooks; ++i) {
+			a_out << kLookTokens[i] << "=" << LookText(a_s.looks[i]) << "\n";
 		}
 		a_out << "[Compatibility]\n";
 		for (const auto& [plugin, on] : a_s.mods) {

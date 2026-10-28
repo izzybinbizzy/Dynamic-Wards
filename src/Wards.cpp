@@ -116,7 +116,7 @@ namespace Plugin
 		};
 
 		std::mutex              gLock;
-		std::array<Art, kRows>  gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
+		std::array<Art, kSlots> gArt{};  // 3.0: each row's ONE neutral set; Colors.cpp gives it the row's color
 		RE::TESGlobal*          gLightsGlobal = nullptr;
 		RE::TESGlobal*          gHandGlobal = nullptr;
 		RE::TESGlobal*          gPresentGlobal = nullptr;
@@ -439,7 +439,7 @@ namespace Plugin
 		std::string ModelName(std::string_view a_kind, std::size_t a_row)
 		{
 			const bool enbSet = a_kind != "wardshieldhitfx" && LightingPick() == Lighting::kEnb;
-			return std::format("{}{}{} - {}.nif", kLookDir, enbSet ? "ENB\\" : "", a_kind, kTokens[a_row]);
+			return std::format("{}{}{} - {}.nif", kLookDir, enbSet ? "ENB\\" : "", a_kind, SlotToken(a_row));
 		}
 
 		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is
@@ -696,12 +696,14 @@ namespace Plugin
 		gLightsGlobal = MakeGlobal(kLightsGlobal);
 		gHandGlobal = MakeGlobal(kHandGlobal);
 		gPresentGlobal = MakeGlobal(kPresentGlobal);
-		std::size_t made = 0, missing = 0, worn = 0;
-		for (std::size_t row = 0; row < kRows; ++row) {
+		std::size_t made = 0, missing = 0, worn = 0, looks = 0;
+		for (std::size_t row = 0; row < kSlots; ++row) {
 			const auto hand = ModelName("wardinhandfx", row);
 			const auto dome = ModelName("wardbodyfx", row);
 			if (!MeshExists(hand) || !MeshExists(dome)) {
-				++missing;
+				if (row < kRows) {
+					++missing;
+				}
 				continue;
 			}
 			Art                      a{ MakeArtObject(hand), MakeArtObject(dome) };
@@ -714,7 +716,7 @@ namespace Plugin
 			// meshes; the devbench preview plays them in the rank rows). Half a pair is named: the row's always-on wards would
 			// fall back to the cast meshes and their missing outer layers
 			const auto wh = ModelName("wardinhandfx worn", row), wd = ModelName("wardbodyfx worn", row);
-			const bool rank = row < kRanks;  // the build ships them for the five ranks only (wardgen WORN3_ROWS)
+			const bool rank = row < kRanks || row >= kRows;  // the build ships them for the five ranks and the looks
 			const bool hasHand = rank && MeshExists(wh), hasDome = rank && MeshExists(wd);
 			if (hasHand && hasDome) {
 				a.wornHand = MakeArtObject(wh);
@@ -723,7 +725,7 @@ namespace Plugin
 				models.push_back(wd);
 				++worn;
 			} else if (hasHand != hasDome) {
-				SKSE::log::warn("art: {} has only one of its worn copies ({} is missing) - its always-on wards wear the cast meshes", kTokens[row],
+				SKSE::log::warn("art: {} has only one of its worn copies ({} is missing) - its always-on wards wear the cast meshes", SlotToken(row),
 					hasHand ? wd : wh);
 			}
 			if (const auto hit = ModelName("wardshieldhitfx", row); MeshExists(hit)) {
@@ -731,12 +733,17 @@ namespace Plugin
 				models.push_back(hit);
 			}
 			gArt[row] = a;
-			gHas360Meshes = gHas360Meshes || a.dome360;
+			NoteSlotArt(row, a.hand, a.dome, a.dome360, a.wornHand, a.wornDome);
 			RegisterRowModels(row, std::move(models));
+			if (row >= kRows) {
+				++looks;
+				continue;
+			}
+			gHas360Meshes = gHas360Meshes || a.dome360;
 			++made;
 		}
-		SKSE::log::info("art: {} row(s) made, {} missing, {} with worn copies; flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made,
-			missing, worn, gFlashTemplate,
+		SKSE::log::info("art: {} row(s) made, {} missing, {} with worn copies, {} other casters' look(s); flash template {}; 360 Ward {}; Light Placer {}; globals {} {} {}", made,
+			missing, worn, looks, gFlashTemplate,
 			Can360()      ? "loaded" :
 			gHas360       ? "loaded, but our 360 domes are not installed (installed only with 360 Ward.esp in the plugin list - 360 dome off)" :
 			gHas360Plugin ? "loaded without its Universal Patch SKSE (360 dome off)" :
@@ -1037,9 +1044,11 @@ namespace Plugin
 					const auto w = DressOf(t, a);
 					if (w.cast) {
 						Put(d.castingArt, w.cast, c.art);
+						NoteTheirArt(w.cast, t.ownCast);
 					}
 					if (w.hit) {
 						Put(d.hitEffectArt, w.hit, c.art);
+						NoteTheirArt(w.hit, t.ownHit);
 					}
 					if (w.ench) {
 						Put(d.enchantEffectArt, w.ench, c.art);
@@ -1343,20 +1352,20 @@ namespace Plugin
 	{
 		const auto key = ModelKey(a_model);
 		if (!Contains(key, "dynamic wards\\")) {
-			return kRows;
+			return kSlots;
 		}
 		const auto dash = key.rfind(" - ");
 		const auto dot = key.rfind(".nif");
 		if (dash == std::string::npos || dot == std::string::npos || dot < dash) {
-			return kRows;
+			return kSlots;
 		}
 		const auto token = key.substr(dash + 3, dot - dash - 3);
-		for (std::size_t i = 0; i < kRows; ++i) {
-			if (Lower(kTokens[i]) == token) {
+		for (std::size_t i = 0; i < kSlots; ++i) {
+			if (Lower(SlotToken(i)) == token) {
 				return i;
 			}
 		}
-		return kRows;
+		return kSlots;
 	}
 
 	std::vector<std::pair<std::string, std::string>> WardPerks()

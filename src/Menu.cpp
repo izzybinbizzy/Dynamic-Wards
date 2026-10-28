@@ -53,6 +53,27 @@ namespace Plugin
 			TR_MARK("Visage of Reman"), TR_MARK("Vampire ward") };
 		static_assert(std::size(kRowLabel) == kRows);
 
+		// the other casters' looks on their pages, kLookTokens' order; a faction's hover says who is in it
+		constexpr const char* kLookLabel[] = { TR_MARK("Followers"), TR_MARK("Enemies"), TR_MARK("Neutral"), TR_MARK("College of Winterhold"),
+			TR_MARK("Thalmor"), TR_MARK("Penitus Oculatus"), TR_MARK("Vigilants of Stendarr"), TR_MARK("Imperial Legion"), TR_MARK("Stormcloaks"),
+			TR_MARK("Miraak's Cultists"), TR_MARK("Dragon Priests and Liches"), TR_MARK("The Afflicted"), TR_MARK("Vampire Thralls"),
+			TR_MARK("Forsworn"), TR_MARK("Hagravens and Witches"), TR_MARK("Necromancers"), TR_MARK("Dremora"), TR_MARK("Falmer"),
+			TR_MARK("Draugr"), TR_MARK("Bandits"), TR_MARK("Hostile Mages") };
+		static_assert(std::size(kLookLabel) == kLooks);
+		constexpr const char* kLookTip[] = { TR_MARK("Anyone following you, always - whatever group they belong to."),
+			TR_MARK("Casters fighting you, unless the Factions page picks a look for their group."),
+			TR_MARK("Casters who neither follow nor fight you, unless the Factions page picks a look for their group."),
+			TR_MARK("The College's mages: Colette, Drevis, Arniel, Brelyna and the rest."),
+			TR_MARK("Thalmor Justiciars, the embassy's agents and the Thalmor wizards on the roads."),
+			TR_MARK("The Emperor's agents and their battlemages."), TR_MARK("The Vigilants and their commanders."),
+			TR_MARK("The Legion's battlemages and wizards."), TR_MARK("The Stormcloak mages."), TR_MARK("The masked cultists of Solstheim."),
+			TR_MARK("Dragon priests and liches, Miraak's three acolytes too."), TR_MARK("Peryite's Afflicted and Orchendor."),
+			TR_MARK("The mages who serve in vampire lairs."), TR_MARK("Forsworn shamans and Briarhearts."), TR_MARK("Hagravens, witches and hags."),
+			TR_MARK("Necromancers and necromages."), TR_MARK("Dremora warlocks: churls, caitiffs and kynvals."),
+			TR_MARK("Falmer shamans and loremasters."), TR_MARK("Draugr who cast, and the old Nords of the tombs."),
+			TR_MARK("Bandit and Reaver mages."), TR_MARK("Mages, conjurers and battlemages in dungeons and camps.") };
+		static_assert(std::size(kLookTip) == kLooks);
+
 		// The menu draws on the RENDER thread: the file and the wards are the main thread's, so they follow in ONE task there -
 		// changes made before it runs ride the same task (Illuminated's SetSetting); the setters above already hold the value
 		void Changed()
@@ -257,6 +278,69 @@ namespace Plugin
 					PopID();
 				}
 			}
+		}
+
+		// one look's pick: the player's look, its own color, the game's art (a faction also Default: its casters go on to the
+		// Enemies or Neutral look). The ward follows a color drag live; saved when let go
+		void LookRow(std::size_t a_look, std::optional<Color>& a_held)
+		{
+			PushID(static_cast<int>(a_look));
+			const auto  pick = LookOf(a_look);
+			const char* modes[] = { T("Your look"), T("Own color"), T("Vanilla"), T("Default") };
+			int         mode = static_cast<int>(pick.mode);
+			ColorButton("##now", pick.mode == LookMode::kCustom ? Vec(pick.color) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
+			SameLine();
+			SetNextItemWidth(150.0f);
+			if (Combo(T(kLookLabel[a_look]), &mode, modes, a_look >= kGroups ? 4 : 3)) {
+				SetLook(a_look, { static_cast<LookMode>(mode), pick.color });
+				a_held.reset();
+				Changed();
+			}
+			SetItemTooltip("%s", T(kLookTip[a_look]));
+			if (LookOf(a_look).mode == LookMode::kCustom) {
+				Indent(26.0f);
+				if (!LookArtInstalled(a_look)) {
+					TextColored(kMuted, "%s", T("This look's meshes are not installed - install Dynamic Wards again."));
+				} else if (EditColor("own", a_held, LookOf(a_look).color, [a_look](Color a_c) { SetLook(a_look, { LookMode::kCustom, a_c }); })) {
+					Changed();
+				}
+				Unindent(26.0f);
+			}
+			PopID();
+		}
+
+		// Followers, Enemies and Neutral: one look each (his answer 2026-10-27)
+		void __stdcall RenderOthers()
+		{
+			MenuStyle::Page                                  page;
+			static std::array<std::optional<Color>, kGroups> held;
+			Header(Icon::kShield, T("Other casters"));
+			TextColored(kMuted, "%s", T("The ward look other casters wear. Your look: the same colors as your own wards. Vanilla: the game's own ward."));
+			for (std::size_t i = 0; i < kGroups; ++i) {
+				LookRow(i, held[i]);
+			}
+		}
+
+		// one look per faction group; a group whose mod is not loaded is left out
+		void __stdcall RenderFactions()
+		{
+			MenuStyle::Page                                 page;
+			static std::array<std::optional<Color>, kLooks> held;
+			Header(Icon::kList, T("Factions"));
+			TextColored(kMuted, "%s", T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
+			for (std::size_t i = kGroups; i < kLooks; ++i) {
+				if (FactionLoaded(i)) {
+					LookRow(i, held[i]);
+				}
+			}
+			Spacing();
+			if (Button(T("Reset all factions"))) {
+				for (std::size_t i = kGroups; i < kLooks; ++i) {
+					SetLook(i, { LookMode::kDefault, LookOf(i).color });
+				}
+				Changed();
+			}
+			SetItemTooltip("%s", T("Every group back to Default."));
 		}
 
 		// The Settings page: Lights first, then the dome, then Opacity and Brightness
@@ -495,6 +579,8 @@ namespace Plugin
 		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
 		SKSEMenuFramework::AddSectionItem(T("Colors"), RenderColors);  // first (his ask 2026-10-05)
 		SKSEMenuFramework::AddSectionItem(T("Settings"), RenderSettings);
+		SKSEMenuFramework::AddSectionItem(T("Other casters"), RenderOthers);
+		SKSEMenuFramework::AddSectionItem(T("Factions"), RenderFactions);
 		SKSEMenuFramework::AddSectionItem(T("Compatibility"), RenderCompatibility);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
