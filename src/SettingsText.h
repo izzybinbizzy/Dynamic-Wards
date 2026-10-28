@@ -100,19 +100,31 @@ namespace Plugin
 		}
 	}
 
-	// a look's line in [Others]: mine / vanilla / default (a faction only) / RRGGBB
+	// a look's line in [Others]: RRGGBB, or mine / vanilla / default (a faction only) followed by the color it keeps for when it is
+	// switched back to its own color (a line without one, before 4.0's, keeps a_keep)
 	inline std::optional<LookPick> ParseLook(std::string_view a_text, std::size_t a_look, Color a_keep)
 	{
-		if (SameText(a_text, "mine")) {
+		const auto space = a_text.find(' ');
+		const auto word = a_text.substr(0, space);
+		if (space != std::string_view::npos) {
+			auto rest = a_text.substr(space + 1);
+			rest.remove_prefix(std::min(rest.find_first_not_of(' '), rest.size()));
+			const auto kept = ParseColor(rest);
+			if (!kept) {
+				return std::nullopt;
+			}
+			a_keep = *kept;
+		}
+		if (SameText(word, "mine")) {
 			return LookPick{ LookMode::kMine, a_keep };
 		}
-		if (SameText(a_text, "vanilla")) {
+		if (SameText(word, "vanilla")) {
 			return LookPick{ LookMode::kVanilla, a_keep };
 		}
-		if (SameText(a_text, "default")) {
+		if (SameText(word, "default")) {
 			return a_look >= kGroups ? std::optional<LookPick>(LookPick{ LookMode::kDefault, a_keep }) : std::nullopt;
 		}
-		if (const auto c = ParseColor(a_text)) {
+		if (const auto c = space == std::string_view::npos ? ParseColor(a_text) : std::nullopt) {
 			return LookPick{ LookMode::kCustom, *c };
 		}
 		return std::nullopt;
@@ -122,13 +134,13 @@ namespace Plugin
 	{
 		switch (a_p.mode) {
 		case LookMode::kVanilla:
-			return "vanilla";
+			return "vanilla " + HexColor(a_p.color);
 		case LookMode::kDefault:
-			return "default";
+			return "default " + HexColor(a_p.color);
 		case LookMode::kCustom:
 			return HexColor(a_p.color);
 		default:
-			return "mine";
+			return "mine " + HexColor(a_p.color);
 		}
 	}
 

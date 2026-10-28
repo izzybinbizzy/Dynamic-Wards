@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 251 + 10;
+	constexpr int kFloor = 251 + 14;
 
 	using namespace Plugin;
 
@@ -297,6 +297,12 @@ namespace
 		CHECK(others.looks[LookOfToken("Thalmor")].mode == LookMode::kVanilla);
 		CHECK(others.looks[kNeutral].mode == LookMode::kMine);  // Default is a faction's only: a group keeps its pick
 		CHECK(others.looks[LookOfToken("Bandits")].mode == LookMode::kDefault && LookOfToken("Nope") == kLooks);
+		// a look that is not its own color keeps the color it had (4.0's line); a line before 4.0's keeps the table's
+		const auto kept = Read("[Others]\nEnemies=vanilla 3366FF\nFollowers=mine zz\nThalmor=default 9646FF\n");
+		CHECK((kept.looks[kEnemies] == LookPick{ LookMode::kVanilla, 0x3366FF }));
+		CHECK(kept.looks[kFollowers] == DefaultLooks()[kFollowers]);  // a color that does not read: the line is left out
+		CHECK((kept.looks[LookOfToken("Thalmor")] == LookPick{ LookMode::kDefault, 0x9646FF }));
+		CHECK(others.looks[LookOfToken("Thalmor")].color == DefaultLooks()[LookOfToken("Thalmor")].color);
 		CHECK(LookFor(true, true, LookOfToken("Thalmor")) == kFollowers);  // a follower always wears the Followers look
 		CHECK(LookFor(false, true, LookOfToken("Thalmor")) == LookOfToken("Thalmor") && LookFor(false, true, kLooks) == kEnemies);
 		CHECK(LookFor(false, false, kLooks) == kNeutral && LookFor(false, false, kEnemies) == kNeutral);
@@ -367,7 +373,7 @@ namespace
 		w.castingGlow = 40;
 		w.domeBoost = 35;
 		w.looks[kFollowers] = { LookMode::kCustom, 0x2DC846 };
-		w.looks[kEnemies] = { LookMode::kVanilla, 0xFFFFFF };
+		w.looks[kEnemies] = { LookMode::kVanilla, 0x3366FF };  // a color the default does not have: it is kept for the switch back
 		w.looks[kGroups] = { LookMode::kCustom, 0x9646FF };
 		w.dome = 1;
 		w.light = false;

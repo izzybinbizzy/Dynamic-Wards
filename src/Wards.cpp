@@ -1040,18 +1040,33 @@ namespace Plugin
 					Restore(d.castingArt, t.ownCast, c.art);
 					Restore(d.hitEffectArt, t.ownHit, c.art);
 					Restore(d.enchantEffectArt, t.ownEnch, c.art);
+					// a row the player set to Vanilla: its own art stays reachable, so another caster's look with its own color
+					// still dresses it (a Strange Wards rank, a mod unticked or Strange Runes' own stay theirs)
+					if (t.row < kRows && !RowColor(t.row) && !(t.row < kRanks && StrangeWardsInstalled()) && (t.how != How::kFound || ModOn(t.plugin)) && !RunesOwn(t)) {
+						const bool looping = WearsWorn(t) || std::ranges::find(kShieldRows, t.row) != kShieldRows.end();
+						NoteGameArt(t.ownCast, t.row, true, looping, false);
+						NoteGameArt(t.ownHit, t.row, false, looping, use360);
+						NoteGameArt(t.ownEnch, t.row, false, looping, use360);
+					} else {
+						NoteKeepArt(t.ownCast);
+						NoteKeepArt(t.ownHit);
+						NoteKeepArt(t.ownEnch);
+					}
 				} else {
+					// another caster on the Vanilla look wears what the effect itself had: the empty art where it had none
+					const auto own = [](RE::BGSArtObject* a_own) { return a_own ? a_own : gEmpty; };
 					const auto w = DressOf(t, a);
 					if (w.cast) {
 						Put(d.castingArt, w.cast, c.art);
-						NoteTheirArt(w.cast, t.ownCast);
+						NoteTheirArt(t.effect, w.cast, own(t.ownCast));
 					}
 					if (w.hit) {
 						Put(d.hitEffectArt, w.hit, c.art);
-						NoteTheirArt(w.hit, t.ownHit);
+						NoteTheirArt(t.effect, w.hit, own(t.ownHit));
 					}
 					if (w.ench) {
 						Put(d.enchantEffectArt, w.ench, c.art);
+						NoteTheirArt(t.effect, w.ench, own(t.ownEnch));
 					}
 					if (w.cast || w.hit || w.ench) {
 						++dressed;
@@ -1097,6 +1112,8 @@ namespace Plugin
 						if (slot) {
 							t.takenLight = slot;  // back when the row turns Vanilla
 						}
+						// another caster on the Vanilla look gets a hand light in this light's color (DomeLights.cpp)
+						NoteTheirLight(t.effect, t.takenLight ? t.takenLight : t.ownLight);
 						// 2026-10-05 (his report: the ward lit the caster but not the ground): the game's casting light never reaches
 						// the land, so DomeLights.cpp hangs the hand light itself on every caster (behind the same switch) and the
 						// effect carries none - two lights on one hand would double the caster
@@ -1110,6 +1127,7 @@ namespace Plugin
 					++c.light;
 				}
 			}
+			PublishTheirs();
 			for (auto& [armo, own] : gShields) {
 				auto* want = (CrusaderOn() && gCrusaderEnch) ? gCrusaderEnch : own;
 				if (armo->formEnchanting != want) {
@@ -1276,7 +1294,7 @@ namespace Plugin
 		return gTargets.size();
 	}
 
-	RE::BGSReferenceEffect* FlashFor(RE::EffectSetting* a_effect)
+	RE::BGSReferenceEffect* FlashFor(RE::EffectSetting* a_effect, RE::Actor* a_caster)
 	{
 		if (!a_effect) {
 			return nullptr;
@@ -1288,7 +1306,16 @@ namespace Plugin
 			return nullptr;  // 360 Ward's own flash plays
 		}
 		const bool on360 = a->dome360 && DomeOf(t->row, a) == a->dome360;
-		return (on360 && a->flash) ? a->flash : gNoFlash;  // the vanilla-shaped dome never flashed
+		if (!on360) {
+			return gNoFlash;  // the vanilla-shaped dome never flashed
+		}
+		// another caster's ward flashes in his look: the game's art plays 360 Ward's own flash, a look's own color its own
+		const auto slot = TheirSlot(a_caster, t->row);
+		if (slot >= kSlots) {
+			return nullptr;
+		}
+		auto* flash = slot >= kRows ? gArt[slot].flash : a->flash;
+		return flash ? flash : gNoFlash;
 	}
 
 	bool PreviewRow(std::size_t a_row, float a_seconds)

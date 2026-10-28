@@ -66,12 +66,12 @@ namespace Plugin
 	std::size_t                                      DressedCount();
 	std::size_t                                      FoundCount();
 	std::string                                      WardsReport();
-	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect);
-	bool                                             PreviewRow(std::size_t a_row, float a_seconds);  // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
-	std::size_t                                      RowOfModel(std::string_view a_model);            // a row's or a look's slot; kSlots when not ours
-	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);             // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
-	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);    // the row a ward of ours wears, kRows when it is not one
-	void                                             WatchBlocking();                                 // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
+	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect, RE::Actor* a_caster);  // a_caster: his look's flash (none known: the player's)
+	bool                                             PreviewRow(std::size_t a_row, float a_seconds);              // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
+	std::size_t                                      RowOfModel(std::string_view a_model);                        // a row's or a look's slot; kSlots when not ours
+	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);                         // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
+	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);                // the row a ward of ours wears, kRows when it is not one
+	void                                             WatchBlocking();                                             // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
@@ -193,16 +193,22 @@ namespace Plugin
 	std::string DomeLightsReport();
 
 	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
-	void        InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
-	void        NoteTheirArt(const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs);
-	std::size_t TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	void        NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
+	void InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
+	// what the game had, noted by each apply (ApplyLocked, gLock held) and swapped in whole by PublishTheirs at its end
+	void                 NoteTheirArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs);
+	void                 NoteGameArt(const RE::BGSArtObject* a_theirs, std::size_t a_row, bool a_hand, bool a_looping, bool a_360);  // a Vanilla row's own art
+	void                 NoteKeepArt(const RE::BGSArtObject* a_theirs);                                                              // the art of a ward we leave alone: no look ever reaches it
+	void                 NoteTheirLight(const RE::EffectSetting* a_effect, const RE::TESObjectLIGH* a_light);
+	void                 PublishTheirs();
+	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
+	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
+	void                 NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
-	void        ResolveFactions();                                    // data load, after MakeArt
-	bool        FactionLoaded(std::size_t a_look);                    // a group look, or a faction look whose plugin is loaded
-	bool        LookArtInstalled(std::size_t a_look);
-	std::string OthersReport();
-	void        SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
+	void                 ResolveFactions();                           // data load, after MakeArt
+	bool                 FactionLoaded(std::size_t a_look);           // a group look, or a faction look whose plugin is loaded
+	bool                 LookArtInstalled(std::size_t a_look);
+	std::string          OthersReport();
+	void                 SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
 	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 

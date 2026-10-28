@@ -302,7 +302,7 @@ namespace Plugin
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
 		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
 		// above found no ward, so firing the staff keeps the light; read once per actor and tick (a_alwaysOn)
-		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn)
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
 			const RE::MagicItem* spell = nullptr;
@@ -322,6 +322,7 @@ namespace Plugin
 				for (auto* e : spell->effects) {
 					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
 					if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
+						a_effect = e->baseEffect;
 						return row;
 					}
 				}
@@ -355,15 +356,18 @@ namespace Plugin
 		{
 			std::optional<std::size_t> alwaysOn;  // AlwaysOnWardRow, read at most once for both hands
 			// another caster's hand light follows his look (Others.cpp TheirSlot), not the spell record's row: the player's row,
-			// his look's color, or none while he wears the game's own art - a drawn staff's always-on ward too
+			// his look's color, or while he wears the game's own art the light the effect's own record carried (the apply took it
+			// off the record for our hand light) - a drawn staff's always-on ward too, which names no effect: no light then
 			const bool ours = a_body != nullptr;
 			for (std::size_t slot = 0; slot < 2; ++slot) {
-				auto&      h = a_hands.h[slot];
-				const auto row = ours ? CastingRow(a_actor, slot, alwaysOn) : kRows;
-				const auto use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
-				const auto color = use < kSlots ? SlotColor(use) : std::nullopt;
-				auto*      node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
-				auto*      parent = node ? node->AsNode() : nullptr;
+				auto&                    h = a_hands.h[slot];
+				const RE::EffectSetting* effect = nullptr;
+				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect) : kRows;
+				const auto               use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
+				const auto               color = use < kSlots ? SlotColor(use) : row < kRows ? GameLightColor(effect) :
+				                                                                               std::nullopt;
+				auto*                    node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
+				auto*                    parent = node ? node->AsNode() : nullptr;
 				if (!parent || (h.light && h.node.get() != parent)) {
 					DropHand(h, a_scene);
 				}
