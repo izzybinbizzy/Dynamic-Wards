@@ -802,15 +802,21 @@ namespace Plugin
 
 		// a magic caster's update: the ward in the hand - attached by the caster itself (its casting art), never as an art
 		// effect - painted the frame it appears, in its caster's look (another caster's from his look's own model and palettes)
+		// the hand hook's own count: every call, and every call that found a ward copy of ours attached (the readout's handUpdates)
+		std::atomic<std::uint64_t> gHandCalls{ 0 };
+		std::atomic<std::uint64_t> gHandOurs{ 0 };
+
 		struct HandHook
 		{
 			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
 			{
+				gHandCalls.fetch_add(1, std::memory_order_relaxed);
 				// before the update: its first call attaches the casting art, which another caster takes in his look
 				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
 				func(a_self, a_delta);
 				auto* root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
 				if (root && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
+					gHandOurs.fetch_add(1, std::memory_order_relaxed);
 					Guarded("a new ward in the hand", [a_self, root]() {
 						static std::array<std::atomic_bool, 2> seen{};
 						NoteThread(seen, "colors: a ward in the hand updated");
@@ -950,6 +956,7 @@ namespace Plugin
 		}
 		return { { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
+			{ "handUpdates", { { "calls", gHandCalls.load(std::memory_order_relaxed) }, { "ours", gHandOurs.load(std::memory_order_relaxed) } } },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}
 
