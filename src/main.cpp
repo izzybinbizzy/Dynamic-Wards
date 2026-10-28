@@ -17,7 +17,7 @@
 //   Settings.cpp       the live settings table and its accessors, the file read at load and saved after each change
 //   Wards.cpp          which effects are wards, what each wears, the shields' switches, the 360 unlock, the hand refresh
 //   Colors.cpp         each row's color made in memory: palettes on the graphics card, glow on the cached model
-//   Lighting.cpp       the installer's lighting pick and the hand-light records      DomeLights.cpp  the lights we hang
+//   Lighting.cpp       which lighting runs (found, never picked)                   DomeLights.cpp  the lights we hang
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
 //   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, JSON text, form lookups
 //   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)
@@ -46,7 +46,7 @@ namespace
 				static std::atomic<bool> toldLoad{ false };
 				static std::atomic<bool> toldMenu{ false };
 				if (name == RE::LoadingMenu::MENU_NAME) {
-					if (!Later("loading screen closed", []() { ApplyAll("loading screen closed"); }) && !toldLoad.exchange(true)) {
+					if (!Later(kWhyLoadingScreen, []() { ApplyAll(kWhyLoadingScreen); }) && !toldLoad.exchange(true)) {
 						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
@@ -75,7 +75,7 @@ namespace
 		MakeArt();
 		ResolveFactions();
 		FindWards();
-		ApplyAll("data loaded");
+		ApplyAll(kWhyDataLoaded);
 		StartDomeLights();
 		WatchArt();
 		SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
@@ -110,11 +110,11 @@ namespace
 			OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
-			ApplyAll("game loaded");
+			ApplyAll(kWhyGameLoaded);
 			WatchBlocking();
 			break;
 		case SKSE::MessagingInterface::kNewGame:
-			ApplyAll("new game");
+			ApplyAll(kWhyNewGame);
 			WatchBlocking();
 			break;
 		default:

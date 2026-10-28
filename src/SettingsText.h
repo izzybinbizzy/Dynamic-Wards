@@ -155,6 +155,28 @@ namespace Plugin
 		return kLooks;
 	}
 
+	// every value in its slider's range: the ini reader and every setter end here, so the two can never disagree
+	inline void Normalize(SettingsValues& a_s)
+	{
+		a_s.ladder &= 0xFFFFFF;
+		a_s.stages = std::clamp(a_s.stages, kMinStages, kMaxStages);
+		a_s.opacity = std::clamp(a_s.opacity, kOpacityMin, 100);
+		a_s.transparency = std::clamp(a_s.transparency, 0, kTransparencyMax);
+		a_s.brightness = std::clamp(a_s.brightness, kBrightnessMin, kBrightnessMax);
+		a_s.castingGlow = std::clamp(a_s.castingGlow, kBrightnessMin, kBrightnessMax);
+		a_s.domeBoost = std::clamp(a_s.domeBoost, 0, 100);
+		a_s.dome = std::clamp(a_s.dome, 0, 1);
+		for (auto& r : a_s.rows) {
+			r.color &= 0xFFFFFF;
+		}
+		for (auto& l : a_s.looks) {
+			l.color &= 0xFFFFFF;
+		}
+		for (auto& d : a_s.shieldDome) {
+			d = std::clamp(d, -1, 2);
+		}
+	}
+
 	// The file's text into a_out, over the values it already holds (the defaults, for a fresh table). Sections and keys in
 	// any case, as RELight - Spell Addon and Illuminated read theirs; a hand-edited number that does not read keeps the value
 	// it had instead of falling to the slider's floor; every number is clamped to its slider's range
@@ -174,7 +196,8 @@ namespace Plugin
 				section = Trim(std::string_view(line).substr(1, line.size() - 2));
 				continue;
 			}
-			const auto eq = line.find('=');
+			// [Compatibility]'s key is a plugin name, which may hold '=': its value is the text after the last one
+			const auto eq = SameText(section, "Compatibility") ? line.rfind('=') : line.find('=');
 			if (eq == std::string::npos) {
 				continue;
 			}
@@ -201,19 +224,19 @@ namespace Plugin
 					a_out.ladder = kOld[std::clamp(v, 0, 4)];
 					result.old = true;
 				} else if (is("LadderStages")) {
-					a_out.stages = std::clamp(v, kMinStages, kMaxStages);
+					a_out.stages = v;
 				} else if (is("LadderReversed")) {
 					a_out.reversed = v != 0;
 				} else if (is("Opacity")) {
-					a_out.opacity = std::clamp(v, kOpacityMin, 100);
+					a_out.opacity = v;
 				} else if (is("Transparency")) {
-					a_out.transparency = std::clamp(v, 0, kTransparencyMax);
+					a_out.transparency = v;
 				} else if (is("Brightness")) {
-					a_out.brightness = std::clamp(v, kBrightnessMin, kBrightnessMax);
+					a_out.brightness = v;
 				} else if (is("CastingGlow")) {
-					a_out.castingGlow = std::clamp(v, kBrightnessMin, kBrightnessMax);
+					a_out.castingGlow = v;
 				} else if (is("DomeColorBoost")) {
-					a_out.domeBoost = std::clamp(v, 0, 100);
+					a_out.domeBoost = v;
 				} else if (is("Dome")) {
 					a_out.dome = std::clamp(v, 0, 1);
 				} else if (is("Unlock360")) {
@@ -266,6 +289,7 @@ namespace Plugin
 				a_out.shieldDome[i] = oldSwitch[i] == 0 ? static_cast<int>(ShieldDome::kOff) : (a_out.dome == 0 ? static_cast<int>(ShieldDome::k360) : static_cast<int>(ShieldDome::kNormal));
 			}
 		}
+		Normalize(a_out);
 		return result;
 	}
 

@@ -28,7 +28,7 @@ namespace Plugin
 		const char* name;
 		const char* tip;
 		Color       ladder;
-		Color       rows[9];  // 0 = the row's default (a rank follows the ladder)
+		Color       rows[kRows];  // 0 = the row's default (a rank follows the ladder)
 	};
 	// his ask 2026-10-05: "as diverse as possible to avoid intersecting colors". The ladder hues sit about 30 degrees apart round
 	// the wheel (crimson 350, ember 25, gold 45, green 135, teal 170, frost 190, the game's blue 220, violet 265, magenta 315);
@@ -51,6 +51,12 @@ namespace Plugin
 	};
 	void ApplyScheme(const Scheme& a_scheme);  // Settings.cpp; the caller saves and applies
 
+	// ApplyAll's reasons after which the game equips everything afresh (main.cpp sends them; Wards.cpp drops what the hands owed)
+	inline constexpr const char* kWhyDataLoaded = "data loaded";
+	inline constexpr const char* kWhyGameLoaded = "game loaded";
+	inline constexpr const char* kWhyNewGame = "new game";
+	inline constexpr const char* kWhyLoadingScreen = "loading screen closed";
+
 	// Wards.cpp: which effects are wards, and what each wears
 	void                                             MakeArt();                       // data load: each row's neutral art, in memory
 	void                                             FindWards();                     // data load: every ward, by the 1.0 table and by what it is
@@ -59,7 +65,6 @@ namespace Plugin
 	bool                                             Has360Ward();                    // the 360 dome can be worn: 360 Ward.esp loaded, 360 Ward Universal Patch SKSE present AND our 360 domes installed
 	bool                                             Missing360Patch();               // 360 Ward.esp loaded, its Universal Patch not
 	bool                                             Missing360Meshes();              // 360 Ward and its patch loaded, but our 360 domes not installed (the installer puts them in only with 360 Ward.esp in the plugin list)
-	bool                                             LightPlacerLoaded();
 	bool                                             Unlocked360();
 	bool                                             CrusaderAvailable();
 	bool                                             ShieldFound(std::size_t a_row);  // a shield in this load order raises that row's ward
@@ -141,6 +146,7 @@ namespace Plugin
 	// cached model every copy is cloned from
 	void RegisterRowModels(std::size_t a_row, std::vector<std::string> a_models);  // data load, from MakeArt
 	bool ApplyColors(bool a_quiet = false);                                        // main thread; true when a row changed
+	bool LivePending();                                                            // a throttled live recolor the menu sends again while the color is held
 	void LiveRecolor();                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	// the rows whose ward-in-the-hand look (its color or Hand Brightness) changed since the last call: a ward already in a hand
 	// is re-equipped only for those (ApplyAll's hand refresh); every row's look is marked as seen by the call
@@ -164,7 +170,7 @@ namespace Plugin
 		});
 	}
 
-	// Lighting.cpp: the lighting picked in the installer, and the lights this plugin makes
+	// Lighting.cpp: which lighting runs (found by the plugin, never picked), and the lights this plugin makes
 	enum class Lighting : int
 	{
 		kShaders = 0,  // Community Shaders (with or without Effects 11) or none: this plugin makes the lights
@@ -174,7 +180,6 @@ namespace Plugin
 	void        ReadLighting();  // data load, before MakeArt
 	Lighting    LightingPick();
 	void        SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool        MeshLights();                      // ENB: the meshes carry an ENB light sprite as well
 	bool        InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
 	std::string LightingReport();
 	std::string ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
@@ -184,7 +189,6 @@ namespace Plugin
 	enum class DomeMode : int
 	{
 		kAuto = 0,
-		kOn = 1,  // devbench only
 		kOff = 2,
 	};
 	void        StartDomeLights();  // data load, after MakeArt
@@ -212,7 +216,9 @@ namespace Plugin
 	void RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 
 	void RegisterMenu();
-	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
+	bool ColorHeld();         // Menu.cpp: a color or a slider is held - a background apply leaves the cached models alone
+	void CatchUpAfterHold();  // Colors.cpp: a held color or slider let go - an apply that left the cached models alone meanwhile is queued (nothing saved)
+	void FlushHeldColor();    // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
@@ -259,5 +265,37 @@ namespace Plugin
 		} catch (...) {
 		}
 		return false;
+	}
+
+	// Later, but one job of this caller at a time (a_queued): the flag drops as the job starts, or at once when nothing could be
+	// queued, so a slow frame never stacks copies. False only when nothing was queued; a job still waiting counts as queued
+	template <class F>
+	bool LaterOnce(std::atomic_bool& a_queued, const char* a_where, F&& a_job) noexcept
+	{
+		if (a_queued.exchange(true)) {
+			return true;
+		}
+		if (Later(a_where, [&a_queued, job = std::forward<F>(a_job)]() {
+				a_queued = false;
+				job();
+			})) {
+			return true;
+		}
+		a_queued = false;
+		return false;
+	}
+
+	// a_job on the main thread every a_period, one at a time, from a detached thread - never joined: a join from a DLL's static
+	// destructor at exit can hang on the loader lock. Each round is guarded: nothing thrown may leave the thread
+	template <class F>
+	void Every(std::chrono::milliseconds a_period, const char* a_where, F a_job)
+	{
+		std::thread([a_period, a_where, job = std::move(a_job)]() {
+			std::atomic_bool queued{ false };
+			for (;;) {
+				std::this_thread::sleep_for(a_period);
+				Guarded(a_where, [&]() { (void)LaterOnce(queued, a_where, job); });
+			}
+		}).detach();
 	}
 }

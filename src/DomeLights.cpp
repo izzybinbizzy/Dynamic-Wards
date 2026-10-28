@@ -30,16 +30,21 @@ namespace Plugin
 		constexpr const char* kHandName = "DWHand1st";
 		constexpr float       kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto        kTick = std::chrono::milliseconds(100);
-		// the hand light: the house reach (LTBG section 4)
-		constexpr float       kHandFade = 1.0f, kHandReach = 133.0f, kHandSize = 2.0f, kHandPlainRadius = 178.0f, kHandPlainFade = 1.14f;
 		constexpr const char* kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
 
-		struct Spec
+		// a light's numbers: its reach under inverse square, and in the game's own lighting (plain); the house light by default
+		struct Light
 		{
-			float                     fade{ 1.0f }, reach{ 133.0f }, size{ 2.0f };
+			float fade{ 1.0f }, reach{ 133.0f }, size{ 2.0f };
+			bool  plain{ false };
+			float plainFade{ 1.0f }, plainRadius{ 178.0f };
+		};
+		constexpr Light kHand{ 1.0f, 133.0f, 2.0f, true, 1.14f, 178.0f };  // the hand light: the house reach (LTBG section 4)
+
+		// a dome's light (Dome Lights.txt) and where its points sit
+		struct Spec : Light
+		{
 			std::vector<RE::NiPoint3> points;
-			bool                      plain{ false };
-			float                     plainFade{ 1.0f }, plainRadius{ 178.0f };
 		};
 
 		struct Lit
@@ -53,6 +58,7 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 			bool                            shadow{ false };      // hung as an engine shadow light (the domeShadow test switch)
 			bool                            shadowable{ false };  // the player's dome, its first point: the light the switch decides
+			std::size_t                     point{ 0 };           // which of the spec's points
 		};
 
 		struct Hand1st
@@ -65,6 +71,16 @@ namespace Plugin
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
 		std::vector<Lit>                      gLit;
+		// a dome the scene had no light for: tried again after kRetry, not on every tick. Its art is held, so a new effect made at
+		// the same address (with art of its own) is never taken for it
+		struct Refused
+		{
+			const RE::ModelReferenceEffect*       effect{ nullptr };
+			RE::NiPointer<RE::NiAVObject>         art;
+			std::chrono::steady_clock::time_point at{};
+		};
+		std::vector<Refused> gRefused;
+		constexpr auto       kRetry = std::chrono::seconds(2);
 		// every actor casting one of our wards: a light on each casting hand (his order 2026-10-05: first person on every pick,
 		// and the light must reach the GROUND - the game's casting light lit the caster but not the land, so on the picks where
 		// this plugin makes the lights it hangs the hand light itself, made like the dome light: affectLand on)
@@ -78,11 +94,11 @@ namespace Plugin
 		RE::NiPointer<RE::NiPointLight>            gMaster;
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
 		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
-		std::atomic_bool                           gQueued{ false };
 		RE::NiColor                                gLastAmbient{};
 		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
 		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
+		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
 
 		bool Wanted()
 		{
@@ -168,19 +184,18 @@ namespace Plugin
 
 		// color, strength and reach: the row's color, dimmed by `a_dim` - a dome's light by Opacity x Ward brightness, a hand's by
 		// Hand Brightness alone (Settings.cpp LightDim / HandDim)
-		void Dress(RE::NiPointLight* a_light, Color a_color, float a_fade, float a_reach, float a_size, float a_plainFade, float a_plainRadius, bool a_plain,
-			float a_dim)
+		void Dress(RE::NiPointLight* a_light, Color a_color, const Light& a_l, float a_plainRadius, float a_dim)
 		{
 			const bool isl = InverseSquare();
 			auto&      data = a_light->GetLightRuntimeData();
-			if (!isl && a_plain) {
+			if (!isl && a_l.plain) {
 				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
-				data.fade = a_plainFade * a_dim;
+				data.fade = a_l.plainFade * a_dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
 			} else {
 				data.diffuse = LightColor(a_color, isl);
-				data.fade = a_fade * a_dim;
-				data.radius = { a_reach, a_reach, a_size };
+				data.fade = a_l.fade * a_dim;
+				data.radius = { a_l.reach, a_l.reach, a_l.size };
 			}
 			// it writes the first two of the words below, so it goes first: written after them, every later tick ORed the flag onto
 			// the attenuation's float, which could read as Light Limit Fix's Disabled bit
@@ -197,7 +212,7 @@ namespace Plugin
 			// Light Limit Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue
 			// (1.0) would read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the
 			// undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
-			const std::array<std::uint32_t, 3> words{ kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(CutoffFor(data.fade, a_reach, a_size)), 0u };
+			const std::array<std::uint32_t, 3> words{ kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(CutoffFor(data.fade, a_l.reach, a_l.size)), 0u };
 			std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 		}
 
@@ -236,14 +251,14 @@ namespace Plugin
 			return light;
 		}
 
-		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec)
+		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec, float a_dim)
 		{
-			Dress(a_light, a_color, a_spec.fade, a_spec.reach, a_spec.size, a_spec.plainFade, DomeRadius(a_spec), a_spec.plain, LightDim());
+			Dress(a_light, a_color, a_spec, DomeRadius(a_spec), a_dim);
 		}
 
 		void DressHand(RE::NiPointLight* a_light, Color a_color)
 		{
-			Dress(a_light, a_color, kHandFade, kHandReach, kHandSize, kHandPlainFade, kHandPlainRadius, true, HandDim());
+			Dress(a_light, a_color, kHand, kHand.plainRadius, HandDim());
 		}
 
 		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), its art
@@ -257,21 +272,26 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 		};
 
-		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
+		// the dome's points not hung yet; false when the scene refused one (the ones hung stay, the rest wait for kRetry)
+		bool Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
 			const auto color = SlotColor(a_s.row);
 			if (!parent || !color) {
-				return;
+				return true;
 			}
 			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
 			const auto* wearer = a_s.target.get().get();
 			const bool  playerDome = wearer && wearer == RE::PlayerCharacter::GetSingleton();
-			for (const auto& at : a_s.spec->points) {
+			for (std::size_t i = 0; i < a_s.spec->points.size(); ++i) {
+				if (std::ranges::any_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == a_s.effect && a_lit.point == i; })) {
+					continue;
+				}
+				const auto&                at = a_s.spec->points[i];
 				RE::NiPointer<RE::BSLight> bs;
-				bool                       shadowable = playerDome && &at == &a_s.spec->points.front();
+				bool                       shadowable = playerDome && i == 0;
 				bool                       shadow = shadowable && a_shadowOn;
-				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec); };
+				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec, LightDim()); };
 				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, dress);
 				if (!light && shadow) {
 					// the renderer had no shadow map left: a plain light, and the switch leaves this one alone until the next cast
@@ -279,10 +299,11 @@ namespace Plugin
 					light = Make(parent, kLightName, at, a_scene, bs, false, dress);
 				}
 				if (!light) {
-					return;
+					return false;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable, i });
 			}
+			return true;
 		}
 
 		void Drop(RE::NiPointLight* a_light, RE::NiPointer<RE::BSLight>& a_bs, RE::ShadowSceneNode* a_scene)
@@ -295,10 +316,21 @@ namespace Plugin
 			}
 		}
 
-		// the row of the ward a hand is casting now, or kRows
-		// the hand's ward: while it is cast (charging, ready, held) the caster's spell; while it is only readied in that hand
-		// (the casting art shows, nothing cast yet - his catch 2026-10-05, "im talking about the casting art too") the spell
-		// equipped there, hands drawn
+		std::size_t RowOfArt(const RE::BGSArtObject* a_art)
+		{
+			if (!a_art) {
+				return kRows;
+			}
+			auto [it, fresh] = gRowOfArt.try_emplace(a_art, kRows);
+			if (fresh) {
+				const auto* model = a_art->GetModel();
+				it->second = model ? RowOfModel(model) : kRows;
+			}
+			return it->second;
+		}
+
+		// the row of the ward a hand casts, or kRows: while cast (charging, ready, held) the caster's spell; while only readied
+		// (the casting art shows, nothing cast yet) the spell equipped in that hand, hands drawn
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
 		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
 		// above found no ward, so firing the staff keeps the light; read once per actor and tick (a_alwaysOn)
@@ -321,7 +353,7 @@ namespace Plugin
 			if (spell) {
 				for (auto* e : spell->effects) {
 					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-					if (const auto row = art && art->GetModel() ? RowOfModel(art->GetModel()) : kRows; row < kRows) {
+					if (const auto row = RowOfArt(art); row < kRows) {
 						a_effect = e->baseEffect;
 						return row;
 					}
@@ -345,9 +377,7 @@ namespace Plugin
 
 		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
-			if (a_h.light) {
-				Drop(a_h.light.get(), a_h.bs, a_scene);
-			}
+			Drop(a_h.light.get(), a_h.bs, a_scene);
 			a_h = {};
 		}
 
@@ -429,7 +459,6 @@ namespace Plugin
 		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks
 		void Tick()
 		{
-			gQueued = false;
 			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 			auto* lists = RE::ProcessLists::GetSingleton();
 			if (!scene || !lists) {
@@ -478,11 +507,22 @@ namespace Plugin
 				}
 				return !keep;
 			});
+			const auto now = std::chrono::steady_clock::now();
+			const auto same = [](const Showing& a_s, const Refused& a_r) { return a_s.effect == a_r.effect && a_s.art.get() == a_r.art.get(); };
+			std::erase_if(gRefused, [&](const Refused& a_r) {
+				return now - a_r.at > kRetry || std::ranges::none_of(live, [&](const Showing& a_s) { return same(a_s, a_r); });
+			});
 			for (const auto& s : live) {
-				if (std::ranges::none_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; })) {
-					Hang(s, scene, shadowOn);
+				// a dome the scene gave only part of its lights keeps them: the missing points are tried again after kRetry
+				const auto hung = static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }));
+				if (hung < s.spec->points.size() && std::ranges::none_of(gRefused, [&](const Refused& a_r) { return same(s, a_r); }) && !Hang(s, scene, shadowOn)) {
+					gRefused.push_back({ s.effect, s.art, now });
 				}
 			}
+			// read once a tick, not once a light
+			const float                              dim = LightDim();
+			std::array<std::optional<Color>, kSlots> colors{};
+			std::array<bool, kSlots>                 asked{};
 			for (auto& lit : gLit) {
 				const auto  ref = lit.target.get();
 				const auto* actor = ref ? ref->As<RE::Actor>() : nullptr;
@@ -490,8 +530,12 @@ namespace Plugin
 				if (lit.light->GetAppCulled() != hide) {
 					lit.light->SetAppCulled(hide);
 				}
-				if (const auto c = SlotColor(lit.row)) {
-					DressDome(lit.light.get(), *c, *lit.spec);
+				if (!asked[lit.row]) {
+					colors[lit.row] = SlotColor(lit.row);
+					asked[lit.row] = true;
+				}
+				if (const auto& c = colors[lit.row]) {
+					DressDome(lit.light.get(), *c, *lit.spec, dim);
 				}
 			}
 			TickHands(scene, WardLightOn());
@@ -504,24 +548,11 @@ namespace Plugin
 			std::scoped_lock l{ gLock };
 			ReadSpecs();
 		}
-		SKSE::log::info("dome lights: {} dome model(s) in {}{}; {}; first-person hand light {}", gSpecs.size(), kPath,
-			gBadLines ? std::format(" ({} line(s) left out: a number that does not read)", gBadLines) : std::string(),
-			Wanted() ? "hung by this plugin" : MeshLights() ? "in the ward meshes (ENB)" :
-															  "off",
-			MeshLights() ? "on (ENB)" : "on");
+		SKSE::log::info("dome lights: {} dome model(s) in {}{}; dome and hand lights hung by this plugin", gSpecs.size(), kPath,
+			gBadLines ? std::format(" ({} line(s) left out: a number that does not read)", gBadLines) : std::string());
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock. Nothing thrown in it
 		// may leave the thread (that ends the game): each round is guarded, and so is the tick on the main thread
-		std::thread([]() {
-			for (;;) {
-				std::this_thread::sleep_for(kTick);
-				Guarded("dome lights thread", []() {
-					// every round: the hand lights are on every pick
-					if (!gQueued.exchange(true) && !Later("dome and hand lights", []() { Tick(); })) {
-						gQueued = false;  // nothing queued: the next round tries again
-					}
-				});
-			}
-		}).detach();
+		Every(kTick, "dome and hand lights", []() { Tick(); });
 	}
 
 	void SetDomeMode(DomeMode a_mode)

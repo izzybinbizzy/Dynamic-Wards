@@ -359,6 +359,14 @@ namespace Plugin
 			a_why = "not uncompressed 32-bit";
 			return std::nullopt;
 		}
+		// the texels are read as B, G, R, A: a file in another channel order would come out with red and blue swapped
+		std::uint32_t rmask = 0, bmask = 0;
+		std::memcpy(&rmask, a_raw.data() + 92, 4);
+		std::memcpy(&bmask, a_raw.data() + 100, 4);
+		if (rmask != 0x00FF0000 || bmask != 0x000000FF) {
+			a_why = "not in BGRA order";
+			return std::nullopt;
+		}
 		PaletteImage p;
 		p.w = static_cast<int>(w);
 		p.h = static_cast<int>(h);
@@ -373,6 +381,28 @@ namespace Plugin
 		std::ranges::sort(sats);
 		p.sref = sats.empty() ? 0.0f : sats[static_cast<std::size_t>(static_cast<double>(sats.size()) * 0.95)];
 		return p;
+	}
+
+	// one mip level down (4 bytes a texel): each texel the average of its 2x2 block, an odd side's edge texel counted twice
+	inline std::vector<std::uint8_t> NextMip(const std::vector<std::uint8_t>& a_prev, int a_pw, int a_ph)
+	{
+		const int                 w = (std::max)(1, a_pw / 2), h = (std::max)(1, a_ph / 2);
+		std::vector<std::uint8_t> next(static_cast<std::size_t>(w) * h * 4);
+		for (int y = 0; y < h; ++y) {
+			for (int x = 0; x < w; ++x) {
+				for (int c = 0; c < 4; ++c) {
+					int sum = 0;
+					for (int dy = 0; dy < 2; ++dy) {
+						for (int dx = 0; dx < 2; ++dx) {
+							const int sx = (std::min)(a_pw - 1, x * 2 + dx), sy = (std::min)(a_ph - 1, y * 2 + dy);
+							sum += a_prev[(static_cast<std::size_t>(sy) * a_pw + sx) * 4 + c];
+						}
+					}
+					next[(static_cast<std::size_t>(y) * w + x) * 4 + c] = static_cast<std::uint8_t>(sum / 4);
+				}
+			}
+		}
+		return next;
 	}
 
 	// wardgen.pal_retint, texel for texel: the ramp keeps its own saturation and only its hue moves; alpha is the source's.
@@ -399,9 +429,10 @@ namespace Plugin
 				cg = 1.0f + k * (tg - 1.0f);
 				cr = 1.0f + k * (tr - 1.0f);
 			}
-			out[i] = static_cast<std::uint8_t>(std::clamp(std::lround(cb * v), 0L, 255L));
-			out[i + 1] = static_cast<std::uint8_t>(std::clamp(std::lround(cg * v), 0L, 255L));
-			out[i + 2] = static_cast<std::uint8_t>(std::clamp(std::lround(cr * v), 0L, 255L));
+			const auto byte = [v](float a_x) { return static_cast<std::uint8_t>(std::clamp(std::lround(a_x * v), 0L, 255L)); };
+			out[i] = byte(cb);
+			out[i + 1] = byte(cg);
+			out[i + 2] = byte(cr);
 			out[i + 3] = a_s.bgra[i + 3];
 		}
 		return out;
@@ -478,38 +509,17 @@ namespace Plugin
 	// washes the ward out); a color with no hue to speak of (under 2% saturated) stays white
 	[[nodiscard]] inline std::array<float, 3> SpriteRgb(Color a_color, float a_minSat) noexcept
 	{
+		// at full value each channel is 1 - sat x (its distance below the brightest, in sat's units): only the saturation moves
 		const auto  rgb = LightRgb(a_color, false);
-		const float r = rgb[0], g = rgb[1], b = rgb[2];
-		const float mx = (std::max)({ r, g, b }), mn = (std::min)({ r, g, b }), spread = mx - mn;
-		float       sat = mx <= 0.0f ? 0.0f : spread / mx;
-		float       hue = 0.0f;  // sixths of the wheel, 0-6
-		if (spread > 0.0f) {
-			hue = mx == r ? std::fmod((g - b) / spread, 6.0f) : mx == g ? (b - r) / spread + 2.0f :
-			                                                              (r - g) / spread + 4.0f;
-			hue = hue < 0.0f ? hue + 6.0f : hue;
+		const float mx = (std::max)({ rgb[0], rgb[1], rgb[2] }), mn = (std::min)({ rgb[0], rgb[1], rgb[2] });
+		const float sat = mx > 0.0f ? (mx - mn) / mx : 0.0f;
+		if (sat <= 0.02f) {
+			return { 1.0f, 1.0f, 1.0f };
 		}
-		sat = sat > 0.02f ? (std::max)(sat, a_minSat) : 0.0f;
-		const float          x = sat * (1.0f - std::fabs(std::fmod(hue, 2.0f) - 1.0f)), base = 1.0f - sat;
-		std::array<float, 3> out{ base, base, base };
-		switch (static_cast<int>(hue) % 6) {
-		case 0:
-			out[0] += sat, out[1] += x;
-			break;
-		case 1:
-			out[0] += x, out[1] += sat;
-			break;
-		case 2:
-			out[1] += sat, out[2] += x;
-			break;
-		case 3:
-			out[1] += x, out[2] += sat;
-			break;
-		case 4:
-			out[0] += x, out[2] += sat;
-			break;
-		default:
-			out[0] += sat, out[2] += x;
-			break;
+		const float          scale = (std::max)(sat, a_minSat) / sat;
+		std::array<float, 3> out{};
+		for (std::size_t i = 0; i < 3; ++i) {
+			out[i] = 1.0f - scale * (1.0f - rgb[i] / mx);
 		}
 		return out;
 	}

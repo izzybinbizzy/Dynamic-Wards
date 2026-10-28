@@ -75,34 +75,38 @@ namespace
 	// Reticle Arcs calls this on the main thread every frame
 	void Update(float a_delta, BarState& a_state)
 	{
-		auto*       player = RE::PlayerCharacter::GetSingleton();
-		const auto* ward = player ? WardUp(*player) : nullptr;
-		if (!ward) {
-			gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
-			return;
-		}
-		const float left = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower);
-		// hits come off the ward as a damage modifier (negative): the ward gave what is left plus what was taken
-		const float taken = -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower);
-		const float gave = left + std::max(taken, 0.0f);
-		Fill(a_state, gave > 0.0f ? left / gave : 0.0f);
-		gSeen.age += std::max(a_delta, 0.0f);
-		if (ward != gSeen.ward || gSeen.age > 1.0f) {
-			const auto row = Plugin::WardRowOf(ward);
-			gSeen = { ward, 0.0f, row < Plugin::kRows ? Plugin::RowColor(row) : std::nullopt };
-		}
-		if (gSeen.color) {
-			a_state.useColor = true;
-			a_state.color = *gSeen.color & 0xFFFFFF;
-		}
+		Plugin::Guarded("reticle arcs bar", [&]() {
+			auto*       player = RE::PlayerCharacter::GetSingleton();
+			const auto* ward = player ? WardUp(*player) : nullptr;
+			if (!ward) {
+				gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
+				return;
+			}
+			const float left = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower);
+			// hits come off the ward as a damage modifier (negative): the ward gave what is left plus what was taken
+			const float taken = -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower);
+			const float gave = left + std::max(taken, 0.0f);
+			Fill(a_state, gave > 0.0f ? left / gave : 0.0f);
+			gSeen.age += std::max(a_delta, 0.0f);
+			if (ward != gSeen.ward || gSeen.age > 1.0f) {
+				const auto row = Plugin::WardRowOf(ward);
+				gSeen = { ward, 0.0f, row < Plugin::kRows ? Plugin::RowColor(row) : std::nullopt };
+			}
+			if (gSeen.color) {
+				a_state.useColor = true;
+				a_state.color = *gSeen.color & 0xFFFFFF;
+			}
+		});
 	}
 
 	// Reticle Arcs' settings page: a ward taking five hits, broken a moment, then raised again
 	void Preview(float a_time, BarState& a_state)
 	{
-		const float t = std::fmod(std::max(a_time, 0.0f) / 3.0f, 1.0f);
-		Fill(a_state, t < 0.7f ? 1.0f - std::floor(t / 0.14f) * 0.2f : 0.0f);
-		a_state.active = t < 0.9f;
+		Plugin::Guarded("reticle arcs preview", [&]() {
+			const float t = std::fmod(std::max(a_time, 0.0f) / 3.0f, 1.0f);
+			Fill(a_state, t < 0.7f ? 1.0f - std::floor(t / 0.14f) * 0.2f : 0.0f);
+			a_state.active = t < 0.9f;
+		});
 	}
 }
 
