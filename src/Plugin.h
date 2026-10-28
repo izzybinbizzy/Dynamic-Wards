@@ -272,6 +272,10 @@ namespace Plugin
 		return false;
 	}
 
+	// the thread SKSE's tasks run on - the game's own loop - noted by every 2 s art watch round (a task); the art hooks' thread
+	// lines are measured against it (unset until the first round)
+	inline std::atomic<std::thread::id> gTaskThread{};
+
 	// Later, but one job of this caller at a time (a_queued): the flag drops as the job starts, or at once when nothing could be
 	// queued, so a slow frame never stacks copies. False only when nothing was queued; a job still waiting counts as queued
 	template <class F>

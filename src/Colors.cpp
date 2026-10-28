@@ -156,20 +156,20 @@ namespace Plugin
 		struct ArtOf
 		{
 			std::size_t slot{ kSlots };
-			std::string model;
+			std::string model{};
 		};
 		std::unordered_map<const RE::BGSArtObject*, ArtOf> gArtOf;
 		std::atomic_bool                                   gReady{ false };  // the first apply is done: the cached models are never painted again
-		// a copy of one of our models on screen and the look it wears; held, so its address is never reused while it is listed,
-		// and dropped once nothing else holds it (gLock)
+		// a copy of one of our models on screen and the look it wears (gLock). Its reference is taken by hand, so its address is
+		// never reused while it is listed and no static destructor releases it at exit, after the engine is gone; ReleaseOld
+		// gives it back once nothing else holds it
 		struct Copy
 		{
-			RE::NiPointer<RE::NiAVObject> root;
-			Setting                       with{};
+			RE::NiAVObject* root{ nullptr };
+			Setting         with{};
 		};
 		std::vector<Copy> gCopies;
 		std::size_t       gCopiesLogged = 0;  // gNewCopies at the last apply's log line
-		std::thread::id   gPostLoadThread;    // the thread SKSE's post-load ran on (InstallCopyPaint)
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
 		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
 		constexpr const char*              kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
@@ -690,8 +690,9 @@ namespace Plugin
 		}
 
 		// one copy of a cached model in a look, block for block (a copy walks its geometry in the model's order); false when it
-		// is not the shape the model was read from. Its blocks get materials of their own; the colour keys may be shared with
-		// the model (Gamebryo's copy, not shown) - every copy of a row wears the same look, so they agree either way
+		// is not the shape the model was read from. Its blocks get materials of their own; its colour keys may be shared with
+		// the model (Gamebryo's copy, not shown), so they are float writes into the model's key data - never a release; every
+		// copy of a row wears the same look, so they agree either way
 		bool PaintCopy(RE::NiAVObject* a_root, const Master& a_m, const Look& a_look)
 		{
 			std::vector<RE::BSEffectShaderProperty*> props;
@@ -725,12 +726,12 @@ namespace Plugin
 		// the copy's record: the look it wears now (a copy that did not match its model is noted too, so it is not tried every frame)
 		void NoteCopy(RE::NiAVObject* a_root, const Setting& a_with)
 		{
-			if (const auto it = std::ranges::find(gCopies, a_root, [](const Copy& a_c) { return a_c.root.get(); }); it != gCopies.end()) {
+			if (const auto it = std::ranges::find(gCopies, a_root, &Copy::root); it != gCopies.end()) {
 				it->with = a_with;
 				return;
 			}
-			std::erase_if(gCopies, [](const Copy& a_c) { return a_c.root->GetRefCount() <= 1; });  // nothing shows them any more
-			gCopies.push_back({ RE::NiPointer<RE::NiAVObject>(a_root), a_with });
+			a_root->IncRefCount();
+			gCopies.push_back({ a_root, a_with });
 		}
 
 		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted
@@ -740,7 +741,7 @@ namespace Plugin
 			if (row.live.c == 0xFFFFFFFF) {
 				return false;  // never colored this session (a Vanilla row): the copy is the model as built
 			}
-			const auto had = std::ranges::find(gCopies, a_root, [](const Copy& a_c) { return a_c.root.get(); });
+			const auto had = std::ranges::find(gCopies, a_root, &Copy::root);
 			if (had != gCopies.end() && had->with == row.live) {
 				return false;
 			}
@@ -783,10 +784,11 @@ namespace Plugin
 					Guarded("a new ward copy", [a_self]() {
 						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
 							// the engine picks the thread an art effect updates on: logged once each way
-							static std::atomic_bool onPostLoad{ false }, offPostLoad{ false };
-							const bool              same = std::this_thread::get_id() == gPostLoadThread;
-							if (!(same ? onPostLoad : offPostLoad).exchange(true)) {
-								SKSE::log::info("colors: a ward copy updated {} the thread SKSE's post-load ran on", same ? "on" : "OFF");
+							static std::atomic_bool onMain{ false }, offMain{ false };
+							const auto              task = gTaskThread.load();
+							const bool              mainThread = std::this_thread::get_id() == task;
+							if (task != std::thread::id{} && !(mainThread ? onMain : offMain).exchange(true)) {
+								SKSE::log::info("colors: a ward copy updated {} the main thread", mainThread ? "on" : "OFF");
 							}
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(a_self->artObject3D.get(), art->second) ? 1 : 0;
@@ -794,6 +796,26 @@ namespace Plugin
 					});
 				}
 				return alive;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// a magic caster's update: the ward in the hand - attached by the caster itself (its casting art), never as an art
+		// effect - painted the frame it appears
+		struct HandHook
+		{
+			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
+			{
+				func(a_self, a_delta);
+				auto* root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
+				if (root && a_self->castingArt) {
+					Guarded("a new ward in the hand", [a_self, root]() {
+						if (const auto art = gArtOf.find(a_self->castingArt); art != gArtOf.end()) {
+							std::scoped_lock l{ gLock };
+							gNewCopies += PaintStale(root, art->second) ? 1 : 0;
+						}
+					});
+				}
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -909,9 +931,10 @@ namespace Plugin
 	void InstallCopyPaint()
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ModelReferenceEffect[0] };
-		gPostLoadThread = std::this_thread::get_id();
 		CopyHook::func = vtbl.write_vfunc(0x28, CopyHook::thunk);
-		SKSE::log::info("colors: a ward copy is painted the frame it appears (the art effect's update hook is in)");
+		REL::Relocation<std::uintptr_t> casters{ RE::VTABLE_ActorMagicCaster[0] };
+		HandHook::func = casters.write_vfunc(REL::Relocate(0x1D, 0x1D, 0x1F), HandHook::thunk);
+		SKSE::log::info("colors: a ward copy is painted the frame it appears (the art effect's and the magic caster's update hooks are in)");
 	}
 
 	nlohmann::json ColorsReport()
@@ -946,11 +969,18 @@ namespace Plugin
 		gKeptTest = std::clamp(a_percent, -1, 100);
 	}
 
-	// the 2 s art watch (main thread): the palettes a recolor replaced, and the copies nothing shows any more
+	// the 2 s art watch (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
+	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass
 	void ReleaseOld()
 	{
 		std::scoped_lock l{ gLock };
 		Bury();
-		std::erase_if(gCopies, [](const Copy& a_c) { return a_c.root->GetRefCount() <= 1; });
+		std::erase_if(gCopies, [](const Copy& a_c) {
+			if (a_c.root->GetRefCount() > 1) {
+				return false;
+			}
+			a_c.root->DecRefCount();
+			return true;
+		});
 	}
 }

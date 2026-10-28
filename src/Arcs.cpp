@@ -14,6 +14,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+#include <cstdint>
+
 // Reticle Arcs' own header (theirs, MIT) needs GetModuleHandleW / GetProcAddress; its warnings are not ours
 #include <Windows.h>
 #pragma warning(push, 0)
@@ -81,6 +84,13 @@ namespace
 	std::atomic_bool   gRegistered{ false };
 	std::atomic_bool   gShown{ false };
 	std::atomic<float> gPercent{ 0.0f };
+	// when Reticle Arcs last asked (it skips kill moves, killcams and paused menus): the report says how old its reading is
+	std::atomic<std::int64_t> gAskedAt{ 0 };
+
+	std::int64_t NowMs()
+	{
+		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	}
 
 	// Reticle Arcs calls this on the main thread every frame
 	void Update(float a_delta, BarState& a_state)
@@ -88,6 +98,7 @@ namespace
 		Plugin::Guarded("reticle arcs bar", [&]() {
 			auto*       player = RE::PlayerCharacter::GetSingleton();
 			const auto* ward = player ? WardUp(*player) : nullptr;
+			gAskedAt = NowMs();
 			gShown = false;
 			if (!ward) {
 				gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
@@ -152,6 +163,8 @@ namespace Plugin
 
 	nlohmann::json ArcBarReport()
 	{
-		return { { "registered", gRegistered.load() }, { "shown", gShown.load() }, { "percent", gPercent.load() }, { "alwaysOnBar", AlwaysOnBar() } };
+		const auto asked = gAskedAt.load();
+		return { { "registered", gRegistered.load() }, { "shown", gShown.load() }, { "percent", gPercent.load() }, { "alwaysOnBar", AlwaysOnBar() },
+			{ "ageMs", asked ? NowMs() - asked : -1 } };
 	}
 }

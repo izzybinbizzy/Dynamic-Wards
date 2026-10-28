@@ -971,6 +971,7 @@ namespace Plugin
 	{
 		// one check waiting at a time: a long load would otherwise queue one every 2 s
 		Every(std::chrono::seconds(2), "art watch", []() {
+			gTaskThread = std::this_thread::get_id();
 			std::size_t swapped = 0;
 			{
 				std::scoped_lock l{ gLock };
@@ -1010,16 +1011,16 @@ namespace Plugin
 		// ability given back and the game's equip step each tell other mods at once
 		struct ShieldMoves
 		{
-			std::vector<std::pair<const ShieldEntry*, RE::EffectSetting*>>   entries;   // an entry and the ward it raises now
-			std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> crusader;  // a Legacy shield and the enchantment it wore
+			std::vector<std::pair<const ShieldEntry*, RE::EffectSetting*>>   entries{};   // an entry and the ward it raises now
+			std::vector<std::pair<RE::TESObjectARMO*, RE::EnchantmentItem*>> crusader{};  // a Legacy shield and the enchantment it wore
 		};
 
 		struct Applied
 		{
 			bool                                         artChanged = false;
-			std::unordered_set<const RE::EffectSetting*> castChanged;  // the effects whose casting art moved in this apply
-			ShieldMoves                                  shields;
-			std::vector<HandCall>                        hands;
+			std::unordered_set<const RE::EffectSetting*> castChanged{};  // the effects whose casting art moved in this apply
+			ShieldMoves                                  shields{};
+			std::vector<HandCall>                        hands{};
 			Changes                                      changes;
 			std::string                                  why;
 			std::size_t                                  targets = 0, dressed = 0;
