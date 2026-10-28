@@ -1198,6 +1198,9 @@ namespace Plugin
 			if (gHandGlobal) {
 				gHandGlobal->value = light ? 1.0f : 0.0f;
 			}
+			if (gPresentGlobal) {
+				gPresentGlobal->value = 1.0f;  // a leftover plugin's global of that name, restored to 0 by a save, reads 1 again
+			}
 			gDressed = dressed;
 			gLastApply = a_why ? a_why : "?";
 			SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) to re-equip; ward light {}, colored lights {}; dome {}; unlisted mods {}",
