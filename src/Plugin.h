@@ -195,7 +195,7 @@ namespace Plugin
 	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
 	void InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
 	// what the game had, noted by each apply (ApplyLocked, gLock held) and swapped in whole by PublishTheirs at its end
-	void                 NoteTheirArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs);
+	void                 NoteTheirArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs, RE::BGSArtObject* a_empty);
 	void                 NoteGameArt(const RE::BGSArtObject* a_theirs, std::size_t a_row, bool a_hand, bool a_looping, bool a_360);  // a Vanilla row's own art
 	void                 NoteKeepArt(const RE::BGSArtObject* a_theirs);                                                              // the art of a ward we leave alone: no look ever reaches it
 	void                 NoteTheirLight(const RE::EffectSetting* a_effect, const RE::TESObjectLIGH* a_light);

@@ -1054,19 +1054,18 @@ namespace Plugin
 					}
 				} else {
 					// another caster on the Vanilla look wears what the effect itself had: the empty art where it had none
-					const auto own = [](RE::BGSArtObject* a_own) { return a_own ? a_own : gEmpty; };
 					const auto w = DressOf(t, a);
 					if (w.cast) {
 						Put(d.castingArt, w.cast, c.art);
-						NoteTheirArt(t.effect, w.cast, own(t.ownCast));
+						NoteTheirArt(t.effect, w.cast, t.ownCast, gEmpty);
 					}
 					if (w.hit) {
 						Put(d.hitEffectArt, w.hit, c.art);
-						NoteTheirArt(t.effect, w.hit, own(t.ownHit));
+						NoteTheirArt(t.effect, w.hit, t.ownHit, gEmpty);
 					}
 					if (w.ench) {
 						Put(d.enchantEffectArt, w.ench, c.art);
-						NoteTheirArt(t.effect, w.ench, own(t.ownEnch));
+						NoteTheirArt(t.effect, w.ench, t.ownEnch, gEmpty);
 					}
 					if (w.cast || w.hit || w.ench) {
 						++dressed;

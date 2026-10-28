@@ -266,16 +266,20 @@ namespace Plugin
 		return LookInstalled(a_look);
 	}
 
-	void NoteTheirArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs)
+	void NoteTheirArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_ours, RE::BGSArtObject* a_theirs, RE::BGSArtObject* a_empty)
 	{
-		if (!a_effect || !a_ours || !a_theirs || a_ours == a_theirs) {
+		auto* had = a_theirs ? a_theirs : a_empty;
+		if (!a_effect || !a_ours || !had || a_ours == had) {
 			return;
 		}
 		auto& mine = gNext.of[a_effect];
 		if (std::ranges::find(mine, a_ours, &ArtPair::first) == mine.end()) {
-			mine.emplace_back(a_ours, a_theirs);
+			mine.emplace_back(a_ours, had);
 		}
-		gNext.first.try_emplace(a_ours, a_theirs);
+		// no effect known (the hand's casting art): only real art, so one effect that had none never empties every caster's hands
+		if (a_theirs) {
+			gNext.first.try_emplace(a_ours, a_theirs);
+		}
 	}
 
 	void NoteGameArt(const RE::BGSArtObject* a_theirs, std::size_t a_row, bool a_hand, bool a_looping, bool a_360)
