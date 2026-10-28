@@ -248,7 +248,7 @@ namespace
 		std::memcpy(rgba.data() + 92, &rFirst, 4);
 		std::memcpy(rgba.data() + 100, &bLast, 4);
 		CHECK(!PaletteFromDds(rgba, why));  // red and blue the other way round
-		// one mip down: the 2x2 average; a side of one keeps its texels, an odd side's edge texel counts twice
+		// one mip down: the 2x2 average; a side of one counts its texel twice, an odd side's last texel is left out (the 90)
 		CHECK(NextMip({ 0, 0, 0, 0, 100, 100, 100, 100, 200, 200, 200, 200, 40, 40, 40, 40 }, 2, 2) == std::vector<std::uint8_t>(4, 85));
 		CHECK(NextMip({ 10, 10, 10, 10, 30, 30, 30, 30, 90, 90, 90, 90 }, 3, 1) == std::vector<std::uint8_t>(4, 20));
 		// a 4x1 grey ramp: black, dark, mid, white

@@ -383,7 +383,8 @@ namespace Plugin
 		return p;
 	}
 
-	// one mip level down (4 bytes a texel): each texel the average of its 2x2 block, an odd side's edge texel counted twice
+	// one mip level down (4 bytes a texel): each texel the average of its 2x2 block; an odd side's last texel is left out, a side
+	// of one counts its texel twice
 	inline std::vector<std::uint8_t> NextMip(const std::vector<std::uint8_t>& a_prev, int a_pw, int a_ph)
 	{
 		const int                 w = (std::max)(1, a_pw / 2), h = (std::max)(1, a_ph / 2);
