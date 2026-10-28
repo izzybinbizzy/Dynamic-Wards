@@ -137,7 +137,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
 	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
-		return false;
+		return true;
 	}
 	// the version the DLL declares (xmake.lua set_version), never a typed number - 3.1's log still said "3.0"
 	const auto* decl = SKSE::PluginDeclaration::GetSingleton();

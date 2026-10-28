@@ -4,8 +4,8 @@
 // A DLL built for Skyrim SE / AE that Skyrim VR loads - or the VR build that SE / AE loads - reads the other game's addresses and
 // crashes the game while it loads, and CommonLib cannot tell (a build for one game has IsVR fixed). This reads only the game's
 // own file version (CommonLib's reading: minor 4 = VR, 5 = SE, 6 and up = AE), never a game address. Call it first thing in
-// SKSEPluginLoad, right after SKSE::Init: on the wrong game it names the file to install in a Windows box and in the log, and
-// the plugin returns false and stays off.
+// SKSEPluginLoad, right after SKSE::Init: on the wrong game it names the file to install in a Windows box and in the log; the
+// plugin's load then returns TRUE and does nothing else (a false makes SKSE add its own "exit game?" box over this one).
 #pragma once
 
 #include "REX/W32/USER32.h"
