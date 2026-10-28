@@ -806,16 +806,16 @@ namespace Plugin
 		{
 			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
 			{
+				// before the update: its first call attaches the casting art, which another caster takes in his look
+				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
 				func(a_self, a_delta);
 				auto* root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
 				if (root && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
 					Guarded("a new ward in the hand", [a_self, root]() {
 						static std::array<std::atomic_bool, 2> seen{};
 						NoteThread(seen, "colors: a ward in the hand updated");
-						// before gLock: his look reads the settings
-						const auto* wear = ArtFor(a_self->actor, a_self->castingArt);
-						const auto  art = wear ? gArtOf.find(wear) : gArtOf.end();
-						if (art != gArtOf.end()) {
+						// the art attached is already his look's (LookHandArt): painted from its own palettes, no look read per frame
+						if (const auto art = gArtOf.find(a_self->castingArt); art != gArtOf.end()) {
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(root, art->second) ? 1 : 0;
 						}

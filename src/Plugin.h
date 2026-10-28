@@ -208,16 +208,15 @@ namespace Plugin
 	void                 PublishTheirs();
 	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
 	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	// the art of ours a caster's ward wears in his look (the hand hook: his magic caster attaches the casting art itself, past
-	// the art effect's Init); a_art when it is the player's look or not ours, nullptr for the game's own art
-	const RE::BGSArtObject* ArtFor(RE::TESObjectREFR* a_caster, const RE::BGSArtObject* a_art);
-	void                    NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
+	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) before it loads one
+	void           LookHandArt(RE::ActorMagicCaster* a_caster);
+	void           NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
-	void                    ResolveFactions();                        // data load, after MakeArt
-	bool                    FactionLoaded(std::size_t a_look);        // a group look, or a faction look whose plugin is loaded
-	bool                    LookArtInstalled(std::size_t a_look);
-	nlohmann::json          OthersReport();
-	void                    SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
+	void           ResolveFactions();                                 // data load, after MakeArt
+	bool           FactionLoaded(std::size_t a_look);                 // a group look, or a faction look whose plugin is loaded
+	bool           LookArtInstalled(std::size_t a_look);
+	nlohmann::json OthersReport();
+	void           SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
 	void           RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
 	bool           ArcBarRegistered();
