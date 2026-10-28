@@ -18,6 +18,8 @@
 
 #include "Plugin.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
 #include <numbers>
 
@@ -565,7 +567,7 @@ namespace Plugin
 		gShadowTest = a_on;
 	}
 
-	std::string DomeLightsReport()
+	nlohmann::json DomeLightsReport()
 	{
 		std::scoped_lock l{ gLock };
 		const auto*      player = RE::PlayerCharacter::GetSingleton();
@@ -575,8 +577,8 @@ namespace Plugin
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
 		}
-		return std::format(R"({{"models":{},"mode":{},"active":{},"lit":{},"hand1st":[{},{}],"handLights":{},"hand1stMade":{},"shadow":{},"ambient":[{:.3f},{:.3f},{:.3f}]}})",
-			gSpecs.size(), static_cast<int>(gMode.load()), Wanted(), gLit.size(), leftLit, rightLit, lights, gHandsMade, gShadowTest.load(),
-			gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue);
+		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
+			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
+			{ "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
 	}
 }

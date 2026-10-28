@@ -16,16 +16,17 @@
 //   SettingsText.h     game-free: DynamicWards.ini as one table, its reader and writer - tested off the game
 //   Settings.cpp       the live settings table and its accessors, the file read at load and saved after each change
 //   Wards.cpp          which effects are wards, what each wears, the shields' switches, the 360 unlock, the hand refresh
-//   Colors.cpp         each row's color made in memory: palettes on the graphics card, glow on the cached model
+//   Colors.cpp         each row's color made in memory: palettes on the graphics card, glow on each ward copy as it appears
 //   Lighting.cpp       which lighting runs (found, never picked)                   DomeLights.cpp  the lights we hang
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
-//   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, JSON text, form lookups
+//   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, form lookups
 //   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)
 //   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h are the master
 //                      copies the other plugins carry word for word
 //   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
 
 #include "Plugin.h"
+#include "RuntimeGuard.h"
 #include "Translation.h"
 
 using namespace Plugin;
@@ -103,6 +104,7 @@ namespace
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
 			InstallOthers();
+			InstallCopyPaint();
 			OfferToDevBench();
 			RegisterArcBar();
 			break;
@@ -134,6 +136,9 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::Init(a_skse);
+	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
+		return true;
+	}
 	// the version the DLL declares (xmake.lua set_version), never a typed number - 3.1's log still said "3.0"
 	const auto* decl = SKSE::PluginDeclaration::GetSingleton();
 	const auto  ver = decl ? std::format("{}.{}", decl->GetVersion().major(), decl->GetVersion().minor()) : std::string("?");

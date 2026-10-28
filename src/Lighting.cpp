@@ -20,6 +20,8 @@
 
 #include "Plugin.h"
 
+#include <nlohmann/json.hpp>
+
 #include <Windows.h>
 #include <TlHelp32.h>
 
@@ -151,10 +153,9 @@ namespace Plugin
 		return gIsl.load();
 	}
 
-	std::string LightingReport()
+	nlohmann::json LightingReport()
 	{
-		return std::format(R"({{"pick":{},"seen":{},"effects11":{},"inverseSquare":{},"communityShaders":{},"enbRunning":{},"enbFiles":{}}})",
-			static_cast<int>(gPick.load()), static_cast<int>(gSeen.load()), gE11.load(), gIsl.load(), gCs.load(), gEnbRunning.load(),
-			gEnbFiles.load());
+		return { { "pick", static_cast<int>(gPick.load()) }, { "seen", static_cast<int>(gSeen.load()) }, { "effects11", gE11.load() },
+			{ "inverseSquare", gIsl.load() }, { "communityShaders", gCs.load() }, { "enbRunning", gEnbRunning.load() }, { "enbFiles", gEnbFiles.load() } };
 	}
 }
