@@ -46,7 +46,7 @@ namespace
 				static std::atomic<bool> toldLoad{ false };
 				static std::atomic<bool> toldMenu{ false };
 				if (name == RE::LoadingMenu::MENU_NAME) {
-					if (!Later("loading screen closed", []() { ApplyAll("loading screen closed"); }) && !toldLoad.exchange(true)) {
+					if (!Later(kWhyLoadingScreen, []() { ApplyAll(kWhyLoadingScreen); }) && !toldLoad.exchange(true)) {
 						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
@@ -75,7 +75,7 @@ namespace
 		MakeArt();
 		ResolveFactions();
 		FindWards();
-		ApplyAll("data loaded");
+		ApplyAll(kWhyDataLoaded);
 		StartDomeLights();
 		WatchArt();
 		SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
@@ -110,11 +110,11 @@ namespace
 			OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
-			ApplyAll("game loaded");
+			ApplyAll(kWhyGameLoaded);
 			WatchBlocking();
 			break;
 		case SKSE::MessagingInterface::kNewGame:
-			ApplyAll("new game");
+			ApplyAll(kWhyNewGame);
 			WatchBlocking();
 			break;
 		default:

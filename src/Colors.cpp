@@ -852,7 +852,10 @@ namespace Plugin
 			gLiveDomes = std::ranges::any_of(drag, [](const auto& a_d) { return a_d.has_value(); }) ? RepaintLive(&drag) : 0;
 			return changed;  // the log keeps the apply made when the mouse is let go
 		}
-		gSkippedWhileHeld = skipped;                                   // a held slider let go unchanged applies them (SkippedWhileHeld)
+		gSkippedWhileHeld = skipped;
+		if (skipped && !ColorHeld()) {
+			CatchUpAfterHold();  // let go while this apply ran: the release found nothing to catch up yet
+		}
 		gLiveDomes = changed || liveStale ? RepaintLive(nullptr) : 0;  // a call that changed nothing repainted nothing (CodeRabbit, PR #3)
 		SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted{}", gSwaps - swaps,
 			gSwapFails - fails, gEdits - edits, gLiveDomes,
@@ -861,9 +864,11 @@ namespace Plugin
 		return changed;
 	}
 
-	bool SkippedWhileHeld()
+	void CatchUpAfterHold()
 	{
-		return gSkippedWhileHeld.exchange(false);
+		if (gSkippedWhileHeld.exchange(false) && !Later("a held control let go", []() { ApplyAll("menu"); })) {
+			SKSE::log::warn("colors: the apply that waited for a held control could not be queued - the next change brings the wards up to date");
+		}
 	}
 
 	std::string ColorsReport()

@@ -160,10 +160,8 @@ namespace Plugin
 				gHeldEdit = false;
 				Changed();
 			} else if (IsItemDeactivated()) {
-				gHeldEdit = false;  // let go without a change: nothing new to save
-				if (SkippedWhileHeld()) {
-					Changed();  // an apply that waited for this slider lands now
-				}
+				gHeldEdit = false;  // let go without a change: nothing to save
+				CatchUpAfterHold();
 			}
 		}
 

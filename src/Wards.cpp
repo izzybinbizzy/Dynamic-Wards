@@ -1078,7 +1078,7 @@ namespace Plugin
 			// as seen, and the menu's apply when the drag ends would re-equip nothing (the 3.5 code review)
 			const std::string_view why = a_why ? a_why : "";
 			const bool             takesHands = why == "menu" || why == "devbench";
-			const bool             fresh = why == "game loaded" || why == "new game" || why == "loading screen closed" || why == "data loaded";
+			const bool             fresh = why == kWhyGameLoaded || why == kWhyNewGame || why == kWhyLoadingScreen || why == kWhyDataLoaded;
 			const auto             handRows = takesHands || fresh ? TakeHandLookChanges() : std::array<bool, kRows>{};
 			out.artChanged = c.art != 0;
 			if (takesHands) {

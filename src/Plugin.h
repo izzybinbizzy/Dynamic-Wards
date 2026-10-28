@@ -51,6 +51,12 @@ namespace Plugin
 	};
 	void ApplyScheme(const Scheme& a_scheme);  // Settings.cpp; the caller saves and applies
 
+	// ApplyAll's reasons after which the game equips everything afresh (main.cpp sends them; Wards.cpp drops what the hands owed)
+	inline constexpr const char* kWhyDataLoaded = "data loaded";
+	inline constexpr const char* kWhyGameLoaded = "game loaded";
+	inline constexpr const char* kWhyNewGame = "new game";
+	inline constexpr const char* kWhyLoadingScreen = "loading screen closed";
+
 	// Wards.cpp: which effects are wards, and what each wears
 	void                                             MakeArt();                       // data load: each row's neutral art, in memory
 	void                                             FindWards();                     // data load: every ward, by the 1.0 table and by what it is
@@ -211,7 +217,7 @@ namespace Plugin
 
 	void RegisterMenu();
 	bool ColorHeld();         // Menu.cpp: a color or a slider is held - a background apply leaves the cached models alone
-	bool SkippedWhileHeld();  // Colors.cpp: an apply left the cached models alone while something was held (asking clears it)
+	void CatchUpAfterHold();  // Colors.cpp: a held color or slider let go - an apply that left the cached models alone meanwhile is queued (nothing saved)
 	void FlushHeldColor();    // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
