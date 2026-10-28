@@ -428,6 +428,14 @@ namespace
 		WriteSettingsText(SettingsValues{}, d);
 		const auto dflt = Read(d.str());
 		CHECK(dflt.opacity == 100 && dflt.transparency == 0 && dflt.shieldDome[0] == 2 && dflt.mods.empty() && !dflt.alwaysOnBar);
+		// a file from before AlwaysOnWardBar: the key is absent, so the default holds
+		std::string legacy = d.str();
+		const auto  key = legacy.find("AlwaysOnWardBar=");
+		CHECK(key != std::string::npos);
+		if (key != std::string::npos) {
+			legacy.erase(key, legacy.find('\n', key) - key);
+			CHECK(!Read(legacy).alwaysOnBar);
+		}
 
 		// what a row wears
 		SettingsValues s;

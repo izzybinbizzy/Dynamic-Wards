@@ -50,15 +50,21 @@ namespace
 			return nullptr;
 		}
 		using Flag = RE::ActiveEffect::Flag;
-		const bool alwaysOn = Plugin::AlwaysOnBar();
+		const bool               alwaysOn = Plugin::AlwaysOnBar();
+		const RE::EffectSetting* dome = nullptr;
 		for (auto* ae : *list) {
 			const auto* base = ae && ae->effect && ae->flags.none(Flag::kInactive, Flag::kDispelled) ? ae->GetBaseObject() : nullptr;
-			if (base && base->data.primaryAV == RE::ActorValue::kWardPower && !base->IsDetrimental() &&
-				(!Passive(*ae, *base) || (alwaysOn && Plugin::AlwaysOnDome(base)))) {
-				return base;
+			if (!base || base->data.primaryAV != RE::ActorValue::kWardPower || base->IsDetrimental()) {
+				continue;
+			}
+			if (!Passive(*ae, *base)) {
+				return base;  // a cast ward wins over an always-on dome listed before it
+			}
+			if (!dome && alwaysOn && Plugin::AlwaysOnDome(base)) {
+				dome = base;
 			}
 		}
-		return nullptr;
+		return dome;
 	}
 
 	void Fill(BarState& a_state, float a_percent)

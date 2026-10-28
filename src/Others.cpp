@@ -241,8 +241,9 @@ namespace Plugin
 	// Another caster's ward IN THE HAND wears his look from the start. His magic caster attaches its casting art itself
 	// (CheckAttachCastingArt, the first call of its update - never an art effect, so InitHook never sees it): the hand hook calls
 	// this before that update, and while nothing is loading or attached yet the caster is handed the art his look wears. A model
-	// already loading stays as it is (logged once). Any thread: no allocation; the tables are read-only after data load, GameArt
-	// takes gLock
+	// already loading stays as it is (logged once). It runs inside his caster's own update, on whatever thread the game runs
+	// that update: the castingArt it sets is read next by that same update, so no other thread is between the write and the
+	// attach. No allocation; the tables are read-only after data load, GameArt takes gLock
 	void LookHandArt(RE::ActorMagicCaster* a_caster)
 	{
 		auto* art = a_caster ? a_caster->castingArt : nullptr;

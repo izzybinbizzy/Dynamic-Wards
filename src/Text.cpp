@@ -6,8 +6,30 @@
 
 #include "Plugin.h"
 
+#include <nlohmann/json.hpp>
+
 namespace Plugin
 {
+	namespace
+	{
+		// a name in the game's own code page stays distinct in a readout: valid UTF-8 as it is, otherwise every byte above
+		// 0x7F as \xNN (the readout's dump would turn each into the same U+FFFD)
+		std::string Readable(std::string_view a_text)
+		{
+			try {
+				(void)nlohmann::json(a_text).dump();
+				return std::string(a_text);
+			} catch (const nlohmann::json::exception&) {
+				std::string out;
+				for (const char c : a_text) {
+					const auto b = static_cast<unsigned char>(c);
+					out += b < 0x80 ? std::string(1, c) : std::format("\\x{:02X}", b);
+				}
+				return out;
+			}
+		}
+	}
+
 	std::string Where(const RE::TESForm* a_form)
 	{
 		if (!a_form) {
@@ -15,8 +37,8 @@ namespace Plugin
 		}
 		const char* id = a_form->GetFormEditorID();
 		const auto* file = a_form->GetFile(0);
-		return std::format("{} | {:08X} | {}", id && *id ? id : "(no editor ID)", a_form->GetFormID(),
-			file ? file->GetFilename() : "(created)");
+		return std::format("{} | {:08X} | {}", id && *id ? Readable(id) : "(no editor ID)", a_form->GetFormID(),
+			file ? Readable(file->GetFilename()) : "(created)");
 	}
 
 	RE::TESForm* ResolveForm(std::string_view a_text)
