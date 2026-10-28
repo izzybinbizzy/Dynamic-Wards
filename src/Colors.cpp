@@ -750,7 +750,8 @@ namespace Plugin
 		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
 		// with gLock NOT held: the art hook takes gLock inside the game's update, so holding ours here while asking for the
 		// game's could deadlock. gArtOf is read-only once gReady. Another caster's hands follow at his next update (the menu is
-		// open only while the game stands still, and then only hers are on show)
+		// open only while the game stands still, and then only hers are on show); a look switched to or from Vanilla reaches
+		// his hand at his next cast - the art he holds is his old look's
 		std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> LiveCopies()
 		{
 			std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> live;
@@ -814,17 +815,16 @@ namespace Plugin
 				// before the update: its first call attaches the casting art, which another caster takes in his look
 				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
 				func(a_self, a_delta);
-				auto* root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				if (root && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
+				auto*      root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
+				const auto art = root && a_self->castingArt ? gArtOf.find(a_self->castingArt) : gArtOf.end();
+				if (art != gArtOf.end()) {
 					gHandOurs.fetch_add(1, std::memory_order_relaxed);
-					Guarded("a new ward in the hand", [a_self, root]() {
+					Guarded("a new ward in the hand", [root, &art]() {
 						static std::array<std::atomic_bool, 2> seen{};
 						NoteThread(seen, "colors: a ward in the hand updated");
 						// the art attached is already his look's (LookHandArt): painted from its own palettes, no look read per frame
-						if (const auto art = gArtOf.find(a_self->castingArt); art != gArtOf.end()) {
-							std::scoped_lock l{ gLock };
-							gNewCopies += PaintStale(root, art->second) ? 1 : 0;
-						}
+						std::scoped_lock l{ gLock };
+						gNewCopies += PaintStale(root, art->second) ? 1 : 0;
 					});
 				}
 			}

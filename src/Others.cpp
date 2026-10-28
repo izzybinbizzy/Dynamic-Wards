@@ -414,6 +414,7 @@ namespace Plugin
 			                                                                                           "mine";
 			out[std::string(kLookTokens[i])] = { { "mode", mode }, { "color", HexColor(p.color) }, { "installed", LookInstalled(i) }, { "loaded", FactionLoaded(i) } };
 		}
-		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "looks", std::move(out) } };
+		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() }, { "handLate", gHandLate.load() },
+			{ "looks", std::move(out) } };
 	}
 }
