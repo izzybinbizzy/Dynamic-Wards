@@ -85,6 +85,23 @@ namespace Plugin
 			gS.rows[a_row] = { a_mode, a_color & 0xFFFFFF };
 		}
 	}
+	LookPick LookOf(std::size_t a_look)
+	{
+		std::scoped_lock l{ gLock };
+		return a_look < kLooks ? gS.looks[a_look] : LookPick{};
+	}
+	std::array<LookPick, kLooks> Looks()
+	{
+		std::scoped_lock l{ gLock };
+		return gS.looks;
+	}
+	void SetLook(std::size_t a_look, LookPick a_pick)
+	{
+		std::scoped_lock l{ gLock };
+		if (a_look < kLooks && (a_pick.mode != LookMode::kDefault || a_look >= kGroups)) {
+			gS.looks[a_look] = { a_pick.mode, a_pick.color & 0xFFFFFF };
+		}
+	}
 	Color LadderColor()
 	{
 		std::scoped_lock l{ gLock };
@@ -319,5 +336,17 @@ namespace Plugin
 		}
 		std::scoped_lock l{ gLock };
 		return RowColorOf(gS, a_row);
+	}
+
+	std::optional<Color> SlotColor(std::size_t a_slot)
+	{
+		if (a_slot < kRows) {
+			return RowColor(a_slot);
+		}
+		std::scoped_lock l{ gLock };
+		if (a_slot < kSlots && gS.looks[a_slot - kRows].mode == LookMode::kCustom) {
+			return gS.looks[a_slot - kRows].color;
+		}
+		return std::nullopt;
 	}
 }

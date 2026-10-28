@@ -12,7 +12,15 @@ namespace Plugin
 		RE::BGSReferenceEffect* PapyrusFlashFor(RE::StaticFunctionTag*, RE::EffectSetting* a_effect)
 		{
 			RE::BGSReferenceEffect* flash = nullptr;
-			Guarded("DynamicWards.FlashFor", [&]() { flash = FlashFor(a_effect); });
+			Guarded("DynamicWards.FlashFor", [&]() { flash = FlashFor(a_effect, nullptr); });
+			return flash;
+		}
+
+		// 4.0's SphereWard names the ward's wearer, so another caster's ward flashes in his look
+		RE::BGSReferenceEffect* PapyrusFlashForCaster(RE::StaticFunctionTag*, RE::EffectSetting* a_effect, RE::Actor* a_caster)
+		{
+			RE::BGSReferenceEffect* flash = nullptr;
+			Guarded("DynamicWards.FlashForCaster", [&]() { flash = FlashFor(a_effect, a_caster); });
 			return flash;
 		}
 	}
@@ -23,7 +31,8 @@ namespace Plugin
 			return false;
 		}
 		a_vm->RegisterFunction("FlashFor", "DynamicWards", PapyrusFlashFor);
-		SKSE::log::info("Papyrus: DynamicWards.FlashFor registered");
+		a_vm->RegisterFunction("FlashForCaster", "DynamicWards", PapyrusFlashForCaster);
+		SKSE::log::info("Papyrus: DynamicWards.FlashFor and FlashForCaster registered");
 		return true;
 	}
 }

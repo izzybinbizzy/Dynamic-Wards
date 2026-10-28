@@ -36,6 +36,58 @@ namespace Plugin
 
 	// colors are 0xRRGGBB; the ladder runs from white to one color
 	using Color = std::uint32_t;
+
+	// Other casters' looks: Followers, Enemies (hostile to the player), Neutral, then the faction groups - one color each, on
+	// meshes of their own (`<kind> - <token>.nif`, wardgen LOOK3_ROWS). A look is the art slot kRows + its index; the player's
+	// nine rows stay slots 0..kRows-1.
+	inline constexpr std::string_view kLookTokens[] = { "Followers", "Enemies", "Neutral", "College", "Thalmor", "PenitusOculatus",
+		"Vigilants", "Legion", "Stormcloaks", "Cultists", "DragonPriests", "Afflicted", "Thralls", "Forsworn", "Hagravens",
+		"Necromancers", "Dremora", "Falmer", "Draugr", "Bandits", "HostileMages" };
+	inline constexpr std::size_t      kLooks = std::size(kLookTokens);
+	inline constexpr std::size_t      kSlots = kRows + kLooks;
+	inline constexpr std::size_t      kFollowers = 0, kEnemies = 1, kNeutral = 2, kGroups = 3;  // the looks before the factions
+
+	// what a look does: the player's own look, a color of its own, the game's own art, or (a faction only) pass the caster on
+	// to Enemies / Neutral
+	enum class LookMode : int
+	{
+		kMine = 0,
+		kCustom = 1,
+		kVanilla = 2,
+		kDefault = 3,
+	};
+
+	struct LookPick
+	{
+		LookMode mode = LookMode::kMine;
+		Color    color = 0xFFFFFF;
+
+		friend bool operator==(const LookPick&, const LookPick&) = default;
+	};
+
+	// nothing changes until the player picks: the three groups wear the player's look, every faction passes its casters on
+	inline constexpr std::array<LookPick, kLooks> DefaultLooks()
+	{
+		std::array<LookPick, kLooks> out{};
+		for (std::size_t i = kGroups; i < kLooks; ++i) {
+			out[i].mode = LookMode::kDefault;
+		}
+		return out;
+	}
+
+	// the look a caster who is not the player wears: a follower always the Followers look; else the first faction group in
+	// list order he is in whose pick is not Default (a_faction, kLooks when none); else Enemies when he is hostile to the
+	// player, Neutral when not
+	inline std::size_t LookFor(bool a_follower, bool a_hostile, std::size_t a_faction)
+	{
+		if (a_follower) {
+			return kFollowers;
+		}
+		if (a_faction >= kGroups && a_faction < kLooks) {
+			return a_faction;
+		}
+		return a_hostile ? kEnemies : kNeutral;
+	}
 	inline constexpr Color kWhite = 0xFFFFFF;
 	struct Preset
 	{
@@ -142,6 +194,13 @@ namespace Plugin
 			return std::nullopt;
 		}
 		return v;
+	}
+
+	// a slot's token: a row's, then a look's
+	inline std::string_view SlotToken(std::size_t a_slot)
+	{
+		return a_slot < kRows ? kTokens[a_slot] : a_slot < kSlots ? kLookTokens[a_slot - kRows] :
+		                                                            std::string_view();
 	}
 
 	// the row of a token ("Adept" -> 2), any case; kRows when it is none
