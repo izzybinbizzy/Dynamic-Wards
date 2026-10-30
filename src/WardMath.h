@@ -18,6 +18,7 @@
 #include <cstring>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -523,5 +524,32 @@ namespace Plugin
 			out[i] = 1.0f - scale * (1.0f - rgb[i] / mx);
 		}
 		return out;
+	}
+
+	// Which of a magic caster's art objects is one of ours (a_known says): the casting art it holds, else the one it held before this
+	// update (the update may clear it once the art is attached); only when it held none at all, and only where a_spellRoute allows it
+	// (her own casters), the casting art one of its current spell's effects carries. Another art held is never tied to one of ours
+	// through its spell, and another caster's hand, dressed in his look's art, never takes the spell's base art
+	template <class Art, class Known>
+	[[nodiscard]] const Art* FindOurHandArt(
+		const Art* a_now, const Art* a_before, std::span<const Art* const> a_spell, bool a_spellRoute, Known&& a_known, bool& a_viaSpell)
+	{
+		a_viaSpell = false;
+		if (a_now && a_known(a_now)) {
+			return a_now;
+		}
+		if (a_before && a_before != a_now && a_known(a_before)) {
+			return a_before;
+		}
+		if (a_now || a_before || !a_spellRoute) {
+			return nullptr;
+		}
+		for (const Art* art : a_spell) {
+			if (art && a_known(art)) {
+				a_viaSpell = true;
+				return art;
+			}
+		}
+		return nullptr;
 	}
 }

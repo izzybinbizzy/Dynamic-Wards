@@ -749,38 +749,29 @@ namespace Plugin
 
 		using ArtIt = std::unordered_map<const RE::BGSArtObject*, ArtOf>::const_iterator;
 
-		// The art object of ours a magic caster's attached art came from: the castingArt it holds (a_before: what it held before this
-		// update, which may clear it once the art is attached); when it holds none, the casting art one of its current spell's effects
-		// carries. A caster holding another art is never tied to one of ours through its spell
-		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_before, bool& a_viaSpell)
+		// The art object of ours a magic caster's attached art came from (WardMath.h FindOurHandArt): the castingArt it holds, the one it held
+		// before this update, or - a_spellRoute, her own casters only, and only when it holds none - the casting art its current spell's effects carry
+		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_before, bool a_spellRoute, bool& a_viaSpell)
 		{
-			a_viaSpell = false;
-			const RE::BGSArtObject* const held[] = { a_self->castingArt, a_before };
-			bool                          any = false;
-			for (const auto* art : held) {
-				if (art) {
-					any = true;
-					if (const auto it = gArtOf.find(art); it != gArtOf.end()) {
-						return it;
-					}
-				}
-			}
-			if (!any && a_self->currentSpell) {
+			std::array<const RE::BGSArtObject*, 8> spell{};
+			std::size_t                            n = 0;
+			if (a_spellRoute && !a_self->castingArt && !a_before && a_self->currentSpell) {
 				for (const auto* e : a_self->currentSpell->effects) {
-					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-					if (const auto it = art ? gArtOf.find(art) : gArtOf.end(); it != gArtOf.end()) {
-						a_viaSpell = true;
-						return it;
+					if (n < spell.size()) {
+						spell[n++] = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
 					}
 				}
 			}
-			return gArtOf.end();
+			const auto* art = FindOurHandArt<RE::BGSArtObject>(
+				a_self->castingArt, a_before, std::span(spell.data(), n), a_spellRoute, [](const RE::BGSArtObject* a_art) { return gArtOf.contains(a_art); }, a_viaSpell);
+			return art ? gArtOf.find(art) : gArtOf.end();
 		}
 
+		// a color drag (not a game thread): the casting art alone, never the spell
 		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self)
 		{
 			bool viaSpell = false;
-			return HandArtOf(a_self, nullptr, viaSpell);
+			return HandArtOf(a_self, nullptr, false, viaSpell);
 		}
 
 		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
@@ -842,19 +833,22 @@ namespace Plugin
 		// the hand hook's own count: every call, and every call that found a ward copy of ours attached (the readout's handUpdates)
 		std::atomic<std::uint64_t> gHandCalls{ 0 };
 		std::atomic<std::uint64_t> gHandOurs{ 0 };
-		// why it found none on HER casters (item 4, 2026-10-29): a caster that holds a casting art but has none attached, one tied to a
-		// ward of ours only through its spell's effects, and the first few art objects she held that were not ours - where a ward in the
-		// hand really lives is read off these (the readout's handUpdates)
+		// why it found none on HER casters: a caster that holds a casting art but has none attached, one tied to a ward of ours only through
+		// its spell, and the first few art objects she held that were not ours - where a ward in the hand really lives is read off these
+		// (the readout's handUpdates)
 		constexpr std::size_t                             kMostMisses = 6;
 		std::atomic<std::uint64_t>                        gHandNoRoot{ 0 };
 		std::atomic<std::uint64_t>                        gHandViaSpell{ 0 };
 		std::array<std::atomic<const void*>, kMostMisses> gHandMissSeen{};
 		std::vector<nlohmann::json>                       gHandMisses;  // gLock
 
-		void NoteHandMiss(const RE::ActorMagicCaster* a_self, RE::NiNode* a_root)
+		// a_held: the casting art the caster held before the update; a miss is kept once per art (per spell when it held none)
+		void NoteHandMiss(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_held, RE::NiNode* a_root)
 		{
-			const void* key = a_self->castingArt ? static_cast<const void*>(a_self->castingArt) : static_cast<const void*>(a_root);
-			bool        mine = false;
+			const void*               key = a_held               ? static_cast<const void*>(a_held) :
+			                                a_self->currentSpell ? static_cast<const void*>(a_self->currentSpell) :
+			                                                       static_cast<const void*>(a_root);
+			std::atomic<const void*>* mine = nullptr;
 			for (auto& slot : gHandMissSeen) {
 				const void* now = slot.load(std::memory_order_relaxed);
 				if (now == key) {
@@ -862,7 +856,7 @@ namespace Plugin
 				}
 				const void* none = nullptr;
 				if (!now && slot.compare_exchange_strong(none, key)) {
-					mine = true;
+					mine = &slot;
 					break;
 				}
 				if (none == key) {
@@ -872,24 +866,29 @@ namespace Plugin
 			if (!mine) {
 				return;
 			}
-			const auto text = [](const char* a_s) { return std::string(a_s ? a_s : ""); };
-			auto       children = nlohmann::json::array();
-			for (auto& child : a_root->GetChildren()) {
-				if (child && children.size() < 6) {
-					children.push_back(text(child->name.c_str()));
+			try {
+				const auto text = [](const char* a_s) { return std::string(a_s ? a_s : ""); };
+				auto       children = nlohmann::json::array();
+				for (auto& child : a_root->GetChildren()) {
+					if (child && children.size() < 6) {
+						children.push_back(text(child->name.c_str()));
+					}
 				}
-			}
-			auto effects = nlohmann::json::array();
-			if (a_self->currentSpell) {
-				for (const auto* e : a_self->currentSpell->effects) {
-					const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-					effects.push_back(art ? Lower(text(art->GetModel())) : std::string("none"));
+				auto effects = nlohmann::json::array();
+				if (a_self->currentSpell) {
+					for (const auto* e : a_self->currentSpell->effects) {
+						const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
+						effects.push_back(art ? Lower(text(art->GetModel())) : std::string("none"));
+					}
 				}
+				std::scoped_lock l{ gLock };
+				gHandMisses.push_back({ { "castingArt", a_held ? Lower(text(a_held->GetModel())) : std::string("none") }, { "attached", text(a_root->name.c_str()) },
+					{ "children", std::move(children) }, { "spell", a_self->currentSpell ? text(a_self->currentSpell->GetName()) : std::string() },
+					{ "effectArts", std::move(effects) } });
+			} catch (...) {
+				mine->store(nullptr, std::memory_order_relaxed);  // given back: a record that failed is tried again
+				throw;
 			}
-			std::scoped_lock l{ gLock };
-			gHandMisses.push_back({ { "castingArt", a_self->castingArt ? Lower(text(a_self->castingArt->GetModel())) : std::string("none") },
-				{ "attached", text(a_root->name.c_str()) }, { "children", std::move(children) },
-				{ "spell", a_self->currentSpell ? text(a_self->currentSpell->GetName()) : std::string() }, { "effectArts", std::move(effects) } });
 		}
 
 		struct HandHook
@@ -904,15 +903,15 @@ namespace Plugin
 				auto*      root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
 				const bool player = a_self->actor && a_self->actor->IsPlayerRef();
 				if (!root) {
-					if (player && a_self->castingArt) {
+					if (player && (before || a_self->castingArt)) {
 						gHandNoRoot.fetch_add(1, std::memory_order_relaxed);
 					}
 					return;
 				}
 				bool       viaSpell = false;
-				const auto art = HandArtOf(a_self, before, viaSpell);
+				const auto art = HandArtOf(a_self, before, player, viaSpell);
 				if (art == gArtOf.end() && player) {
-					Guarded("a hand art that is not ours", [a_self, root]() { NoteHandMiss(a_self, root); });
+					Guarded("a hand art that is not ours", [a_self, before, root]() { NoteHandMiss(a_self, before ? before : a_self->castingArt, root); });
 				}
 				if (art != gArtOf.end()) {
 					gHandOurs.fetch_add(1, std::memory_order_relaxed);
