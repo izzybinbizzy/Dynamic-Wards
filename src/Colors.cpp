@@ -747,6 +747,46 @@ namespace Plugin
 			return painted;
 		}
 
+		using ArtIt = std::unordered_map<const RE::BGSArtObject*, ArtOf>::const_iterator;
+
+		// the spell in a caster's hand: the one it is casting, else the one equipped there (a ward attached in an earlier frame holds no
+		// casting art any more and no spell is current)
+		const RE::MagicItem* SpellInHand(const RE::ActorMagicCaster* a_self)
+		{
+			if (a_self->currentSpell) {
+				return a_self->currentSpell;
+			}
+			const auto hand = static_cast<std::size_t>(a_self->castingSource);
+			return a_self->actor && hand <= static_cast<std::size_t>(RE::MagicSystem::CastingSource::kRightHand) ? a_self->actor->GetActorRuntimeData().selectedSpells[hand] : nullptr;
+		}
+
+		// The art object of ours a magic caster's attached art came from (WardMath.h FindOurHandArt): the castingArt it holds, the one it held
+		// before this update, or - a_spellRoute, her own casters only, and only when it holds none - the casting art the effects of the spell in
+		// its hand carry
+		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_before, bool a_spellRoute, bool& a_viaSpell)
+		{
+			std::array<const RE::BGSArtObject*, 8> spell{};
+			std::size_t                            n = 0;
+			const auto*                            inHand = a_spellRoute && !a_self->castingArt && !a_before ? SpellInHand(a_self) : nullptr;
+			if (inHand) {
+				for (const auto* e : inHand->effects) {
+					if (n < spell.size()) {
+						spell[n++] = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
+					}
+				}
+			}
+			const auto* art = FindOurHandArt<RE::BGSArtObject>(
+				a_self->castingArt, a_before, std::span(spell.data(), n), a_spellRoute, [](const RE::BGSArtObject* a_art) { return gArtOf.contains(a_art); }, a_viaSpell);
+			return art ? gArtOf.find(art) : gArtOf.end();
+		}
+
+		// a color drag (a main-thread task) over her own casters: the ward in the hand told by the spell in it once its casting art is gone
+		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self)
+		{
+			bool viaSpell = false;
+			return HandArtOf(a_self, nullptr, true, viaSpell);
+		}
+
 		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
 		// with gLock NOT held: the art hook takes gLock inside the game's update, so holding ours here while asking for the
 		// game's could deadlock. gArtOf is read-only once gReady. Another caster's hands follow at his next update (the menu is
@@ -771,7 +811,7 @@ namespace Plugin
 			}
 			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
 				for (auto* caster : player->GetActorRuntimeData().magicCasters) {
-					const auto art = caster && caster->castingArt && caster->castingArtData.attachedArt ? gArtOf.find(caster->castingArt) : gArtOf.end();
+					const auto art = caster && caster->castingArtData.attachedArt ? HandArtOf(caster) : ArtIt{ gArtOf.end() };
 					if (art != gArtOf.end()) {
 						live.emplace_back(caster->castingArtData.attachedArt, &art->second);
 					}
@@ -806,6 +846,64 @@ namespace Plugin
 		// the hand hook's own count: every call, and every call that found a ward copy of ours attached (the readout's handUpdates)
 		std::atomic<std::uint64_t> gHandCalls{ 0 };
 		std::atomic<std::uint64_t> gHandOurs{ 0 };
+		// why it found none on HER casters: a caster that holds a casting art but has none attached, one tied to a ward of ours only through
+		// its spell, and the first few art objects she held that were not ours - where a ward in the hand really lives is read off these
+		// (the readout's handUpdates)
+		constexpr std::size_t                             kMostMisses = 6;
+		std::atomic<std::uint64_t>                        gHandNoRoot{ 0 };
+		std::atomic<std::uint64_t>                        gHandViaSpell{ 0 };
+		std::array<std::atomic<const void*>, kMostMisses> gHandMissSeen{};
+		std::vector<nlohmann::json>                       gHandMisses;  // gLock
+
+		// a_held: the casting art the caster held before the update; a miss is kept once per art (per spell when it held none)
+		void NoteHandMiss(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_held, RE::NiNode* a_root)
+		{
+			const auto*               inHand = SpellInHand(a_self);
+			const void*               key = a_held ? static_cast<const void*>(a_held) :
+			                                inHand ? static_cast<const void*>(inHand) :
+			                                         static_cast<const void*>(a_root);
+			std::atomic<const void*>* mine = nullptr;
+			for (auto& slot : gHandMissSeen) {
+				const void* now = slot.load(std::memory_order_relaxed);
+				if (now == key) {
+					return;
+				}
+				const void* none = nullptr;
+				if (!now && slot.compare_exchange_strong(none, key)) {
+					mine = &slot;
+					break;
+				}
+				if (none == key) {
+					return;  // another thread took this slot for the same art
+				}
+			}
+			if (!mine) {
+				return;
+			}
+			try {
+				const auto text = [](const char* a_s) { return std::string(a_s ? a_s : ""); };
+				auto       children = nlohmann::json::array();
+				for (auto& child : a_root->GetChildren()) {
+					if (child && children.size() < 6) {
+						children.push_back(text(child->name.c_str()));
+					}
+				}
+				auto effects = nlohmann::json::array();
+				if (inHand) {
+					for (const auto* e : inHand->effects) {
+						const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
+						effects.push_back(art ? Lower(text(art->GetModel())) : std::string("none"));
+					}
+				}
+				std::scoped_lock l{ gLock };
+				gHandMisses.push_back({ { "castingArt", a_held ? Lower(text(a_held->GetModel())) : std::string("none") }, { "attached", text(a_root->name.c_str()) },
+					{ "children", std::move(children) }, { "spell", inHand ? text(inHand->GetName()) : std::string() },
+					{ "effectArts", std::move(effects) } });
+			} catch (...) {
+				mine->store(nullptr, std::memory_order_relaxed);  // given back: a record that failed is tried again
+				throw;
+			}
+		}
 
 		struct HandHook
 		{
@@ -814,11 +912,24 @@ namespace Plugin
 				gHandCalls.fetch_add(1, std::memory_order_relaxed);
 				// before the update: its first call attaches the casting art, which another caster takes in his look
 				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
+				const auto* before = a_self->castingArt;  // the update may clear it once the art is attached
 				func(a_self, a_delta);
 				auto*      root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				const auto art = root && a_self->castingArt ? gArtOf.find(a_self->castingArt) : gArtOf.end();
+				const bool player = a_self->actor && a_self->actor->IsPlayerRef();
+				if (!root) {
+					if (player && (before || a_self->castingArt)) {
+						gHandNoRoot.fetch_add(1, std::memory_order_relaxed);
+					}
+					return;
+				}
+				bool       viaSpell = false;
+				const auto art = HandArtOf(a_self, before, player, viaSpell);
+				if (art == gArtOf.end() && player) {
+					Guarded("a hand art that is not ours", [a_self, before, root]() { NoteHandMiss(a_self, before ? before : a_self->castingArt, root); });
+				}
 				if (art != gArtOf.end()) {
 					gHandOurs.fetch_add(1, std::memory_order_relaxed);
+					gHandViaSpell.fetch_add(viaSpell ? 1 : 0, std::memory_order_relaxed);
 					Guarded("a new ward in the hand", [root, &art]() {
 						static std::array<std::atomic_bool, 2> seen{};
 						NoteThread(seen, "colors: a ward in the hand updated");
@@ -956,7 +1067,9 @@ namespace Plugin
 		}
 		return { { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
-			{ "handUpdates", { { "calls", gHandCalls.load(std::memory_order_relaxed) }, { "ours", gHandOurs.load(std::memory_order_relaxed) } } },
+			{ "handUpdates", { { "calls", gHandCalls.load(std::memory_order_relaxed) }, { "ours", gHandOurs.load(std::memory_order_relaxed) },
+								 { "viaSpell", gHandViaSpell.load(std::memory_order_relaxed) }, { "playerNoRoot", gHandNoRoot.load(std::memory_order_relaxed) },
+								 { "playerMisses", gHandMisses } } },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}
 

@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 251 + 14;
+	constexpr int kFloor = 300 + 8;
 
 	using namespace Plugin;
 
@@ -577,6 +577,27 @@ namespace
 		const Color gold = TrueOnScreen(0xFFBE5A, 0.67f);
 		CHECK(((gold >> 16) & 0xFF) == 0xFF);  // as bright as asked at its brightest channel
 	}
+
+	// ---------------------------------------------------------------- the ward in the hand
+	void HandArt()
+	{
+		const int                         ours1 = 1, ours2 = 2, other = 3, other2 = 4;
+		const auto                        known = [&](const int* a_art) { return a_art == &ours1 || a_art == &ours2; };
+		bool                              via = true;
+		const int*                        spell[] = { &other, &ours2 };
+		const std::span<const int* const> arts(spell);
+		CHECK(FindOurHandArt<int>(&ours1, nullptr, {}, true, known, via) == &ours1 && !via);       // the art it holds
+		CHECK(FindOurHandArt<int>(nullptr, &ours1, {}, true, known, via) == &ours1 && !via);       // held before the update cleared it
+		CHECK(FindOurHandArt<int>(&other, nullptr, arts, true, known, via) == nullptr && !via);    // another art: never ours through its spell
+		CHECK(FindOurHandArt<int>(nullptr, nullptr, arts, true, known, via) == &ours2 && via);     // held none: her spell route
+		CHECK(FindOurHandArt<int>(nullptr, nullptr, arts, false, known, via) == nullptr && !via);  // never another caster's
+		const int* neither[] = { &other, &other2, nullptr };
+		CHECK(FindOurHandArt<int>(nullptr, nullptr, neither, true, known, via) == nullptr);
+		CHECK(FindOurHandArt<int>(nullptr, nullptr, {}, true, known, via) == nullptr);
+		int        looked = 0;
+		const auto counting = [&](const int*) { ++looked; return false; };
+		CHECK(FindOurHandArt<int>(&other, &other, {}, true, counting, via) == nullptr && looked == 1);  // the same pointer is looked at once
+	}
 }
 
 int main()
@@ -588,6 +609,7 @@ int main()
 	Settings();
 	Lights();
 	ScreenColor();
+	HandArt();
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
 		std::printf("FAIL: only %d checks ran, under the floor of %d - a test stopped part way\n", gPassed, kFloor);
