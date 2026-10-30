@@ -749,14 +749,27 @@ namespace Plugin
 
 		using ArtIt = std::unordered_map<const RE::BGSArtObject*, ArtOf>::const_iterator;
 
+		// the spell in a caster's hand: the one it is casting, else the one equipped there (a ward attached in an earlier frame holds no
+		// casting art any more and no spell is current)
+		const RE::MagicItem* SpellInHand(const RE::ActorMagicCaster* a_self)
+		{
+			if (a_self->currentSpell) {
+				return a_self->currentSpell;
+			}
+			const auto hand = static_cast<std::size_t>(a_self->castingSource);
+			return a_self->actor && hand <= static_cast<std::size_t>(RE::MagicSystem::CastingSource::kRightHand) ? a_self->actor->GetActorRuntimeData().selectedSpells[hand] : nullptr;
+		}
+
 		// The art object of ours a magic caster's attached art came from (WardMath.h FindOurHandArt): the castingArt it holds, the one it held
-		// before this update, or - a_spellRoute, her own casters only, and only when it holds none - the casting art its current spell's effects carry
+		// before this update, or - a_spellRoute, her own casters only, and only when it holds none - the casting art the effects of the spell in
+		// its hand carry
 		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_before, bool a_spellRoute, bool& a_viaSpell)
 		{
 			std::array<const RE::BGSArtObject*, 8> spell{};
 			std::size_t                            n = 0;
-			if (a_spellRoute && !a_self->castingArt && !a_before && a_self->currentSpell) {
-				for (const auto* e : a_self->currentSpell->effects) {
+			const auto*                            inHand = a_spellRoute && !a_self->castingArt && !a_before ? SpellInHand(a_self) : nullptr;
+			if (inHand) {
+				for (const auto* e : inHand->effects) {
 					if (n < spell.size()) {
 						spell[n++] = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
 					}
@@ -767,11 +780,11 @@ namespace Plugin
 			return art ? gArtOf.find(art) : gArtOf.end();
 		}
 
-		// a color drag (not a game thread): the casting art alone, never the spell
+		// a color drag (a main-thread task) over her own casters: the ward in the hand told by the spell in it once its casting art is gone
 		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self)
 		{
 			bool viaSpell = false;
-			return HandArtOf(a_self, nullptr, false, viaSpell);
+			return HandArtOf(a_self, nullptr, true, viaSpell);
 		}
 
 		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
@@ -845,9 +858,10 @@ namespace Plugin
 		// a_held: the casting art the caster held before the update; a miss is kept once per art (per spell when it held none)
 		void NoteHandMiss(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_held, RE::NiNode* a_root)
 		{
-			const void*               key = a_held               ? static_cast<const void*>(a_held) :
-			                                a_self->currentSpell ? static_cast<const void*>(a_self->currentSpell) :
-			                                                       static_cast<const void*>(a_root);
+			const auto*               inHand = SpellInHand(a_self);
+			const void*               key = a_held ? static_cast<const void*>(a_held) :
+			                                inHand ? static_cast<const void*>(inHand) :
+			                                         static_cast<const void*>(a_root);
 			std::atomic<const void*>* mine = nullptr;
 			for (auto& slot : gHandMissSeen) {
 				const void* now = slot.load(std::memory_order_relaxed);
@@ -875,15 +889,15 @@ namespace Plugin
 					}
 				}
 				auto effects = nlohmann::json::array();
-				if (a_self->currentSpell) {
-					for (const auto* e : a_self->currentSpell->effects) {
+				if (inHand) {
+					for (const auto* e : inHand->effects) {
 						const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
 						effects.push_back(art ? Lower(text(art->GetModel())) : std::string("none"));
 					}
 				}
 				std::scoped_lock l{ gLock };
 				gHandMisses.push_back({ { "castingArt", a_held ? Lower(text(a_held->GetModel())) : std::string("none") }, { "attached", text(a_root->name.c_str()) },
-					{ "children", std::move(children) }, { "spell", a_self->currentSpell ? text(a_self->currentSpell->GetName()) : std::string() },
+					{ "children", std::move(children) }, { "spell", inHand ? text(inHand->GetName()) : std::string() },
 					{ "effectArts", std::move(effects) } });
 			} catch (...) {
 				mine->store(nullptr, std::memory_order_relaxed);  // given back: a record that failed is tried again
