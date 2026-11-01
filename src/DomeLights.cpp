@@ -53,6 +53,7 @@ namespace Plugin
 		{
 			const RE::ModelReferenceEffect* effect{ nullptr };
 			RE::NiPointer<RE::NiAVObject>   art;
+			RE::NiPointer<RE::NiNode>       parent;  // held, so a body the game lets go of never leaves the light a dangling parent
 			RE::NiPointer<RE::NiPointLight> light;
 			RE::NiPointer<RE::BSLight>      bs;
 			RE::ObjectRefHandle             target;
@@ -161,14 +162,15 @@ namespace Plugin
 			}
 		}
 
-		// ENB (his report 2026-10-06 ~21:30, "wards still dont provide enb light and if they do its too small") and Vanilla (his
-		// report ~22:10, "fix vanilla ward light because ... it is too low or not there as well"): the dome light in the game's
-		// own lighting reaches 178 (the house light) - barely past the dome itself (~83). On those two picks it reaches
-		// kPlainDomeReach times as far (Community Shaders' inverse square light keeps its own reach).
-		constexpr float kPlainDomeReach = 2.25f;
-		float           DomeRadius(const Spec& a_spec)
+		// a dome's light reaches this many times the house light on every pick: the house reach (178 plain, 133 under inverse
+		// square) barely passes the dome itself (~83) and stayed inside the hand lights' own pool
+		constexpr float kDomeReach = 2.25f;
+
+		// a dome's light by its model; the ENB mesh set takes the main set's light (the table names the main set only)
+		const Spec* SpecOf(const std::string& a_key)
 		{
-			return a_spec.plainRadius * (LightingPick() != Lighting::kShaders ? kPlainDomeReach : 1.0f);
+			const auto it = gSpecs.find(MainSetKey(a_key));
+			return it != gSpecs.end() ? &it->second : nullptr;
 		}
 
 		RE::NiPointLight* CloneMaster()
@@ -255,7 +257,8 @@ namespace Plugin
 
 		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec, float a_dim)
 		{
-			Dress(a_light, a_color, a_spec, DomeRadius(a_spec), a_dim);
+			const Light wide{ a_spec.fade, a_spec.reach * kDomeReach, a_spec.size, a_spec.plain, a_spec.plainFade, a_spec.plainRadius * kDomeReach };
+			Dress(a_light, a_color, wide, wide.plainRadius, a_dim);
 		}
 
 		void DressHand(RE::NiPointLight* a_light, Color a_color)
@@ -274,10 +277,23 @@ namespace Plugin
 			const Spec*                     spec{ nullptr };
 		};
 
+		// the node a dome's light hangs under: the wearer's third-person body (in both views), else the dome's art - under the art
+		// node its point stood ~190 above the feet, out of the ground's reach
+		RE::NiNode* LightParent(const Showing& a_s)
+		{
+			const auto ref = a_s.target.get();
+			auto*      actor = ref ? ref->As<RE::Actor>() : nullptr;
+			auto*      body = actor ? actor->Get3D(false) : nullptr;
+			if (auto* node = body ? body->AsNode() : nullptr) {
+				return node;
+			}
+			return a_s.art ? a_s.art->AsNode() : nullptr;
+		}
+
 		// the dome's points not hung yet; false when the scene refused one (the ones hung stay, the rest wait for kRetry)
 		bool Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
-			auto*      parent = a_s.art ? a_s.art->AsNode() : nullptr;
+			auto*      parent = LightParent(a_s);
 			const auto color = SlotColor(a_s.row);
 			if (!parent || !color) {
 				return true;
@@ -303,7 +319,8 @@ namespace Plugin
 				if (!light) {
 					return false;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row, a_s.spec, shadow, shadowable, i });
+				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row,
+					a_s.spec, shadow, shadowable, i });
 			}
 			return true;
 		}
@@ -483,8 +500,8 @@ namespace Plugin
 					auto [it, fresh] = gDomeOf.try_emplace(m->artObject, nullptr, kSlots);
 					if (fresh) {
 						const auto* model = m->artObject->GetModel();
-						if (const auto spec = gSpecs.find(ModelKey(model ? model : "")); spec != gSpecs.end()) {
-							it->second = { &spec->second, RowOfModel(model) };
+						if (const auto* spec = SpecOf(ModelKey(model ? model : ""))) {
+							it->second = { spec, RowOfModel(model) };
 						}
 					}
 					if (const auto [spec, row] = it->second; spec && row < kSlots) {
@@ -502,7 +519,8 @@ namespace Plugin
 			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
 				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::find(flip, a_lit.effect) == flip.end() && std::ranges::any_of(live, [&](const Showing& a_s) {
-					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get();
+					// a body the wearer swapped (a 3D reload) takes the light down, and the next tick hangs it on the new one
+					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get() && LightParent(a_s) == a_lit.parent.get();
 				});
 				if (!keep) {
 					Drop(a_lit.light.get(), a_lit.bs, scene);
