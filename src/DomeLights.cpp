@@ -266,34 +266,35 @@ namespace Plugin
 			Dress(a_light, a_color, kHand, kHand.plainRadius, HandDim());
 		}
 
-		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), its art
-		// and wearer are held while the lock is
-		struct Showing
-		{
-			const RE::ModelReferenceEffect* effect{ nullptr };
-			RE::NiPointer<RE::NiAVObject>   art;
-			RE::ObjectRefHandle             target;
-			std::size_t                     row{ kRows };
-			const Spec*                     spec{ nullptr };
-		};
-
 		// the node a dome's light hangs under: the wearer's third-person body (in both views), else the dome's art - under the art
 		// node its point stood ~190 above the feet, out of the ground's reach
-		RE::NiNode* LightParent(const Showing& a_s)
+		RE::NiNode* LightParent(RE::NiAVObject* a_art, const RE::ObjectRefHandle& a_target)
 		{
-			const auto ref = a_s.target.get();
+			const auto ref = a_target.get();
 			auto*      actor = ref ? ref->As<RE::Actor>() : nullptr;
 			auto*      body = actor ? actor->Get3D(false) : nullptr;
 			if (auto* node = body ? body->AsNode() : nullptr) {
 				return node;
 			}
-			return a_s.art ? a_s.art->AsNode() : nullptr;
+			return a_art ? a_art->AsNode() : nullptr;
 		}
+
+		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), its art,
+		// the node its light hangs under and its wearer are held while the lock is
+		struct Showing
+		{
+			const RE::ModelReferenceEffect* effect{ nullptr };
+			RE::NiPointer<RE::NiAVObject>   art;
+			RE::NiPointer<RE::NiNode>       parent;
+			RE::ObjectRefHandle             target;
+			std::size_t                     row{ kRows };
+			const Spec*                     spec{ nullptr };
+		};
 
 		// the dome's points not hung yet; false when the scene refused one (the ones hung stay, the rest wait for kRetry)
 		bool Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
-			auto*      parent = LightParent(a_s);
+			auto*      parent = a_s.parent.get();
 			const auto color = SlotColor(a_s.row);
 			if (!parent || !color) {
 				return true;
@@ -505,7 +506,7 @@ namespace Plugin
 						}
 					}
 					if (const auto [spec, row] = it->second; spec && row < kSlots) {
-						live.push_back({ m, m->artObject3D, m->target, row, spec });
+						live.push_back({ m, m->artObject3D, RE::NiPointer<RE::NiNode>(LightParent(m->artObject3D.get(), m->target)), m->target, row, spec });
 					}
 				}
 			}
@@ -520,7 +521,7 @@ namespace Plugin
 			std::erase_if(gLit, [&](Lit& a_lit) {
 				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::find(flip, a_lit.effect) == flip.end() && std::ranges::any_of(live, [&](const Showing& a_s) {
 					// a body the wearer swapped (a 3D reload) takes the light down, and the next tick hangs it on the new one
-					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get() && LightParent(a_s) == a_lit.parent.get();
+					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get() && a_s.parent.get() == a_lit.parent.get();
 				});
 				if (!keep) {
 					Drop(a_lit.light.get(), a_lit.bs, scene);
