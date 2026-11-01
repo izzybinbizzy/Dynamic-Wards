@@ -171,6 +171,21 @@ namespace Plugin
 		return std::string(a_text.substr(first, last - first + 1));
 	}
 
+	// a model key of the ENB mesh set ("magic\dynamic wards\enb\...") as the main set's key: both sets wear the same domes, and the
+	// dome light table names the main set only; any other key comes back as it is ("notdynamic wards\enb\" included)
+	inline std::string MainSetKey(std::string a_key)
+	{
+		constexpr std::string_view kSet = "dynamic wards\\";
+		constexpr std::string_view kEnb = "enb\\";
+		for (auto at = a_key.find(kSet); at != std::string::npos; at = a_key.find(kSet, at + 1)) {
+			if ((at == 0 || a_key[at - 1] == '\\') && std::string_view(a_key).substr(at + kSet.size()).starts_with(kEnb)) {
+				a_key.erase(at + kSet.size(), kEnb.size());
+				break;
+			}
+		}
+		return a_key;
+	}
+
 	// "2468FF"
 	inline std::string HexColor(Color a_color)
 	{
