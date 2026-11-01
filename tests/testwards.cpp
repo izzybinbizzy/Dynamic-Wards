@@ -31,7 +31,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 300 + 8 + 6;
+	constexpr int kFloor = 300 + 8 + 8;
 
 	using namespace Plugin;
 
@@ -50,6 +50,8 @@ namespace
 		CHECK(MainSetKey("magic\\dynamic wards\\wardbodyfx 360 - adept.nif") == "magic\\dynamic wards\\wardbodyfx 360 - adept.nif");
 		CHECK(MainSetKey("magic\\dynamic wards\\enbx - a.nif") == "magic\\dynamic wards\\enbx - a.nif");
 		CHECK(MainSetKey("magic\\notdynamic wards\\enb\\a.nif") == "magic\\notdynamic wards\\enb\\a.nif");
+		CHECK(MainSetKey("dynamic wards\\enb\\a.nif") == "dynamic wards\\a.nif");
+		CHECK(MainSetKey("notdynamic wards\\x\\dynamic wards\\enb\\a.nif") == "notdynamic wards\\x\\dynamic wards\\a.nif");
 		CHECK(MainSetKey("magic\\wardbodyfx.nif") == "magic\\wardbodyfx.nif");
 		CHECK(MainSetKey("").empty());
 		CHECK(HexColor(0x2468FF) == "2468FF");
