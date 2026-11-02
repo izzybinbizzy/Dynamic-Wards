@@ -19,7 +19,9 @@
 #endif
 #include "Plugin.h"
 
+#include <algorithm>
 #include <cmath>
+#include <span>
 
 // SKSE Menu Framework's own header (theirs, MIT): its warnings are not ours, and ours are errors (xmake.lua) - under
 // MSVC and under clang-cl, which checks every file too
@@ -193,6 +195,16 @@ namespace Plugin
 			SetItemTooltip("%s", a_tip);
 		}
 
+		// the next dropdown as wide as the longest of these names, so no choice is cut short
+		void FitCombo(std::span<const char* const> a_names)
+		{
+			float widest = 0.0f;
+			for (const char* name : a_names) {
+				widest = std::max(widest, CalcTextSize(name).x);
+			}
+			SetNextItemWidth(widest + GetFrameHeight() + GetStyle()->FramePadding.x * 2.0f);
+		}
+
 		// the mod a rank is left to now (its pick, with that mod there), else nullptr
 		const char* LeftTo(std::size_t a_row)
 		{
@@ -334,6 +346,7 @@ namespace Plugin
 											   T("Dynamic Wards leaves the ward alone, as the game or another mod has it.") },
 					{ strange ? "Strange Wards:" : nullptr, T("a rank ward wears Strange Wards' own dome and hand art.") },
 					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look you pick in Strange Runes' own menu (reload the save to see it).") } });
+				const char* const anyChoice[] = { T("Ladder"), T("Default"), T("Own color"), T("Vanilla"), "Strange Wards", "Strange Runes" };
 				for (std::size_t i = 0; i < kRows; ++i) {
 					PushID(static_cast<int>(i));
 					const RowChoices choices(i);
@@ -341,7 +354,7 @@ namespace Plugin
 					const auto       shown = ShownColor(i);
 					ColorButton("##now", shown ? Vec(*shown) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 					SameLine();
-					SetNextItemWidth(150.0f);
+					FitCombo(anyChoice);
 					if (Combo(T(kRowLabel[i]), &pick, choices.names.data(), static_cast<int>(choices.names.size()))) {
 						const auto mode = choices.modes[static_cast<std::size_t>(pick)];
 						SetRow(i, mode, mode == RowMode::kCustom && RowModeOf(i) != RowMode::kCustom ? RowColor(i).value_or(kWhite) : RowCustom(i));
@@ -387,7 +400,7 @@ namespace Plugin
 			int         mode = static_cast<int>(pick.mode);
 			ColorButton("##now", pick.mode == LookMode::kCustom ? Vec(pick.color) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 			SameLine();
-			SetNextItemWidth(150.0f);
+			FitCombo(modes);
 			if (Combo(T(kLookLabel[a_look]), &mode, modes, a_look >= kGroups ? 4 : 3)) {
 				SetLook(a_look, { static_cast<LookMode>(mode), pick.color });
 				a_held.reset();
@@ -410,11 +423,11 @@ namespace Plugin
 		void DrawOthers()
 		{
 			static std::array<std::optional<Color>, kGroups> held;
-			TextColored(kMuted, "%s", T("The ward look casters who are not you wear."));
+			MenuStyle::Note(T("The ward look casters who are not you wear."));
 			Legend({ { T("Your look:"), T("the same colors as your own wards.") }, { T("Own color:"), T("one color you pick for the whole group.") },
 				{ T("Vanilla:"), StrangeWardsInstalled() ? T("the game's own ward - on the rank wards that is Strange Wards' look while it is installed.") :
 														   T("the game's own ward, untouched.") } });
-			TextColored(kMuted, "%s", T("A rank ward you set to Strange Wards or Strange Runes above keeps that look on everyone."));
+			MenuStyle::Note(T("A rank ward you set to Strange Wards or Strange Runes above keeps that look on everyone."));
 			for (std::size_t i = 0; i < kGroups; ++i) {
 				LookRow(i, held[i]);
 			}
@@ -424,7 +437,7 @@ namespace Plugin
 		void DrawFactions()
 		{
 			static std::array<std::optional<Color>, kLooks> held;
-			TextColored(kMuted, "%s", T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
+			MenuStyle::Note(T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
 			Legend({ { T("Default:"), T("no pick for this faction: its casters wear the Enemies or Neutral look.") } });
 			for (std::size_t i = kGroups; i < kLooks; ++i) {
 				if (FactionLoaded(i)) {
@@ -579,7 +592,7 @@ namespace Plugin
 				const char* picks[] = { T("Off"), T("Normal dome"), Has360Ward() ? T("360 dome") : Missing360Meshes() ? T("360 dome (needs its files)") :
 																							   Missing360Patch()      ? T("360 dome (needs the Universal Patch)") :
 																														T("360 dome (needs 360 Ward)") };
-				SetNextItemWidth(220.0f);
+				FitCombo(picks);
 				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, 3)) {
 					SetShieldDome(row, static_cast<ShieldDome>(pick));
 					Changed();
