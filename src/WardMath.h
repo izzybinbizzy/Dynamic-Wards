@@ -153,6 +153,12 @@ namespace Plugin
 		return out;
 	}
 
+	// a ward block of Strange Wards: one of its textures lies under effects\po3_strangerunes\ (its install test, any case)
+	inline bool StrangeWardsTexture(std::string_view a_source, std::string_view a_greyscale)
+	{
+		return Lower(a_source).contains("po3_strangerunes") || Lower(a_greyscale).contains("po3_strangerunes");
+	}
+
 	// equal, ignoring ASCII case
 	inline bool SameText(std::string_view a_a, std::string_view a_b)
 	{

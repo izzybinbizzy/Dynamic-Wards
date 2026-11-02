@@ -388,6 +388,11 @@ namespace
 		CHECK(runes.rows[0].mode == RowMode::kStrangeRunes && runes.rows[2].mode == RowMode::kStrangeRunes && runes.rows[4].mode == RowMode::kStrangeRunes);
 		CHECK(runes.rows[2].color == Color{ 0xFF0000 } && runes.rows[5].mode == RowMode::kDefault);
 		CHECK(Read("[Settings]\nKeepStrangeRunesWards=0\n").rows[0].mode == RowMode::kDefault);
+		// Strange Wards is installed when a block of the game's dome wears one of its textures, in any case
+		CHECK(StrangeWardsTexture("textures\\effects\\PO3_StrangeRunes\\gradamberwardcolor.dds", ""));
+		CHECK(StrangeWardsTexture("", "Effects\\po3_strangerunes\\fullalpha.dds"));
+		CHECK(!StrangeWardsTexture("textures\\effects\\gradients\\gradwardcolor.dds", "effects\\fxglow.dds"));
+		CHECK(!StrangeWardsTexture("", ""));
 		// Strange Wards found with no pick made while it was there: every rank takes it, a Strange Runes rank keeps that, once
 		SettingsValues adopt;
 		adopt.rows[0] = { RowMode::kCustom, 0x123456 };

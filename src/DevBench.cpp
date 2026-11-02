@@ -69,15 +69,15 @@ namespace Plugin
 			// DevBench listener thread: the reports only read, each under its own lock, taken one after the other. Nothing thrown
 			// may leave into DevBench (Control's rule)
 			try {
-				// the ward table (its effects' keywords) and the image space are game data, read on the main thread; not read while
-				// the game runs no frame (a loading screen, a pause)
+				// the ward table (its effects' keywords) and the image space are game data, read on the main thread; not read when it
+				// does not answer within 0.5 s (a loading screen, a pause, a slow frame)
 				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() } }; },
 					std::chrono::milliseconds(500));
 				const bool refused = game && DevBenchGlue::Refused(*game);
 				const bool read = game && !refused;
 				auto       report = read    ? (*game)["wards"] :
 				                    refused ? json{ { "wards", "not read: the main thread refused the task" }, { "refusal", *game } } :
-				                              json{ { "wards", "not read: the game ran no frame (a loading screen or a pause)" } };
+				                              json{ { "wards", "not read: the main thread did not answer within 0.5 s (a loading screen, a pause or a slow frame)" } };
 				report["domeLights"] = DomeLightsReport();
 				report["lighting"] = LightingReport();
 				report["colors"] = ColorsReport();
