@@ -158,6 +158,21 @@ namespace Plugin
 		}
 	}
 
+	// Strange Wards found while the ranks were never picked with it there: every rank wears its look, but a rank on Strange Runes
+	// (4.0's switch carried over) keeps that; from then on the player's picks stand
+	inline void AdoptStrangeWardsIn(SettingsValues& a_s)
+	{
+		if (a_s.strangeChosen) {
+			return;
+		}
+		for (std::size_t i = 0; i < kRanks; ++i) {
+			if (a_s.rows[i].mode != RowMode::kStrangeRunes) {
+				a_s.rows[i].mode = RowMode::kStrangeWards;
+			}
+		}
+		a_s.strangeChosen = true;
+	}
+
 	// a look of a token ("Thalmor" -> its index), any case; kLooks when it is none
 	inline std::size_t LookOfToken(std::string_view a_token)
 	{

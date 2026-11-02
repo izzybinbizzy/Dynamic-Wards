@@ -73,8 +73,11 @@ namespace Plugin
 				// the game runs no frame (a loading screen, a pause)
 				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() } }; },
 					std::chrono::milliseconds(500));
-				const bool read = game && !DevBenchGlue::Refused(*game);
-				auto       report = read ? (*game)["wards"] : json{ { "wards", "not read: the game ran no frame (a loading screen or a pause)" } };
+				const bool refused = game && DevBenchGlue::Refused(*game);
+				const bool read = game && !refused;
+				auto       report = read    ? (*game)["wards"] :
+				                    refused ? json{ { "wards", "not read: the main thread refused the task" }, { "refusal", *game } } :
+				                              json{ { "wards", "not read: the game ran no frame (a loading screen or a pause)" } };
 				report["domeLights"] = DomeLightsReport();
 				report["lighting"] = LightingReport();
 				report["colors"] = ColorsReport();

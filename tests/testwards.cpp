@@ -388,6 +388,18 @@ namespace
 		CHECK(runes.rows[0].mode == RowMode::kStrangeRunes && runes.rows[2].mode == RowMode::kStrangeRunes && runes.rows[4].mode == RowMode::kStrangeRunes);
 		CHECK(runes.rows[2].color == Color{ 0xFF0000 } && runes.rows[5].mode == RowMode::kDefault);
 		CHECK(Read("[Settings]\nKeepStrangeRunesWards=0\n").rows[0].mode == RowMode::kDefault);
+		// Strange Wards found with no pick made while it was there: every rank takes it, a Strange Runes rank keeps that, once
+		SettingsValues adopt;
+		adopt.rows[0] = { RowMode::kCustom, 0x123456 };
+		adopt.rows[1] = { RowMode::kVanilla, kWhite };
+		adopt.rows[2] = { RowMode::kStrangeRunes, kWhite };
+		AdoptStrangeWardsIn(adopt);
+		CHECK(adopt.strangeChosen && adopt.rows[0].mode == RowMode::kStrangeWards && adopt.rows[0].color == Color{ 0x123456 });
+		CHECK(adopt.rows[1].mode == RowMode::kStrangeWards && adopt.rows[2].mode == RowMode::kStrangeRunes && adopt.rows[4].mode == RowMode::kStrangeWards);
+		CHECK(adopt.rows[5].mode == RowMode::kDefault);  // a shield's ward is not a rank
+		adopt.rows[3] = { RowMode::kDefault, kWhite };   // a pick made later stands
+		AdoptStrangeWardsIn(adopt);
+		CHECK(adopt.rows[3].mode == RowMode::kDefault);
 
 		// written and read back: the same table
 		SettingsValues w;

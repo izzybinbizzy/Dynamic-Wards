@@ -112,16 +112,7 @@ namespace Plugin
 	}
 	void AdoptStrangeWards()
 	{
-		Change([](auto& s) {
-			if (!s.strangeChosen) {
-				for (std::size_t i = 0; i < kRanks; ++i) {
-					if (s.rows[i].mode != RowMode::kStrangeRunes) {  // 4.0's Keep Strange Runes carried over: its look stays
-						s.rows[i].mode = RowMode::kStrangeWards;
-					}
-				}
-				s.strangeChosen = true;
-			}
-		});
+		Change([](auto& s) { AdoptStrangeWardsIn(s); });
 	}
 	bool StrangeWardsRow(std::size_t a_row)
 	{
