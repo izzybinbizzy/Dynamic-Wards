@@ -330,7 +330,7 @@ namespace
 		CHECK(Read("[Settings]\nDomeColorBoost=500\n").domeBoost == 100);
 		CHECK(Read("[Settings]\nDomeColorBoost=-5\n").domeBoost == 0);
 		CHECK(none.ladder == Color{ 0x2468FF } && none.stages == 3 && !none.reversed);
-		CHECK(none.dome == 0 && none.unlock == Unlock::kSkill75 && none.light && none.coloredLights && none.every);
+		CHECK(none.dome == 0 && none.unlock == Unlock::kSkill75 && none.light && none.coloredLights && !none.strangeChosen);
 		CHECK(none.shieldDome[0] == 2 && none.shieldDome[1] == 2 && none.shieldDome[2] == 2);
 		CHECK(Read("[Settings]\nDome=1\n").shieldDome[0] == 1);  // the normal dome: the shields follow it
 
@@ -372,15 +372,34 @@ namespace
 		Read("[Colors]\nAdept=2468FF\n", &fresh);
 		CHECK(!fresh.old);
 
-		// the colors and the compatibility ticks
-		const auto c = Read("[Colors]\nadept=vanilla\nSpellbreaker=FF0000\nCrusader=default\nNope=123456\n[Compatibility]\nMy Mod.ESP=0\nOther.esp=1\nBad.esp=x\n");
+		// the colors; 4.0's [Compatibility] ticks are gone and read as nothing
+		const auto c = Read(
+			"[Colors]\nadept=vanilla\nSpellbreaker=FF0000\nCrusader=default\nNope=123456\nNovice=StrangeWards\nMaster=strangerunes\n"
+			"Reman=strangewards\n[Compatibility]\nMy Mod.ESP=0\nOpacity=40\n");
 		CHECK(c.rows[2].mode == RowMode::kVanilla);
 		CHECK(c.rows[5].mode == RowMode::kCustom && c.rows[5].color == Color{ 0xFF0000 });
 		CHECK(c.rows[6].mode == RowMode::kDefault);
-		CHECK(c.mods.size() == 3);
-		CHECK(c.mods.contains("bad.esp") && !c.mods.at("bad.esp"));  // a word reads as off, as before 3.5
-		CHECK(c.mods.contains("my mod.esp") && !c.mods.at("my mod.esp"));
-		CHECK(c.mods.contains("other.esp") && c.mods.at("other.esp"));
+		CHECK(c.rows[0].mode == RowMode::kStrangeWards && c.rows[4].mode == RowMode::kStrangeRunes);
+		CHECK(c.rows[7].mode == RowMode::kDefault);                  // the two Strange looks are the rank wards' only
+		CHECK(c.opacity == 100);                                     // a key under [Compatibility] is no setting
+		CHECK(RowColorOf(c, 0) == RowColorOf(SettingsValues{}, 0));  // without the mod a Strange rank follows the ladder
+		// 4.0's one Strange Runes switch: every rank ward keeps its look; off changes nothing
+		const auto runes = Read("[Settings]\nKeepStrangeRunesWards=1\nEveryWard=0\n[Colors]\nAdept=FF0000\n");
+		CHECK(runes.rows[0].mode == RowMode::kStrangeRunes && runes.rows[2].mode == RowMode::kStrangeRunes && runes.rows[4].mode == RowMode::kStrangeRunes);
+		CHECK(runes.rows[2].color == Color{ 0xFF0000 } && runes.rows[5].mode == RowMode::kDefault);
+		CHECK(Read("[Settings]\nKeepStrangeRunesWards=0\n").rows[0].mode == RowMode::kDefault);
+		// Strange Wards found with no pick made while it was there: every rank takes it, a Strange Runes rank keeps that, once
+		SettingsValues adopt;
+		adopt.rows[0] = { RowMode::kCustom, 0x123456 };
+		adopt.rows[1] = { RowMode::kVanilla, kWhite };
+		adopt.rows[2] = { RowMode::kStrangeRunes, kWhite };
+		AdoptStrangeWardsIn(adopt);
+		CHECK(adopt.strangeChosen && adopt.rows[0].mode == RowMode::kStrangeWards && adopt.rows[0].color == Color{ 0x123456 });
+		CHECK(adopt.rows[1].mode == RowMode::kStrangeWards && adopt.rows[2].mode == RowMode::kStrangeRunes && adopt.rows[4].mode == RowMode::kStrangeWards);
+		CHECK(adopt.rows[5].mode == RowMode::kDefault);  // a shield's ward is not a rank
+		adopt.rows[3] = { RowMode::kDefault, kWhite };   // a pick made later stands
+		AdoptStrangeWardsIn(adopt);
+		CHECK(adopt.rows[3].mode == RowMode::kDefault);
 
 		// written and read back: the same table
 		SettingsValues w;
@@ -401,14 +420,13 @@ namespace
 		w.unlock = Unlock::kPerk;
 		w.perk = "0x1~X.esp";
 		w.crusader = false;
-		w.every = false;
-		w.keepRunes = true;
 		w.alwaysOnBar = true;
-		w.mods["a.esp"] = true;
-		w.mods["b.esp"] = false;
+		w.strangeChosen = true;
 		w.shieldDome = { 0, 2, 1 };
 		w.rows[0] = { RowMode::kCustom, 0x123456 };
+		w.rows[1] = { RowMode::kStrangeWards, kWhite };
 		w.rows[3] = { RowMode::kVanilla, kWhite };
+		w.rows[4] = { RowMode::kStrangeRunes, kWhite };
 		std::ostringstream out;
 		WriteSettingsText(w, out);
 		const auto text = out.str();
@@ -418,6 +436,8 @@ namespace
 		CHECK(text.find("Novice=123456") != std::string::npos);
 		CHECK(text.find("Expert=vanilla") != std::string::npos);
 		CHECK(text.find("Adept=default") != std::string::npos);
+		CHECK(text.find("Apprentice=strangewards") != std::string::npos && text.find("Master=strangerunes") != std::string::npos);
+		CHECK(text.find("[Compatibility]") == std::string::npos && text.find("EveryWard") == std::string::npos && text.find("KeepStrangeRunes") == std::string::npos);
 		SettingsRead rr;
 		const auto   back = Read(text, &rr);
 		CHECK(!rr.old);
@@ -425,8 +445,8 @@ namespace
 		CHECK(back.opacity == w.opacity && back.transparency == w.transparency && back.brightness == w.brightness);
 		CHECK(back.domeBoost == w.domeBoost && back.looks == w.looks);
 		CHECK(back.castingGlow == w.castingGlow && back.dome == w.dome && back.light == w.light && back.coloredLights == w.coloredLights);
-		CHECK(back.unlock == w.unlock && back.perk == w.perk && back.crusader == w.crusader && back.every == w.every);
-		CHECK(back.keepRunes == w.keepRunes && back.mods == w.mods && back.shieldDome == w.shieldDome && back.alwaysOnBar == w.alwaysOnBar);
+		CHECK(back.unlock == w.unlock && back.perk == w.perk && back.crusader == w.crusader && back.strangeChosen == w.strangeChosen);
+		CHECK(back.shieldDome == w.shieldDome && back.alwaysOnBar == w.alwaysOnBar);
 		bool rows = true;
 		for (std::size_t i = 0; i < kRows; ++i) {
 			rows = rows && back.rows[i].mode == w.rows[i].mode && (w.rows[i].mode != RowMode::kCustom || back.rows[i].color == w.rows[i].color);
@@ -436,7 +456,7 @@ namespace
 		std::ostringstream d;
 		WriteSettingsText(SettingsValues{}, d);
 		const auto dflt = Read(d.str());
-		CHECK(dflt.opacity == 100 && dflt.transparency == 0 && dflt.shieldDome[0] == 2 && dflt.mods.empty() && !dflt.alwaysOnBar);
+		CHECK(dflt.opacity == 100 && dflt.transparency == 0 && dflt.shieldDome[0] == 2 && !dflt.strangeChosen && !dflt.alwaysOnBar);
 		// a file from before AlwaysOnWardBar: the key is absent, so the default holds
 		std::string legacy = d.str();
 		const auto  key = legacy.find("AlwaysOnWardBar=");

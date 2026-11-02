@@ -32,10 +32,10 @@ namespace Plugin
 		gLoaded = true;
 		SKSE::log::info(
 			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome color boost {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
-			"Crusader shields {}, every ward {}, shield wards Spellbreaker {} Crusader {} Reman {}, always-on ward bar {} ({} line(s) read{})",
+			"Crusader shields {}, shield wards Spellbreaker {} Crusader {} Reman {}, always-on ward bar {} ({} line(s) read{})",
 			HexColor(gS.ladder), gS.stages, gS.reversed ? ", reversed" : "", gS.opacity, gS.transparency, gS.brightness, gS.castingGlow, gS.domeBoost, gS.dome,
 			gS.light ? "on" : "off", gS.coloredLights ? "on" : "off", static_cast<int>(gS.unlock), gS.perk.empty() ? "" : " " + gS.perk,
-			gS.crusader ? "on" : "off", gS.every ? "on" : "off", ShieldDomeName(SettingsText::ShieldPick(gS, 0)),
+			gS.crusader ? "on" : "off", ShieldDomeName(SettingsText::ShieldPick(gS, 0)),
 			ShieldDomeName(SettingsText::ShieldPick(gS, 1)), ShieldDomeName(SettingsText::ShieldPick(gS, 2)), gS.alwaysOnBar ? "on" : "off", read.lines,
 			read.old ? "; a 2.x file, carried over" : "");
 	}
@@ -106,8 +106,23 @@ namespace Plugin
 		Change([&](auto& s) {
 			if (a_row < kRows) {
 				s.rows[a_row] = { a_mode, a_color };
+				s.strangeChosen = s.strangeChosen || (a_row < kRanks && StrangeWardsInstalled());
 			}
 		});
+	}
+	void AdoptStrangeWards()
+	{
+		Change([](auto& s) { AdoptStrangeWardsIn(s); });
+	}
+	bool StrangeWardsRow(std::size_t a_row)
+	{
+		// a Vanilla rank is Strange Wards' look too: its art is the game's, which Strange Wards replaces
+		const auto mode = RowModeOf(a_row);
+		return a_row < kRanks && StrangeWardsInstalled() && (mode == RowMode::kStrangeWards || mode == RowMode::kVanilla);
+	}
+	bool StrangeRunesRow(std::size_t a_row)
+	{
+		return a_row < kRanks && StrangeRunesLoaded() && RowModeOf(a_row) == RowMode::kStrangeRunes;
 	}
 	LookPick LookOf(std::size_t a_look)
 	{
@@ -245,19 +260,6 @@ namespace Plugin
 	{
 		Change([&](auto& s) { s.crusader = a_on; });
 	}
-	bool EveryWard()
-	{
-		return Read([](const auto& s) { return s.every; });
-	}
-	void SetEveryWard(bool a_on)
-	{
-		Change([&](auto& s) {
-			s.every = a_on;
-			for (auto& [plugin, on] : s.mods) {
-				on = a_on;
-			}
-		});
-	}
 	ShieldDome ShieldDomeOf(std::size_t a_row)
 	{
 		return Read([&](const auto& s) {
@@ -281,14 +283,6 @@ namespace Plugin
 			}
 		});
 	}
-	bool KeepStrangeRunes()
-	{
-		return Read([](const auto& s) { return s.keepRunes; });
-	}
-	void SetKeepStrangeRunes(bool a_on)
-	{
-		Change([&](auto& s) { s.keepRunes = a_on; });
-	}
 	bool AlwaysOnBar()
 	{
 		return Read([](const auto& s) { return s.alwaysOnBar; });
@@ -297,17 +291,6 @@ namespace Plugin
 	{
 		Change([&](auto& s) { s.alwaysOnBar = a_on; });
 	}
-	bool ModOn(std::string_view a_plugin)
-	{
-		return Read([k = Lower(a_plugin)](const auto& s) {
-			const auto it = s.mods.find(k);
-			return it == s.mods.end() ? s.every : it->second;
-		});
-	}
-	void SetModOn(std::string_view a_plugin, bool a_on)
-	{
-		Change([k = Lower(a_plugin), a_on](auto& s) { s.mods[k] = a_on; });
-	}
 
 	void ApplyScheme(const Scheme& a_scheme)
 	{
@@ -315,8 +298,8 @@ namespace Plugin
 		gS.ladder = a_scheme.ladder & 0xFFFFFF;  // colors only - stages and Reverse are the player's (his rule 2026-10-05)
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const Color c = a_scheme.rows[i];
-			if (gS.rows[i].mode == RowMode::kVanilla) {
-				continue;  // a preset changes colors only; a row the player set to the game's own art stays so
+			if (const auto m = gS.rows[i].mode; m == RowMode::kVanilla || m == RowMode::kStrangeWards || m == RowMode::kStrangeRunes) {
+				continue;  // a preset changes colors only; a row the player left to the game or another mod stays so
 			}
 			gS.rows[i] = c ? RowPick{ RowMode::kCustom, c & 0xFFFFFF } : RowPick{ RowMode::kDefault, gS.rows[i].color };
 		}
@@ -330,7 +313,7 @@ namespace Plugin
 
 	std::optional<Color> RowColor(std::size_t a_row)
 	{
-		if (a_row < kRanks && StrangeWardsInstalled()) {
+		if (StrangeWardsRow(a_row)) {
 			return std::nullopt;
 		}
 		std::scoped_lock l{ gLock };

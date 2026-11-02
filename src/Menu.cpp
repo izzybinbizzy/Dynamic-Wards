@@ -3,12 +3,13 @@
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // The SKSE Menu Framework pages (3.0): the ladder and every ward in any color - a drawn spectrum bar, color pickers,
-// quick picks, live swatches of each rank - the opacity slider, the dome, the lights and the compatibility page. A color
-// drag shows on the wards live (at most ~15 times a second) and is saved when the pick is let go.
-// His layout 2026-10-05: a Colors page first (presets, then the ladder and every ward, the rankless ones with their mod
-// named), then Settings (Lights, Dome, Opacity - Transparency right below Opacity, greyed out without 360 Ward), then
-// Compatibility. Every change is saved the moment it is made (a slider or a color when it is let go), so closing the menu loses
-// nothing - on the game's main thread, in one task with the re-dress (Changed).
+// quick picks, live swatches of each rank - other casters' looks, the shields, the opacity slider, the dome and the lights.
+// A color drag shows on the wards live (at most ~15 times a second) and is saved when the pick is let go.
+// His layout: two pages - Colors (presets, the ladder, every ward with the rankless ones' mod named, other casters' looks, the
+// shields, the factions) and Settings (Lights, Dome, Look - Transparency right below Opacity, greyed out without 360 Ward); a
+// legend above every list of dropdowns; Strange Wards and Strange Runes as choices of the rank wards. Every change is saved
+// the moment it is made (a slider or a color when it is let go), so closing the menu loses nothing - on the game's main
+// thread, in one task with the re-dress (Changed).
 
 #ifndef WIN32_LEAN_AND_MEAN
 #	define WIN32_LEAN_AND_MEAN
@@ -18,7 +19,9 @@
 #endif
 #include "Plugin.h"
 
+#include <algorithm>
 #include <cmath>
+#include <span>
 
 // SKSE Menu Framework's own header (theirs, MIT): its warnings are not ours, and ours are errors (xmake.lua) - under
 // MSVC and under clang-cl, which checks every file too
@@ -129,6 +132,10 @@ namespace Plugin
 		// re-reads / saves mid-drag". True when an edit ended (the caller saves and applies it: Changed).
 		std::atomic<bool> gHeldEdit{ false };  // a color is held (changed live, not saved yet) - FlushHeldColor saves it
 
+		// devbench only, never saved: a page drawn in a window of its own for a test's picture (DevBench.cpp's menuPage):
+		// -1 closed, 0 Colors, 1 Colors scrolled to its end, 2 Settings, 3 Colors at its end with Factions open
+		std::atomic_int gTestPage{ -1 };
+
 		template <class Set>
 		bool EditColor(const char* a_id, std::optional<Color>& a_held, Color a_stored, const Set& a_set)
 		{
@@ -188,6 +195,29 @@ namespace Plugin
 			SetItemTooltip("%s", a_tip);
 		}
 
+		// the next dropdown as wide as the longest of these names, so no choice is cut short
+		void FitCombo(std::span<const char* const> a_names)
+		{
+			float widest = 0.0f;
+			for (const char* name : a_names) {
+				widest = std::max(widest, CalcTextSize(name).x);
+			}
+			SetNextItemWidth(widest + GetFrameHeight() + GetStyle()->FramePadding.x * 2.0f);
+		}
+
+		// the mod a rank is left to now (its pick, with that mod there), else nullptr
+		const char* LeftTo(std::size_t a_row)
+		{
+			return StrangeWardsRow(a_row) ? "Strange Wards" : StrangeRunesRow(a_row) ? "Strange Runes" :
+			                                                                           nullptr;
+		}
+
+		// what a row's swatch shows: its color, or none (Vanilla, or a rank left to another mod's look)
+		std::optional<Color> ShownColor(std::size_t a_row)
+		{
+			return LeftTo(a_row) ? std::nullopt : RowColor(a_row);
+		}
+
 		// the five ranks as they will look, white end to color end
 		void LadderSwatches()
 		{
@@ -195,16 +225,69 @@ namespace Plugin
 				if (i) {
 					SameLine();
 				}
-				const auto c = RowColor(i);
+				const auto c = ShownColor(i);
 				ColorButton(std::format("##rank{}", i).c_str(), c ? Vec(*c) : Vec(0x404040), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip,
 					ImVec2(48.0f, 22.0f));
-				SetItemTooltip("%s", c                       ? Fill(T("{}: #{}"), std::string(T(kRowLabel[i])), HexColor(*c)).c_str() :
-									 StrangeWardsInstalled() ? Fill(T("{}: Strange Wards' look"), std::string(T(kRowLabel[i]))).c_str() :
-															   T(kRowLabel[i]));
+				SetItemTooltip("%s", c         ? Fill(T("{}: #{}"), std::string(T(kRowLabel[i])), HexColor(*c)).c_str() :
+									 LeftTo(i) ? Fill(T("{}: {}'s look"), std::string(T(kRowLabel[i])), std::string(LeftTo(i))).c_str() :
+												 T(kRowLabel[i]));
 			}
 		}
 
+		// one line per choice of the dropdowns below it, each its name in the accent and what it does (his ask 2026-11-02);
+		// a line without a name is left out (a choice that is not offered here)
+		void Legend(std::initializer_list<std::pair<const char*, const char*>> a_lines)
+		{
+			PushTextWrapPos(0.0f);
+			for (const auto& [name, what] : a_lines) {
+				if (name) {
+					TextColored(MenuStyle::gTheme.accent, "%s", name);
+					SameLine();
+					TextColored(kMuted, "%s", what);
+				}
+			}
+			PopTextWrapPos();
+		}
+
+		// a row's dropdown: Ladder (a rank) or Default (a rankless ward), Own color, then Vanilla - which a rank shows as
+		// Strange Wards while that is installed, its art being the game's - and Strange Runes for a rank while that is loaded
+		struct RowChoices
+		{
+			std::vector<const char*> names;
+			std::vector<RowMode>     modes;
+
+			explicit RowChoices(std::size_t a_row)
+			{
+				const bool rank = a_row < kRanks;
+				Add(rank ? T("Ladder") : T("Default"), RowMode::kDefault);
+				Add(T("Own color"), RowMode::kCustom);
+				const bool strange = rank && StrangeWardsInstalled();
+				Add(strange ? "Strange Wards" : T("Vanilla"), strange ? RowMode::kStrangeWards : RowMode::kVanilla);
+				if (rank && StrangeRunesLoaded()) {
+					Add("Strange Runes", RowMode::kStrangeRunes);
+				}
+			}
+			void Add(const char* a_name, RowMode a_mode)
+			{
+				names.push_back(a_name);
+				modes.push_back(a_mode);
+			}
+			// the shown choice: Vanilla on a Strange Wards rank is that, a mod's look without the mod is the ladder
+			[[nodiscard]] int Shown(std::size_t a_row) const
+			{
+				const auto mode = RowModeOf(a_row);
+				const auto want = StrangeWardsRow(a_row) ? RowMode::kStrangeWards : mode;
+				const auto it = std::ranges::find(modes, want);
+				return it == modes.end() ? 0 : static_cast<int>(it - modes.begin());
+			}
+		};
+
 		static_assert(std::size(kRowFrom) == kRows);
+
+		void DrawOthers();
+		bool HasShields();
+		void DrawShields();
+		void DrawFactions();
 
 		// The Colors page (his ask 2026-10-05: its own page above Settings): the presets first, then the ladder and every ward
 		void DrawColors()
@@ -232,15 +315,7 @@ namespace Plugin
 			}
 
 			Header(Icon::kPalette, T("Colors"));
-			// Strange Wards takes the five rank rows (NoteStrangeWards), so the ladder and their own colors would change nothing
-			const bool strange = StrangeWardsInstalled();
-			if (strange) {
-				TextColored(kMuted, "%s",
-					T("Strange Wards is installed, so the five rank wards (Lesser to Master) keep its look: the ladder and their "
-					  "colors change nothing while it is. The other wards still take their colors."));
-			}
 			TextColored(kMuted, "%s", T("The ladder runs from white at the lowest rank to this color at the highest."));
-			BeginDisabled(strange);
 			// dragged (the color bar, the picker's hue): the wards follow live - his ask 2026-10-06, "slide the mouse across the
 			// slider ... to make the ward just skim through the color spectrum". Saved when let go.
 			if (EditColor("ladder", heldLadder, LadderColor(), [](Color a_c) { SetLadderColor(a_c); })) {
@@ -259,27 +334,33 @@ namespace Plugin
 			SameLine();
 			SettingToggle(T("Reverse the ladder"), LadderReversed, SetLadderReversed,
 				T("Off: Lesser wards are white and the strongest take the color. On: the other way round."));
-			EndDisabled();
 			LadderSwatches();
 
 			Spacing();
 			if (CollapsingHeader(T("Each ward"), ImGuiTreeNodeFlags_DefaultOpen)) {
+				const bool strange = StrangeWardsInstalled();
+				Legend({ { T("Ladder:"), T("a rank ward takes its step on the ladder above.") },
+					{ T("Default:"), T("Dynamic Wards' own color for that ward - Spellbreaker gold, Shield of the Crusader and Visage of Reman white, Vampire ward red.") },
+					{ T("Own color:"), T("a color you pick, for that ward alone.") },
+					{ T("Vanilla:"), strange ? T("Dynamic Wards leaves the ward alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
+											   T("Dynamic Wards leaves the ward alone, as the game or another mod has it.") },
+					{ strange ? "Strange Wards:" : nullptr, T("a rank ward wears Strange Wards' own dome and hand art.") },
+					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look you pick in Strange Runes' own menu (reload the save to see it).") } });
+				const char* const anyChoice[] = { T("Ladder"), T("Default"), T("Own color"), T("Vanilla"), "Strange Wards", "Strange Runes" };
 				for (std::size_t i = 0; i < kRows; ++i) {
 					PushID(static_cast<int>(i));
-					BeginDisabled(strange && i < kRanks);
-					int        mode = static_cast<int>(RowModeOf(i));
-					const auto shown = RowColor(i);
+					const RowChoices choices(i);
+					int              pick = choices.Shown(i);
+					const auto       shown = ShownColor(i);
 					ColorButton("##now", shown ? Vec(*shown) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 					SameLine();
-					const std::string first = i < kRanks ? std::string(T("Ladder")) : std::string(T("Default"));
-					const char*       modes[] = { first.c_str(), T("Own color"), T("Vanilla") };
-					SetNextItemWidth(150.0f);
-					if (Combo(T(kRowLabel[i]), &mode, modes, 3)) {
-						SetRow(i, static_cast<RowMode>(mode), mode == 1 && RowModeOf(i) != RowMode::kCustom ? shown.value_or(kWhite) : RowCustom(i));
+					FitCombo(anyChoice);
+					if (Combo(T(kRowLabel[i]), &pick, choices.names.data(), static_cast<int>(choices.names.size()))) {
+						const auto mode = choices.modes[static_cast<std::size_t>(pick)];
+						SetRow(i, mode, mode == RowMode::kCustom && RowModeOf(i) != RowMode::kCustom ? RowColor(i).value_or(kWhite) : RowCustom(i));
 						heldRow[i].reset();
 						Changed();
 					}
-					SetItemTooltip("%s", T("Vanilla leaves that ward exactly as the game or your other mods have it."));
 					if (*kRowFrom[i]) {
 						SameLine();
 						TextColored(kMuted, "(%s)", kRowFrom[i]);
@@ -292,9 +373,20 @@ namespace Plugin
 						}
 						Unindent(26.0f);
 					}
-					EndDisabled();
 					PopID();
 				}
+			}
+			if (CollapsingHeader(T("Other casters"), ImGuiTreeNodeFlags_DefaultOpen)) {
+				DrawOthers();
+			}
+			if (HasShields() && CollapsingHeader(T("Shields"), ImGuiTreeNodeFlags_DefaultOpen)) {
+				DrawShields();
+			}
+			if (gTestPage.load() == 3) {
+				SetNextItemOpen(true, ImGuiCond_Always);
+			}
+			if (CollapsingHeader(T("Factions"))) {  // closed until opened: the longest list
+				DrawFactions();
 			}
 		}
 
@@ -304,11 +396,11 @@ namespace Plugin
 		{
 			PushID(static_cast<int>(a_look));
 			const auto  pick = LookOf(a_look);
-			const char* modes[] = { T("Your look"), T("Own color"), T("Vanilla"), T("Default") };
+			const char* modes[] = { T("Your look"), T("Own color"), StrangeWardsInstalled() ? T("Vanilla (Strange Wards)") : T("Vanilla"), T("Default") };
 			int         mode = static_cast<int>(pick.mode);
 			ColorButton("##now", pick.mode == LookMode::kCustom ? Vec(pick.color) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 			SameLine();
-			SetNextItemWidth(150.0f);
+			FitCombo(modes);
 			if (Combo(T(kLookLabel[a_look]), &mode, modes, a_look >= kGroups ? 4 : 3)) {
 				SetLook(a_look, { static_cast<LookMode>(mode), pick.color });
 				a_held.reset();
@@ -330,11 +422,12 @@ namespace Plugin
 		// Followers, Enemies and Neutral: one look each (his answer 2026-10-27)
 		void DrawOthers()
 		{
-			MenuStyle::Page                                  page;
 			static std::array<std::optional<Color>, kGroups> held;
-			Header(Icon::kShield, T("Other casters"));
-			TextColored(kMuted, "%s", T("The ward look other casters wear. Your look: the same colors as your own wards. Vanilla: the game's own ward. A ward you leave to "
-										"another mod (Strange Wards' ranks, Strange Runes' look, a mod unticked on Compatibility) keeps that mod's look on everyone."));
+			MenuStyle::Note(T("The ward look casters who are not you wear."));
+			Legend({ { T("Your look:"), T("the same colors as your own wards.") }, { T("Own color:"), T("one color you pick for the whole group.") },
+				{ T("Vanilla:"), StrangeWardsInstalled() ? T("the game's own ward - on the rank wards that is Strange Wards' look while it is installed.") :
+														   T("the game's own ward, untouched.") } });
+			MenuStyle::Note(T("A rank ward you set to Strange Wards or Strange Runes above keeps that look on everyone."));
 			for (std::size_t i = 0; i < kGroups; ++i) {
 				LookRow(i, held[i]);
 			}
@@ -343,10 +436,9 @@ namespace Plugin
 		// one look per faction group; a group whose mod is not loaded is left out
 		void DrawFactions()
 		{
-			MenuStyle::Page                                 page;
 			static std::array<std::optional<Color>, kLooks> held;
-			Header(Icon::kList, T("Factions"));
-			TextColored(kMuted, "%s", T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
+			MenuStyle::Note(T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
+			Legend({ { T("Default:"), T("no pick for this faction: its casters wear the Enemies or Neutral look.") } });
 			for (std::size_t i = kGroups; i < kLooks; ++i) {
 				if (FactionLoaded(i)) {
 					LookRow(i, held[i]);
@@ -362,24 +454,34 @@ namespace Plugin
 			SetItemTooltip("%s", T("Every group back to Default."));
 		}
 
-		// The Settings page: Lights first, then the dome, then Opacity and Brightness
+		// MenuStyle::Header with a hover tip on its title
+		void HeaderTip(unsigned a_icon, const char* a_text, const char* a_tip)
+		{
+			Spacing();
+			FontAwesome::PushSolid();
+			TextColored(MenuStyle::gTheme.accent, "%s", FontAwesome::UnicodeToUtf8(a_icon).c_str());
+			FontAwesome::Pop();
+			SameLine();
+			TextColored(MenuStyle::gTheme.accent, "%s", a_text);
+			SetItemTooltip("%s", a_tip);
+			Separator();
+		}
+
+		// The Settings page: Lights, then the dome, then the wards' look
 		void DrawSettings()
 		{
 			MenuStyle::Page page;
 
-			Header(Icon::kBulb, T("Lights"));
 			const char* lighting[] = { T("Community Shaders"), T("ENB"), T("Vanilla") };
-			TextColored(kMuted, "%s", Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
-			TextColored(kMuted, "%s", T("In first person your ward also lights your hand."));
+			HeaderTip(Icon::kBulb, T("Lights"), Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			{  // every pick: ENB gets the plugin's lights too (Lighting.cpp), so its switches show
 				SettingToggle(T("Ward casting light"), WardLightOn, SetWardLightOn,
-					T("The light on the hands of anyone raising one of these wards, yours and other casters', in the ward's color."));
+					T("The light on the hands of anyone raising one of these wards, yours and other casters', in the ward's color. In first person your ward also lights your hand."));
 				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around you in its own color."));
 			}
 
 			// the ward's strength as Reticle Arcs' bar: shown for a ward she raises, and with this on for an always-on one too
 			if (ArcBarRegistered()) {
-				Header(Icon::kGauge, T("Reticle Arcs"));
 				SettingToggle(T("Ward strength bar for always-on wards"), AlwaysOnBar, SetAlwaysOnBar,
 					T("Reticle Arcs' Ward strength bar also shows for a ward that is always up and wears a dome, like Reliquary of Myth's "
 					  "Staff of Magnus while you hold it or its Spellbreaker. Off: only for wards you raise."));
@@ -442,7 +544,7 @@ namespace Plugin
 					  "Install Dynamic Wards again to get them."));
 			}
 
-			Header(Icon::kEye, T("Opacity"));
+			Header(Icon::kEye, T("Look"));
 			SettingSlider(T("Opacity"), Opacity, SetOpacity, kOpacityMin, 100,
 				T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
 			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
@@ -455,9 +557,7 @@ namespace Plugin
 				TextColored(kMuted, "%s", Missing360Meshes() ? T("Needs the 360 dome's files (install Dynamic Wards again).") : T("Needs 360 Ward."));
 			}
 
-			// his order 2026-10-06: Ward brightness moves down under the old "Casting art" heading, now "Brightness", and
-			// Casting glow is "Hand Brightness" (the ini key stays CastingGlow so saved settings carry over)
-			Header(Icon::kStar, T("Brightness"));
+			// Hand Brightness is the old Casting glow: the ini key stays CastingGlow so saved settings carry over
 			SettingSlider(T("Ward brightness"), Brightness, SetBrightness, kBrightnessMin, kBrightnessMax,
 				T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
 
@@ -470,46 +570,21 @@ namespace Plugin
 				T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. A color already at full strength stays as it is. 0 = off. In a place with normal color a boosted dome looks too strong."));
 		}
 
-		// The Compatibility page: one tick per plugin that adds wards Dynamic Wards found by what they are (not by name);
-		// unticked, that mod's wards keep their own art. The Legacy shields live here too.
-		void DrawCompatibility()
+		// a shield in this load order raises one of the shield wards, or Legacy's Crusader shields are there
+		bool HasShields()
 		{
-			MenuStyle::Page page;
-			Header(Icon::kPuzzle, T("Wards from other mods"));
-			static const auto mods = FoundMods();  // found once, at data load
-			if (mods.empty()) {
-				TextDisabled("%s", T("No mod in your load order adds wards of its own."));
-			}
-			for (const auto& [plugin, count] : mods) {
-				PushID(plugin.c_str());
-				bool              on = ModOn(plugin);
-				const std::string name = plugin.empty() ? std::string(T("Made in memory")) : plugin;
-				std::string       label = count == 1 ? Fill(T("{} (1 ward)"), name) : Fill(T("{} ({} wards)"), name, std::to_string(count));
-				if (Checkbox(label.c_str(), &on)) {
-					SetModOn(plugin, on);
-					Changed();
-				}
-				SetItemTooltip("%s", T("On: this mod's wards take the color of their rank. Off: they keep the mod's own look."));
-				PopID();
-			}
-			TextColored(kMuted, "%s", Fill(T("{} ward effect(s) found, {} colored"), std::to_string(FoundCount()), std::to_string(DressedCount())).c_str());
-			if (StrangeRunesLoaded()) {
-				Separator();
-				SettingToggle(T("Keep Strange Runes' ward look"), KeepStrangeRunes, SetKeepStrangeRunes,
-					T("Strange Runes gives the wards its own look from its menu. Off: Dynamic Wards puts its colors back whenever "
-					  "Strange Runes swaps them. On: the wards keep Strange Runes' look (reload the save to see it)."));
-			}
-			// his order 2026-10-08: one switch per shield; off = blocking with that shield raises no ward at all. His yes
-			// 2026-10-12: the switch is a pick - Off, Normal dome, 360 dome (a user wanted the 360 sphere on his spell wards only)
+			return CrusaderAvailable() || std::ranges::any_of(kShieldRows, ShieldFound);
+		}
+
+		// one pick per shield - Off (blocking raises no ward at all), Normal dome or 360 dome - and the Legacy Crusader switch
+		void DrawShields()
+		{
 			bool shieldsShown = false;
 			for (const auto row : kShieldRows) {
 				if (!ShieldFound(row)) {
 					continue;
 				}
-				if (!shieldsShown) {
-					Header(Icon::kShield, T("Shields"));
-					shieldsShown = true;
-				}
+				shieldsShown = true;
 				PushID(static_cast<int>(row));
 				// all three always shown, so the stored pick is what the menu shows (the code review of 2026-10-12: a 360 pick shown
 				// as Normal without 360 Ward could not be changed to Normal); without 360 Ward the 360 pick wears the normal dome
@@ -517,7 +592,7 @@ namespace Plugin
 				const char* picks[] = { T("Off"), T("Normal dome"), Has360Ward() ? T("360 dome") : Missing360Meshes() ? T("360 dome (needs its files)") :
 																							   Missing360Patch()      ? T("360 dome (needs the Universal Patch)") :
 																														T("360 dome (needs 360 Ward)") };
-				SetNextItemWidth(220.0f);
+				FitCombo(picks);
 				if (Combo(Fill(T("{} ward"), std::string(T(kRowLabel[row]))).c_str(), &pick, picks, 3)) {
 					SetShieldDome(row, static_cast<ShieldDome>(pick));
 					Changed();
@@ -528,7 +603,9 @@ namespace Plugin
 				PopID();
 			}
 			if (CrusaderAvailable()) {
-				Separator();
+				if (shieldsShown) {
+					Separator();
+				}
 				SettingToggle(T("Legacy Crusader shields raise the Crusader ward"), CrusaderOn, SetCrusaderOn,
 					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
 					  "also take that ward's strength instead of Spellbreaker's."));
@@ -546,6 +623,33 @@ namespace Plugin
 		}
 	}
 
+	namespace
+	{
+		SKSEMenuFramework::Model::WindowInterface* gTestWindow = nullptr;
+
+		void __stdcall DrawTestWindow()
+		{
+			const int page = gTestPage.load();
+			SetNextWindowPos(ImVec2(40.0f, 20.0f), ImGuiCond_Always);
+			SetNextWindowSize(ImVec2(820.0f, 1040.0f), ImGuiCond_Always);
+			if (Begin("Dynamic Wards (test)", nullptr, ImGuiWindowFlags_NoCollapse) && page >= 0 && page <= 3) {
+				Guarded("menu: test window", page == 2 ? DrawSettings : DrawColors);
+				if (page == 1 || page == 3) {
+					SetScrollY(GetScrollMaxY());
+				}
+			}
+			End();
+		}
+	}
+
+	void ShowTestPage(int a_page)
+	{
+		gTestPage = a_page;
+		if (gTestWindow) {
+			gTestWindow->IsOpen = a_page >= 0;
+		}
+	}
+
 	void RegisterMenu()
 	{
 		if (!SKSEMenuFramework::IsInstalled()) {
@@ -555,9 +659,7 @@ namespace Plugin
 		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
 		SKSEMenuFramework::AddSectionItem(T("Colors"), []() { Guarded("menu: Colors", DrawColors); });  // first (his ask 2026-10-05)
 		SKSEMenuFramework::AddSectionItem(T("Settings"), []() { Guarded("menu: Settings", DrawSettings); });
-		SKSEMenuFramework::AddSectionItem(T("Other casters"), []() { Guarded("menu: Other casters", DrawOthers); });
-		SKSEMenuFramework::AddSectionItem(T("Factions"), []() { Guarded("menu: Factions", DrawFactions); });
-		SKSEMenuFramework::AddSectionItem(T("Compatibility"), []() { Guarded("menu: Compatibility", DrawCompatibility); });
+		gTestWindow = SKSEMenuFramework::AddWindow(DrawTestWindow, false);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
 }

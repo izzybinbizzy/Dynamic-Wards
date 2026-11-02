@@ -114,6 +114,9 @@ namespace Plugin
 		kDefault = 0,  // a rank follows the ladder; a rankless row wears its own default
 		kCustom = 1,   // a color of its own
 		kVanilla = 2,  // the game's own (or another mod's) art
+		// a rank only, and only while that mod is there (without it the rank follows the ladder):
+		kStrangeWards = 3,  // Strange Wards' look - the game's own art, which it replaces
+		kStrangeRunes = 4,  // the look Strange Runes' own menu gives the ward spells
 	};
 
 	enum class Unlock : int
