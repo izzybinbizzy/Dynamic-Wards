@@ -108,7 +108,6 @@ namespace Plugin
 			RE::TESObjectLIGH* ownLight{ nullptr };
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
-			std::string        plugin;            // the file that adds the effect: its line on the Compatibility page
 			bool               constant = false;  // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
 		};
 
@@ -448,18 +447,17 @@ namespace Plugin
 			return std::format("{}{}{} - {}.nif", kLookDir, enbSet ? "ENB\\" : "", a_kind, SlotToken(a_row));
 		}
 
-		// what a ward wears now: nothing for the silent effect, a Vanilla row, or a ward found by what it is whose mod is
-		// unticked on the Compatibility page (one tick per mod, not one switch for all)
+		// what a ward wears now: nothing for the silent effect or a Vanilla row.
 		// Strange Runes restyles every ward spell's effect that carries the MagicWard keyword from its scripts (its MCM's
-		// ward look, set again at each load); with KeepStrangeRunes those are its, and we leave them (2026-10-03, his pick)
+		// ward look, set again at each load); a rank the player left to Strange Runes keeps those, and we leave them
 		bool RunesOwn(const Target& a_t)
 		{
-			return StrangeRunesLoaded() && KeepStrangeRunes() && a_t.effect->HasKeywordString("MagicWard");
+			return StrangeRunesRow(a_t.row) && a_t.effect->HasKeywordString("MagicWard");
 		}
 
 		const Art* Worn(const Target& a_t)
 		{
-			if (a_t.how == How::kSilent || (a_t.how == How::kFound && !ModOn(a_t.plugin)) || RunesOwn(a_t)) {
+			if (a_t.how == How::kSilent || RunesOwn(a_t)) {
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
@@ -529,8 +527,8 @@ namespace Plugin
 			return vm->DispatchMethodCall(handle, "Actor", a_fn, RE::MakeFunctionArguments(std::move(a_spell), std::move(a_hand)), done);
 		}
 
-		// Only a hand whose effect's casting art was swapped is re-equipped (a_castChanged - a row turned Vanilla, a Compatibility
-		// tick): each re-equip restarts the hand's casting art. A new color or Hand Brightness needs none - the copy in the hand is
+		// Only a hand whose effect's casting art was swapped is re-equipped (a_castChanged - a row turned Vanilla or left to
+		// another mod): each re-equip restarts the hand's casting art. A new color or Hand Brightness needs none - the copy in the hand is
 		// repainted where it is (Colors.cpp HandHook). gLock held; SendHands makes the calls once it is released.
 		struct HandCall
 		{
@@ -643,6 +641,7 @@ namespace Plugin
 			return;
 		}
 		gStrangePick = pick;
+		AdoptStrangeWards();
 		const auto* color = pick == StrangePick::kAmber ? &kStrangeAmber : pick == StrangePick::kWhite ? &kStrangeWhite :
 		                                                                                                 nullptr;
 		auto*       light = color ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(kWardHandLight) : nullptr;
@@ -651,7 +650,7 @@ namespace Plugin
 			light->data.color = RE::Color{ byte(color->red), byte(color->green), byte(color->blue), 0 };
 		}
 		const auto seen = firstBase.value_or(RE::NiColor{});
-		SKSE::log::info("wards: Strange Wards is installed, its {} pick{} - the five rank rows step aside for its art; the game's ward hand light {}",
+		SKSE::log::info("wards: Strange Wards is installed, its {} pick{} - the rank rows wear its look unless the player picked otherwise; the game's ward hand light {}",
 			PickName(pick), pick == StrangePick::kUnknown ? std::format(" (dome color {:.3f} {:.3f} {:.3f})", seen.red, seen.green, seen.blue) : std::string(),
 			light ? "takes its color" : color ? "was not found and keeps its own color" :
 												"keeps its own color");
@@ -747,18 +746,6 @@ namespace Plugin
 			gHandGlobal ? kHandGlobal : "NOT made", gPresentGlobal ? kPresentGlobal : "NOT made");
 	}
 
-	std::vector<std::pair<std::string, std::size_t>> FoundMods()
-	{
-		std::scoped_lock                   l{ gLock };
-		std::map<std::string, std::size_t> n;
-		for (const auto& t : gTargets) {
-			if (t.how == How::kFound) {
-				++n[t.plugin];
-			}
-		}
-		return { n.begin(), n.end() };
-	}
-
 	void FindWards()
 	{
 		auto* dh = RE::TESDataHandler::GetSingleton();
@@ -828,10 +815,6 @@ namespace Plugin
 				SKSE::log::info("[WARD] left alone: {} (casting art only, no dome, no Ward Power)", Where(eff));
 				continue;
 			} else {
-				// kept whatever its Compatibility tick says, so the tick works without a restart (ApplyAll reads it)
-				if (const auto* file = eff->GetFile(0)) {
-					t.plugin = std::string(file->GetFilename());
-				}
 				// an ALWAYS-ON ward (a constant effect: an item's ward while it is held or worn) is ranked by its Ward Power on the
 				// vanilla wards' scale (PowerRow), never by its minimum skill - an item's effect says 0 there: Reliquary of Myth's
 				// Staff of Magnus (999 Ward Power) wore the Novice row's white (3.4, a user report)
@@ -1008,7 +991,7 @@ namespace Plugin
 			Changes                                      changes;
 			std::string                                  why;
 			std::size_t                                  targets = 0, dressed = 0;
-			bool                                         light = false, use360 = false, unlocked = false, every = false;
+			bool                                         light = false, use360 = false, unlocked = false;
 		};
 
 		// gLock held: the art, the lights and the globals. Nothing here calls out of this plugin (other plugins' art listeners,
@@ -1023,7 +1006,6 @@ namespace Plugin
 			}
 			const bool                                   light = WardLightOn();
 			const bool                                   use360 = Can360() && Dome360();
-			const bool                                   every = EveryWard();
 			Changes                                      c;
 			std::size_t                                  dressed = 0;
 			std::unordered_set<const RE::EffectSetting*> castChanged;  // the effects whose casting art moved in this apply
@@ -1040,8 +1022,8 @@ namespace Plugin
 					Restore(d.hitEffectArt, t.ownHit, c.art);
 					Restore(d.enchantEffectArt, t.ownEnch, c.art);
 					// a row the player set to Vanilla: its own art stays reachable, so another caster's look with its own color
-					// still dresses it (a Strange Wards rank, a mod unticked or Strange Runes' own stay theirs)
-					if (t.row < kRows && !RowColor(t.row) && !(t.row < kRanks && StrangeWardsInstalled()) && (t.how != How::kFound || ModOn(t.plugin)) && !RunesOwn(t)) {
+					// still dresses it (a rank left to Strange Wards or Strange Runes stays theirs)
+					if (t.row < kRows && !RowColor(t.row) && !StrangeWardsRow(t.row) && !RunesOwn(t)) {
 						const bool looping = WearsWorn(t) || std::ranges::find(kShieldRows, t.row) != kShieldRows.end();
 						NoteGameArt(t.effect, t.ownCast, t.row, true, looping, false);
 						NoteGameArt(t.effect, t.ownHit, t.row, false, looping, use360);
@@ -1138,7 +1120,6 @@ namespace Plugin
 			out.light = light;
 			out.use360 = use360;
 			out.unlocked = gUnlocked;
-			out.every = every;
 			out.why = gLastApply;
 			out.targets = gTargets.size();
 			out.dressed = dressed;
@@ -1281,11 +1262,10 @@ namespace Plugin
 		}
 		MoveShieldWards(done.shields);
 		const auto& c = done.changes;
-		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) to re-equip; ward light {}, colored lights {}; dome {}; unlisted mods {}",
+		SKSE::log::info("apply ({}): {} dressed; changed {} art, {} light, {} shield; {} hand(s) to re-equip; ward light {}, colored lights {}; dome {}",
 			done.why, done.dressed, c.art, c.light, c.shield, done.hands.size(), done.light ? "on" : "off", ColoredLightsOn() ? "on" : "off",
 			!done.use360 ? "normal" : done.unlocked ? "360 (unlocked)" :
-													  "360 (locked)",
-			done.every ? "on" : "off");
+													  "360 (locked)");
 		if (done.artChanged) {
 			SKSE::GetMessagingInterface()->Dispatch(kArtChanged, nullptr, 0, nullptr);
 		}
@@ -1337,18 +1317,6 @@ namespace Plugin
 	{
 		std::scoped_lock l{ gLock };
 		return std::ranges::any_of(gShieldEntries, [a_row](const ShieldEntry& s) { return s.row == a_row; });
-	}
-
-	std::size_t DressedCount()
-	{
-		std::scoped_lock l{ gLock };
-		return gDressed;
-	}
-
-	std::size_t FoundCount()
-	{
-		std::scoped_lock l{ gLock };
-		return gTargets.size();
 	}
 
 	RE::BGSReferenceEffect* FlashFor(RE::EffectSetting* a_effect, RE::Actor* a_caster)
@@ -1404,7 +1372,7 @@ namespace Plugin
 	// strongest of them; only the five rank rows (a shield's or the vampire ward never lights a staff hand) and only a ward that
 	// wears ward art (one found by Ward Power alone shows nothing). Nothing links an ability to the staff that gave it, so a
 	// ring's always-on ward lights a staff hand too.
-	// LOCK ORDER: called with DomeLights.cpp's lock held; takes this file's lock, then Settings' (Worn -> ModOn). Nothing here
+	// LOCK ORDER: called with DomeLights.cpp's lock held; takes this file's lock, then Settings' (Worn -> RowModeOf). Nothing here
 	// may call into DomeLights.cpp while holding this lock.
 	std::size_t AlwaysOnWardRow(RE::Actor* a_actor)
 	{
@@ -1521,7 +1489,7 @@ namespace Plugin
 			{ "unlockRule", static_cast<int>(UnlockRule()) }, { "unlockPerk", UnlockPerk() },
 			{ "ladder", std::format("{} {}{} opacity {}", HexColor(LadderColor()), LadderStages(), LadderReversed() ? " reversed" : "", Opacity()) },
 			{ "wardLight", WardLightOn() }, { "coloredLights", ColoredLightsOn() }, { "lightsGlobal", gLightsGlobal ? json(gLightsGlobal->value) : json(nullptr) },
-			{ "lightPlacer", gLightPlacer }, { "everyWard", EveryWard() }, { "crusader", CrusaderOn() }, { "alwaysOnBar", AlwaysOnBar() },
+			{ "lightPlacer", gLightPlacer }, { "crusader", CrusaderOn() }, { "alwaysOnBar", AlwaysOnBar() },
 			{ "strangeWards", PickName(gStrangePick.load()) }, { "rows", std::move(rows) }, { "shields", std::move(shields) }, { "shieldWards", std::move(shieldWards) },
 			{ "wards", std::move(wards) } };
 	}

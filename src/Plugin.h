@@ -70,8 +70,6 @@ namespace Plugin
 	bool                                             Unlocked360();
 	bool                                             CrusaderAvailable();
 	bool                                             ShieldFound(std::size_t a_row);  // a shield in this load order raises that row's ward
-	std::size_t                                      DressedCount();
-	std::size_t                                      FoundCount();
 	nlohmann::json                                   WardsReport();
 	RE::BGSReferenceEffect*                          FlashFor(RE::EffectSetting* a_effect, RE::Actor* a_caster);  // a_caster: his look's flash (none known: the player's)
 	bool                                             PreviewRow(std::size_t a_row, float a_seconds);              // devbench: the dome this row wears now, on the player (the normal dome of a rank row with worn copies: its looping copy - the cast dome idles as plain art; the 360 dome loops already)
@@ -81,7 +79,6 @@ namespace Plugin
 	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
 	void                                             WatchBlocking();                                             // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
 	std::vector<std::pair<std::string, std::string>> WardPerks();
-	std::vector<std::pair<std::string, std::size_t>> FoundMods();
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
 	void    LoadSettings();
@@ -128,14 +125,8 @@ namespace Plugin
 	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
-	bool                         KeepStrangeRunes();  // Strange Runes loaded: its ward look stays (off: ours goes back when it swaps the art)
-	void                         SetKeepStrangeRunes(bool a_on);
 	bool                         StrangeRunesLoaded();
-	void                         WatchArt();  // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
-	bool                         EveryWard();
-	void                         SetEveryWard(bool a_on);
-	bool                         ModOn(std::string_view a_plugin);
-	void                         SetModOn(std::string_view a_plugin, bool a_on);
+	void                         WatchArt();                     // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
 	std::optional<Color>         RowColor(std::size_t a_row);    // what the row wears now; nothing = Vanilla
 	std::optional<Color>         SlotColor(std::size_t a_slot);  // a row's (RowColor) or a look's own color; nothing = no art of ours
 	LookPick                     LookOf(std::size_t a_look);
@@ -145,7 +136,10 @@ namespace Plugin
 	// game's hand art (which reads the gradient its pick ships) show, and the game's ward hand light takes its pick's color
 	void NoteStrangeWards();  // data load, main thread
 	bool StrangeWardsInstalled();
-	int  StopPercent(std::size_t a_rank);  // where a rank sits on the ladder, 0 white - 100 the color
+	void AdoptStrangeWards();                 // Strange Wards found: the ranks wear its look until the player picks for them (his "step aside by itself")
+	bool StrangeWardsRow(std::size_t a_row);  // a rank that wears Strange Wards' look now (its pick, or Vanilla, with it installed)
+	bool StrangeRunesRow(std::size_t a_row);  // a rank left to Strange Runes' look now (its pick, with Strange Runes loaded)
+	int  StopPercent(std::size_t a_rank);     // where a rank sits on the ladder, 0 white - 100 the color
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on each
 	// copy of its model the frame the copy appears (the cached model is painted once, before anything copies it)
@@ -223,7 +217,8 @@ namespace Plugin
 	nlohmann::json ArcBarReport();
 
 	void RegisterMenu();
-	void FlushHeldColor();  // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
+	void FlushHeldColor();          // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
+	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in a window of its own (0 Colors, 1 Settings, 2 Other casters, 3 Factions; -1 closed)
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event

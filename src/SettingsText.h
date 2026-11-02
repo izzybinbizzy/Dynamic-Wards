@@ -12,9 +12,7 @@
 #include "WardMath.h"
 
 #include <array>
-#include <functional>
 #include <istream>
-#include <map>
 #include <ostream>
 #include <string>
 
@@ -30,26 +28,24 @@ namespace Plugin
 	// 100, Hand Brightness 100)
 	struct SettingsValues
 	{
-		std::array<RowPick, kRows>               rows{};
-		std::array<LookPick, kLooks>             looks = DefaultLooks();  // [Others]: other casters' looks
-		Color                                    ladder = kPresets[0].color;
-		int                                      stages = kMinStages;
-		bool                                     reversed = false;
-		int                                      opacity = 100;
-		int                                      transparency = kTransparencyDefault;
-		int                                      brightness = 100;
-		int                                      castingGlow = 100;  // the menu's Hand Brightness (the ini key stays CastingGlow)
-		int                                      domeBoost = 0;      // the menu's Dome color boost, 0-100 percent; 0 = off
-		int                                      dome = 0;           // 0 the 360 dome, 1 the normal dome
-		bool                                     light = true;       // Ward casting light
-		bool                                     coloredLights = true;
-		Unlock                                   unlock = Unlock::kSkill75;
-		std::string                              perk;
-		bool                                     crusader = true;
-		bool                                     every = true;
-		bool                                     keepRunes = false;    // Strange Runes loaded: leave the wards it restyles to it
-		bool                                     alwaysOnBar = false;  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
-		std::map<std::string, bool, std::less<>> mods;                 // [Compatibility] plugin=0/1, lowercased; missing = every
+		std::array<RowPick, kRows>   rows{};
+		std::array<LookPick, kLooks> looks = DefaultLooks();  // [Others]: other casters' looks
+		Color                        ladder = kPresets[0].color;
+		int                          stages = kMinStages;
+		bool                         reversed = false;
+		int                          opacity = 100;
+		int                          transparency = kTransparencyDefault;
+		int                          brightness = 100;
+		int                          castingGlow = 100;  // the menu's Hand Brightness (the ini key stays CastingGlow)
+		int                          domeBoost = 0;      // the menu's Dome color boost, 0-100 percent; 0 = off
+		int                          dome = 0;           // 0 the 360 dome, 1 the normal dome
+		bool                         light = true;       // Ward casting light
+		bool                         coloredLights = true;
+		Unlock                       unlock = Unlock::kSkill75;
+		std::string                  perk;
+		bool                         crusader = true;
+		bool                         alwaysOnBar = false;    // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
+		bool                         strangeChosen = false;  // the ranks were picked with Strange Wards there; until then they wear its look
 		// ShieldDome per kShieldRows entry (0 off, 1 normal, 2 360); -1 = not set yet - ReadSettingsText always sets it, so only a
 		// table that was never read (a test's) meets ShieldPick's -1 branch
 		std::array<int, kShieldRows.size()> shieldDome{ -1, -1, -1 };
@@ -145,6 +141,23 @@ namespace Plugin
 		}
 	}
 
+	// a row's line in [Colors]: RRGGBB, or default / vanilla / strangewards / strangerunes
+	inline std::string RowText(const RowPick& a_r)
+	{
+		switch (a_r.mode) {
+		case RowMode::kCustom:
+			return HexColor(a_r.color);
+		case RowMode::kVanilla:
+			return "vanilla";
+		case RowMode::kStrangeWards:
+			return "strangewards";
+		case RowMode::kStrangeRunes:
+			return "strangerunes";
+		default:
+			return "default";
+		}
+	}
+
 	// a look of a token ("Thalmor" -> its index), any case; kLooks when it is none
 	inline std::size_t LookOfToken(std::string_view a_token)
 	{
@@ -167,8 +180,12 @@ namespace Plugin
 		a_s.castingGlow = std::clamp(a_s.castingGlow, kBrightnessMin, kBrightnessMax);
 		a_s.domeBoost = std::clamp(a_s.domeBoost, 0, 100);
 		a_s.dome = std::clamp(a_s.dome, 0, 1);
-		for (auto& r : a_s.rows) {
+		for (std::size_t i = 0; i < kRows; ++i) {
+			auto& r = a_s.rows[i];
 			r.color &= 0xFFFFFF;
+			if (i >= kRanks && (r.mode == RowMode::kStrangeWards || r.mode == RowMode::kStrangeRunes)) {
+				r.mode = RowMode::kDefault;  // those two looks are the rank wards'
+			}
 		}
 		for (auto& l : a_s.looks) {
 			l.color &= 0xFFFFFF;
@@ -188,6 +205,7 @@ namespace Plugin
 		std::string                         line, section;
 		std::array<int, kShieldRows.size()> oldSwitch{ -1, -1, -1 };  // the 2026-10-08 on / off keys, when the file has them
 		std::array<int, kShieldRows.size()> picks{ -1, -1, -1 };      // the dome picks the file has
+		bool                                keepRunes = false;        // 4.0's one switch: every rank ward kept Strange Runes' look
 		while (a_in && std::getline(a_in, line)) {
 			line = Trim(line);
 			if (line.empty() || line[0] == ';' || line[0] == '#') {
@@ -197,8 +215,7 @@ namespace Plugin
 				section = Trim(std::string_view(line).substr(1, line.size() - 2));
 				continue;
 			}
-			// [Compatibility]'s key is a plugin name, which may hold '=': its value is the text after the last one
-			const auto eq = SameText(section, "Compatibility") ? line.rfind('=') : line.find('=');
+			const auto eq = line.find('=');
 			if (eq == std::string::npos) {
 				continue;
 			}
@@ -246,10 +263,10 @@ namespace Plugin
 					a_out.perk = val;
 				} else if (is("CrusaderShields")) {
 					a_out.crusader = v != 0;
-				} else if (is("EveryWard")) {
-					a_out.every = v != 0;
 				} else if (is("KeepStrangeRunesWards")) {
-					a_out.keepRunes = v != 0;
+					keepRunes = v != 0;
+				} else if (is("StrangeWardsChosen")) {
+					a_out.strangeChosen = v != 0;
 				} else if (is("AlwaysOnWardBar")) {
 					a_out.alwaysOnBar = v != 0;
 				} else {
@@ -261,8 +278,6 @@ namespace Plugin
 						}
 					}
 				}
-			} else if (SameText(section, "Compatibility")) {
-				a_out.mods[Lower(key)] = number && v != 0;  // a word ("off") reads as off, as it always did
 			} else if (SameText(section, "Others")) {
 				if (const auto look = LookOfToken(key); look < kLooks) {
 					if (const auto p = ParseLook(val, look, a_out.looks[look].color)) {
@@ -275,6 +290,10 @@ namespace Plugin
 					r.mode = RowMode::kVanilla;
 				} else if (SameText(val, "default")) {
 					r.mode = RowMode::kDefault;
+				} else if (SameText(val, "strangewards")) {
+					r.mode = RowMode::kStrangeWards;
+				} else if (SameText(val, "strangerunes")) {
+					r.mode = RowMode::kStrangeRunes;
 				} else if (const auto c = ParseColor(val)) {
 					r = { RowMode::kCustom, *c };
 				} else if (number) {
@@ -292,6 +311,11 @@ namespace Plugin
 				a_out.shieldDome[i] = oldSwitch[i] == 0 ? static_cast<int>(ShieldDome::kOff) : (a_out.dome == 0 ? static_cast<int>(ShieldDome::k360) : static_cast<int>(ShieldDome::kNormal));
 			}
 		}
+		if (keepRunes) {
+			for (std::size_t i = 0; i < kRanks; ++i) {
+				a_out.rows[i].mode = RowMode::kStrangeRunes;
+			}
+		}
 		Normalize(a_out);
 		return result;
 	}
@@ -305,8 +329,8 @@ namespace Plugin
 			  << "\nOpacity=" << a_s.opacity << "\nTransparency=" << a_s.transparency << "\nBrightness=" << a_s.brightness
 			  << "\nCastingGlow=" << a_s.castingGlow << "\nDomeColorBoost=" << a_s.domeBoost << "\nDome=" << a_s.dome << "\nWardLight=" << (a_s.light ? 1 : 0)
 			  << "\nColoredLights=" << (a_s.coloredLights ? 1 : 0) << "\nUnlock360=" << static_cast<int>(a_s.unlock) << "\nUnlock360Perk=" << a_s.perk
-			  << "\nCrusaderShields=" << (a_s.crusader ? 1 : 0) << "\nEveryWard=" << (a_s.every ? 1 : 0)
-			  << "\nKeepStrangeRunesWards=" << (a_s.keepRunes ? 1 : 0) << "\nAlwaysOnWardBar=" << (a_s.alwaysOnBar ? 1 : 0);
+			  << "\nCrusaderShields=" << (a_s.crusader ? 1 : 0) << "\nAlwaysOnWardBar=" << (a_s.alwaysOnBar ? 1 : 0)
+			  << "\nStrangeWardsChosen=" << (a_s.strangeChosen ? 1 : 0);
 		for (const auto row : kShieldRows) {
 			// the old on / off key too, so a version before the pick reads the same choice (the code review of 2026-10-12)
 			const int pick = ShieldPick(a_s, ShieldIndex(row));
@@ -317,17 +341,11 @@ namespace Plugin
 		a_out << "\n[Colors]\n";
 		for (std::size_t i = 0; i < kRows; ++i) {
 			const auto& r = a_s.rows[i];
-			a_out << kTokens[i] << "=" << (r.mode == RowMode::kVanilla ? std::string("vanilla") : r.mode == RowMode::kDefault ? std::string("default") :
-																																HexColor(r.color))
-				  << "\n";
+			a_out << kTokens[i] << "=" << RowText(r) << "\n";
 		}
 		a_out << "[Others]\n";
 		for (std::size_t i = 0; i < kLooks; ++i) {
 			a_out << kLookTokens[i] << "=" << LookText(a_s.looks[i]) << "\n";
-		}
-		a_out << "[Compatibility]\n";
-		for (const auto& [plugin, on] : a_s.mods) {
-			a_out << plugin << "=" << (on ? 1 : 0) << "\n";
 		}
 	}
 
