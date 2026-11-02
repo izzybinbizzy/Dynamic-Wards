@@ -218,7 +218,7 @@ namespace Plugin
 
 	void RegisterMenu();
 	void FlushHeldColor();          // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
-	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in a window of its own (0 Colors, 1 Settings, 2 Other casters, 3 Factions; -1 closed)
+	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in a window of its own (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open)
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event
