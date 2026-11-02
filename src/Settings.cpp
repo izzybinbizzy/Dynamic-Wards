@@ -115,7 +115,9 @@ namespace Plugin
 		Change([](auto& s) {
 			if (!s.strangeChosen) {
 				for (std::size_t i = 0; i < kRanks; ++i) {
-					s.rows[i].mode = RowMode::kStrangeWards;
+					if (s.rows[i].mode != RowMode::kStrangeRunes) {  // 4.0's Keep Strange Runes carried over: its look stays
+						s.rows[i].mode = RowMode::kStrangeWards;
+					}
 				}
 				s.strangeChosen = true;
 			}
