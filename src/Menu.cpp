@@ -3,12 +3,13 @@
 // GPL-3.0-or-later; see LICENSE and the notice at the top of main.cpp.
 //
 // The SKSE Menu Framework pages (3.0): the ladder and every ward in any color - a drawn spectrum bar, color pickers,
-// quick picks, live swatches of each rank - other casters' looks, the shields, the opacity slider, the dome and the lights. A color drag shows on
-// the wards live (at most ~15 times a second) and is saved when the pick is let go.
+// quick picks, live swatches of each rank - other casters' looks, the shields, the opacity slider, the dome and the lights.
+// A color drag shows on the wards live (at most ~15 times a second) and is saved when the pick is let go.
 // His layout: two pages - Colors (presets, the ladder, every ward with the rankless ones' mod named, other casters' looks, the
 // shields, the factions) and Settings (Lights, Dome, Look - Transparency right below Opacity, greyed out without 360 Ward); a
-// legend above every list of dropdowns; Strange Wards and Strange Runes as choices of the rank wards. Every change is saved the moment it is made (a slider or a color when it is let go), so closing the
-// menu loses nothing - on the game's main thread, in one task with the re-dress (Changed).
+// legend above every list of dropdowns; Strange Wards and Strange Runes as choices of the rank wards. Every change is saved
+// the moment it is made (a slider or a color when it is let go), so closing the menu loses nothing - on the game's main
+// thread, in one task with the re-dress (Changed).
 
 #ifndef WIN32_LEAN_AND_MEAN
 #	define WIN32_LEAN_AND_MEAN
