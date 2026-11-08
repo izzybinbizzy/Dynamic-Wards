@@ -58,7 +58,8 @@ namespace Plugin
 			auto out = json::array();
 			for (const auto& s : FrameCost::Slots()) {
 				if (const char* name = s.name.load(std::memory_order_relaxed)) {
-					out.push_back({ { "pass", name }, { "usAvg", s.usAvg.load(std::memory_order_relaxed) }, { "usMax", s.usMax.load(std::memory_order_relaxed) } });
+					out.push_back({ { "pass", name }, { "usAvg", s.usAvg.load(std::memory_order_relaxed) }, { "usMax", s.usMax.load(std::memory_order_relaxed) },
+						{ "calls", s.calls.load(std::memory_order_relaxed) } });
 				}
 			}
 			return out;

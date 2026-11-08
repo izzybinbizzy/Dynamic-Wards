@@ -550,30 +550,30 @@ namespace Plugin
 		return out;
 	}
 
-	// Which of a magic caster's art objects is one of ours (a_known says): the casting art it holds, else the one it held before this
-	// update (the update may clear it once the art is attached); only when it held none at all, and only where a_spellRoute allows it
-	// (her own casters), the casting art one of its current spell's effects carries. Another art held is never tied to one of ours
-	// through its spell, and another caster's hand, dressed in his look's art, never takes the spell's base art
-	template <class Art, class Known>
-	[[nodiscard]] const Art* FindOurHandArt(
-		const Art* a_now, const Art* a_before, std::span<const Art* const> a_spell, bool a_spellRoute, Known&& a_known, bool& a_viaSpell)
+	// The bytes right before a call that passes a magic caster's art and the address of its copy task, the way the game starts a hand's art copy:
+	// `mov rdx, [reg + 0xE0]` (castingArt) and `lea rcx, [reg + 0xB0]` (cloneTask) off one register, in either order
+	inline constexpr std::ptrdiff_t kCloneTaskAt = 0xB0;
+	inline constexpr std::size_t    kCloneArgBytes = 14;
+	inline constexpr std::size_t    kCloneScan = 0x400;
+
+	[[nodiscard]] constexpr bool PassesCloneArgs(std::span<const std::uint8_t, kCloneArgBytes> a_bytes) noexcept
 	{
-		a_viaSpell = false;
-		if (a_now && a_known(a_now)) {
-			return a_now;
-		}
-		if (a_before && a_before != a_now && a_known(a_before)) {
-			return a_before;
-		}
-		if (a_now || a_before || !a_spellRoute) {
-			return nullptr;
-		}
-		for (const Art* art : a_spell) {
-			if (art && a_known(art)) {
-				a_viaSpell = true;
-				return art;
-			}
-		}
-		return nullptr;
+		// REX.W, the opcode, mod 10 + the target register + the base, then the 32-bit offset: the base register, or -1 when it is not that instruction
+		const auto base = [](std::span<const std::uint8_t> a_i, std::uint8_t a_op, std::uint8_t a_reg, std::uint8_t a_off) {
+			const bool match = (a_i[0] == 0x48 || a_i[0] == 0x49) && a_i[1] == a_op && (a_i[2] & 0xF8) == (0x80 | (a_reg << 3)) && (a_i[2] & 7) != 4 && a_i[3] == a_off && a_i[4] == 0 && a_i[5] == 0 && a_i[6] == 0;
+			return match ? (a_i[0] & 1) * 8 + (a_i[2] & 7) : -1;
+		};
+		const auto first = a_bytes.first<7>();
+		const auto second = a_bytes.last<7>();
+		const auto art = [&](auto a_i) { return base(a_i, 0x8B, 2, 0xE0); };
+		const auto task = [&](auto a_i) { return base(a_i, 0x8D, 1, 0xB0); };
+		return (art(first) >= 0 && art(first) == task(second)) || (task(first) >= 0 && task(first) == art(second));
+	}
+
+	// the events a graph sends as its posture changes: tailSneakIdle, tailMTIdle, tailCombatIdle and so on. In any case: the game's string pool
+	// keeps the casing it saw first
+	[[nodiscard]] inline bool PostureTag(std::string_view a_tag)
+	{
+		return SameText(a_tag.substr(0, 4), "tail");
 	}
 }

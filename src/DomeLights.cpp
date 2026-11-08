@@ -5,15 +5,12 @@
 // The colored light on a ward's dome, and a light on each hand casting or readying one of our wards, first person included -
 // on every lighting pick. The player's hand lights hang under the THIRD-person body in first person too (TickHands has the
 // measurement): under the first-person skeleton a light lit nothing on ENB. (The name DWHand1st is kept - reports read it.)
-// Each light takes its row's color and its slider every tick, so a change in the menu reaches a ward already up.
+// Each light takes its row's color and its slider at each round, so a change in the menu reaches a ward already up.
 // Where a dome light sits, how far it reaches and how strong it is are read from `Dome Lights.txt`, which the build writes.
 //
-// Why a 100 ms tick on the main thread and not the player's update (Illuminated's frame hook): the player's update stops
-// while a menu pauses the game and while DevBench's camera is free (measured on Illuminated's lights), and those are the
-// times the wards' colors are set live and filmed. A queued task runs in both.
-// The tick sleeps while nothing of ours shows: the game's own moments wake it (an art effect of ours starting, a magic caster
-// holding a ward of ours, SKSE's draw / sheathe / cast actions, a settings change), and it sleeps again once no light, copy or
-// retired palette of ours is left and nothing woke it for kAwake - no task runs and no list is walked while no ward is up.
+// Nothing here runs on a clock. The game's own moments queue one main-thread round (an art effect of ours starting or ending, an
+// actor's draw, sheathe, cast, equip, load or death, a setting), and the round reads only what its event names. A queued task
+// also runs while a menu pauses the game and while DevBench's camera is free, when the wards' colors are set live and filmed.
 //
 // CREDIT: a light is made and registered the way ReLight by Truman does it (github.com/TrumanGIT/ReLight,
 // GPL-3.0-or-later, used with his permission): a master NiPointLight cloned for every use, the size in the radius'
@@ -24,7 +21,6 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
-#include <condition_variable>
 #include <numbers>
 
 namespace Plugin
@@ -34,10 +30,7 @@ namespace Plugin
 		constexpr const char* kPath = "Data/SKSE/Plugins/Dynamic Wards/Dome Lights.txt";
 		constexpr const char* kLightName = "DWDome";
 		constexpr const char* kHandName = "DWHand1st";
-		constexpr float       kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
-		constexpr auto        kTick = std::chrono::milliseconds(100);
-		constexpr auto        kAwake = std::chrono::milliseconds(1000);                                // awake this long after the last wake, lit or not
-		constexpr std::size_t kReleaseEvery = 20;                                                      // ticks between the releases of spent copies (2 s)
+		constexpr float       kAmbientRatio = 0.1f;                                                    // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr const char* kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
 
 		// a light's numbers: its reach under inverse square, and in the game's own lighting (plain); the house light by default
@@ -58,7 +51,6 @@ namespace Plugin
 		struct Lit
 		{
 			const RE::ModelReferenceEffect* effect{ nullptr };
-			RE::NiPointer<RE::NiAVObject>   art;
 			RE::NiPointer<RE::NiNode>       parent;  // held, so a body the game lets go of never leaves the light a dangling parent
 			RE::NiPointer<RE::NiPointLight> light;
 			RE::NiPointer<RE::BSLight>      bs;
@@ -80,16 +72,6 @@ namespace Plugin
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
 		std::vector<Lit>                      gLit;
-		// a dome the scene had no light for: tried again after kRetry, not on every tick. Its art is held, so a new effect made at
-		// the same address (with art of its own) is never taken for it
-		struct Refused
-		{
-			const RE::ModelReferenceEffect*       effect{ nullptr };
-			RE::NiPointer<RE::NiAVObject>         art;
-			std::chrono::steady_clock::time_point at{};
-		};
-		std::vector<Refused> gRefused;
-		constexpr auto       kRetry = std::chrono::seconds(2);
 		// every actor casting one of our wards: a light on each casting hand (his order 2026-10-05: first person on every pick,
 		// and the light must reach the GROUND - the game's casting light lit the caster but not the land, so on the picks where
 		// this plugin makes the lights it hangs the hand light itself, made like the dome light: affectLand on)
@@ -109,19 +91,16 @@ namespace Plugin
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
 		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
 
-		// the tick's sleep: gAsleep under gSleepLock, gSleepy its mirror for the wakers. A waker stores the time, then reads
-		// gSleepy; the tick sets gSleepy, then reads the time (both seq_cst), so one of the two sees the other: no wake is lost
-		std::mutex                 gSleepLock;
-		std::condition_variable    gSleep;
-		bool                       gAsleep{ true };
-		std::atomic_bool           gSleepy{ true };
-		std::atomic<std::int64_t>  gWokeAt{ 0 };  // steady clock, milliseconds
-		std::atomic<std::uint64_t> gTicks{ 0 };   // rounds run since data load: none while no ward is up
-
-		std::int64_t NowMs()
-		{
-			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-		}
+		// what the next round reads, noted on any thread by the game's events and hooks; one round is queued at a time
+		std::mutex                                   gNoteLock;
+		std::vector<RE::FormID>                      gNotedHands;  // gNoteLock: actors whose hands may have changed
+		std::vector<const RE::ModelReferenceEffect*> gGone;        // gNoteLock: art effects of ours that ended - names only, never read
+		std::atomic_bool                             gAllHands{ false };
+		std::atomic_bool                             gReadDomes{ false };
+		std::atomic_bool                             gRoundQueued{ false };
+		std::atomic_bool                             gHangAgain{ false };
+		std::atomic_bool                             gAnyLit{ false };
+		std::atomic<std::uint64_t>                   gTicks{ 0 };  // rounds run since data load: none while nothing happens
 
 		bool Wanted()
 		{
@@ -299,25 +278,24 @@ namespace Plugin
 			return a_art ? a_art->AsNode() : nullptr;
 		}
 
-		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), its art,
-		// the node its light hangs under and its wearer are held while the lock is
+		// a dome that shows now: its effect only names it (never read - it may be gone once the effects' lock is let go), the node
+		// its light hangs under and its wearer are held while the lock is
 		struct Showing
 		{
 			const RE::ModelReferenceEffect* effect{ nullptr };
-			RE::NiPointer<RE::NiAVObject>   art;
 			RE::NiPointer<RE::NiNode>       parent;
 			RE::ObjectRefHandle             target;
 			std::size_t                     row{ kRows };
 			const Spec*                     spec{ nullptr };
 		};
 
-		// the dome's points not hung yet; false when the scene refused one (the ones hung stay, the rest wait for kRetry)
-		bool Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
+		// the dome's points not hung yet; the ones the scene refused wait for the next round
+		void Hang(const Showing& a_s, RE::ShadowSceneNode* a_scene, bool a_shadowOn)
 		{
 			auto*      parent = a_s.parent.get();
 			const auto color = SlotColor(a_s.row);
 			if (!parent || !color) {
-				return true;
+				return;
 			}
 			// the trial: one shadow light per dome, and only the player's (each is an omni shadow map the renderer has 3-4 of a frame)
 			const auto* wearer = a_s.target.get().get();
@@ -338,12 +316,11 @@ namespace Plugin
 					light = Make(parent, kLightName, at, a_scene, bs, false, dress);
 				}
 				if (!light) {
-					return false;
+					return;
 				}
-				gLit.push_back({ a_s.effect, a_s.art, RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row,
+				gLit.push_back({ a_s.effect, RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row,
 					a_s.spec, shadow, shadowable, i });
 			}
-			return true;
 		}
 
 		void Drop(RE::NiPointLight* a_light, RE::NiPointer<RE::BSLight>& a_bs, RE::ShadowSceneNode* a_scene)
@@ -496,27 +473,41 @@ namespace Plugin
 			});
 		}
 
-		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks. True
-		// while a light of ours is up or a dome waits for one (the tick stays awake)
-		bool Round()
+		// the hands of the one actor an event named; one gone or with no 3D loses his lights
+		void HandsOf(RE::FormID a_id, RE::ShadowSceneNode* a_scene, bool a_on)
 		{
-			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-			auto* lists = RE::ProcessLists::GetSingleton();
-			if (!scene || !lists) {
-				return false;  // no scene (a load, the main menu): the next ward of ours wakes the tick again
+			auto* actor = a_on ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
+			if (actor) {
+				TickActor(actor, actor->Get3D(false), gHands[a_id], a_scene);
 			}
+			const auto it = gHands.find(a_id);
+			if (it == gHands.end()) {
+				return;
+			}
+			if (!actor) {
+				DropHand(it->second.h[0], a_scene);
+				DropHand(it->second.h[1], a_scene);
+			}
+			if (!it->second.h[0].light && !it->second.h[1].light) {
+				gHands.erase(it);
+			}
+		}
+
+		// every dome that shows, off the game's list: a light on each, the lights of those gone dropped, dark while the wearer sneaks. The light
+		// hangs on the wearer's body, so it goes up as the effect starts, whether or not its model has loaded yet
+		void ReadDomes(RE::ShadowSceneNode* a_scene, RE::ProcessLists* a_lists, std::span<const RE::ModelReferenceEffect* const> a_gone)
+		{
 			const bool           on = Wanted() && ColoredLightsOn();
 			std::vector<Showing> live;
-			std::scoped_lock     l{ gLock };
 			if (on) {
-				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
-				for (auto& temp : lists->magicEffects) {
+				RE::BSSpinLockGuard guard{ a_lists->magicEffectsLock };
+				for (auto& temp : a_lists->magicEffects) {
 					auto* e = temp.get();
 					if (!e || e->GetType() != RE::TEMP_EFFECT_TYPE::kRefModel) {
 						continue;
 					}
-					auto* m = static_cast<RE::ModelReferenceEffect*>(e);
-					if (m->finished || !m->artObject || !m->artObject3D || !m->artObject3D->parent) {
+					const auto* m = static_cast<RE::ModelReferenceEffect*>(e);
+					if (m->finished || !m->artObject || std::ranges::find(a_gone, m) != a_gone.end()) {
 						continue;
 					}
 					auto [it, fresh] = gDomeOf.try_emplace(m->artObject, nullptr, kSlots);
@@ -527,7 +518,7 @@ namespace Plugin
 						}
 					}
 					if (const auto [spec, row] = it->second; spec && row < kSlots) {
-						live.push_back({ m, m->artObject3D, RE::NiPointer<RE::NiNode>(LightParent(m->artObject3D.get(), m->target)), m->target, row, spec });
+						live.push_back({ m, RE::NiPointer<RE::NiNode>(LightParent(m->artObject3D.get(), m->target)), m->target, row, spec });
 					}
 				}
 			}
@@ -541,27 +532,22 @@ namespace Plugin
 			}
 			std::erase_if(gLit, [&](Lit& a_lit) {
 				const bool keep = a_lit.light && a_lit.light->parent && std::ranges::find(flip, a_lit.effect) == flip.end() && std::ranges::any_of(live, [&](const Showing& a_s) {
-					// a body the wearer swapped (a 3D reload) takes the light down, and the next tick hangs it on the new one
-					return a_s.effect == a_lit.effect && a_s.art.get() == a_lit.art.get() && a_s.parent.get() == a_lit.parent.get();
+					// a body the wearer swapped (a 3D reload) takes the light down, and this round hangs it on the new one
+					return a_s.effect == a_lit.effect && a_s.row == a_lit.row && a_s.parent.get() == a_lit.parent.get();
 				});
 				if (!keep) {
-					Drop(a_lit.light.get(), a_lit.bs, scene);
+					Drop(a_lit.light.get(), a_lit.bs, a_scene);
 				}
 				return !keep;
 			});
-			const auto now = std::chrono::steady_clock::now();
-			const auto same = [](const Showing& a_s, const Refused& a_r) { return a_s.effect == a_r.effect && a_s.art.get() == a_r.art.get(); };
-			std::erase_if(gRefused, [&](const Refused& a_r) {
-				return now - a_r.at > kRetry || std::ranges::none_of(live, [&](const Showing& a_s) { return same(a_s, a_r); });
-			});
 			for (const auto& s : live) {
-				// a dome the scene gave only part of its lights keeps them: the missing points are tried again after kRetry
+				// a dome the scene gave only part of its lights keeps them: the missing points are tried again at the next round
 				const auto hung = static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }));
-				if (hung < s.spec->points.size() && std::ranges::none_of(gRefused, [&](const Refused& a_r) { return same(s, a_r); }) && !Hang(s, scene, shadowOn)) {
-					gRefused.push_back({ s.effect, s.art, now });
+				if (hung < s.spec->points.size()) {
+					Hang(s, a_scene, shadowOn);
 				}
 			}
-			// read once a tick, not once a light
+			// read once a round, not once a light
 			const float                              dim = LightDim();
 			std::array<std::optional<Color>, kSlots> colors{};
 			std::array<bool, kSlots>                 asked{};
@@ -580,53 +566,126 @@ namespace Plugin
 					DressDome(lit.light.get(), *c, *lit.spec, dim);
 				}
 			}
-			TickHands(scene, WardLightOn());
-			return !gLit.empty() || !gRefused.empty() || std::ranges::any_of(gHands, [](const auto& a_entry) { return a_entry.second.h[0].light || a_entry.second.h[1].light; });
+			gAnyLit = !gLit.empty();
 		}
 
-		// one round, then whether to sleep: only with no light of ours up, no copy or retired palette left to release (Colors.cpp
-		// ReleaseOld - given back here, outside the game's effect updates) and no wake for kAwake
+		// a cell change takes every light out of the scene's lists and leaves ours hung under the body, lighting nothing: only a new one reaches the scene
+		void DropAll(RE::ShadowSceneNode* a_scene)
+		{
+			for (auto& lit : gLit) {
+				Drop(lit.light.get(), lit.bs, a_scene);
+			}
+			gLit.clear();
+			for (auto& [id, a] : gHands) {
+				DropHand(a.h[0], a_scene);
+				DropHand(a.h[1], a_scene);
+			}
+			gHands.clear();
+		}
+
+		// one round on the main thread: what the events since the last one named, then the copies and palettes nothing holds any more (Colors.cpp
+		// ReleaseOld - given back here, outside the game's effect updates)
 		void Tick()
 		{
-			const FrameCost::Scope cost{ 0, "dome and hand lights (each 100 ms tick while awake)" };
-			const auto             tick = ++gTicks;
-			bool                   busy = Round();
-			const bool             idle = !busy && NowMs() - gWokeAt.load() > kAwake.count();
-			if (idle || tick % kReleaseEvery == 0) {
-				busy = ReleaseOld() || busy;
+			const FrameCost::Scope cost{ 0, "dome and hand lights (each round, on an event)" };
+			++gTicks;
+			const bool                                   domes = gReadDomes.exchange(false);
+			const bool                                   all = gAllHands.exchange(false);
+			const bool                                   again = gHangAgain.exchange(false);
+			std::vector<RE::FormID>                      hands;
+			std::vector<const RE::ModelReferenceEffect*> gone;
+			{
+				std::scoped_lock l{ gNoteLock };
+				hands.swap(gNotedHands);
+				gone.swap(gGone);
 			}
-			if (!idle || busy) {
-				return;
+			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+			auto* lists = RE::ProcessLists::GetSingleton();
+			if (scene && lists) {
+				std::scoped_lock l{ gLock };
+				if (again) {
+					DropAll(scene);
+				}
+				// an event of an actor may be the wearer's 3D arriving or his sneaking changing
+				if (domes || !hands.empty()) {
+					ReadDomes(scene, lists, gone);
+				}
+				const bool on = WardLightOn();
+				if (all) {
+					TickHands(scene, on);
+				} else {
+					for (const auto id : hands) {
+						HandsOf(id, scene, on);
+					}
+				}
 			}
-			std::scoped_lock l{ gSleepLock };
-			gAsleep = true;
-			gSleepy.store(true);
-			if (NowMs() - gWokeAt.load() <= kAwake.count()) {
-				gAsleep = false;
-				gSleepy.store(false);
-			}
+			ReleaseOld();
+		}
+
+		void QueueRound() noexcept
+		{
+			(void)LaterOnce(gRoundQueued, "dome and hand lights", []() { Tick(); });
 		}
 	}
 
 	void WakeLights() noexcept
 	{
-		const auto now = NowMs();
-		if (now - gWokeAt.load(std::memory_order_relaxed) >= kTick.count()) {
-			gWokeAt.store(now);
-		}
-		if (!gSleepy.load()) {
-			return;
-		}
+		gReadDomes = true;
+		gAllHands = true;
+		QueueRound();
+	}
+
+	void HangLightsAgain() noexcept
+	{
+		gHangAgain = true;
+		WakeLights();
+	}
+
+	bool DomeLit() noexcept
+	{
+		return gAnyLit;
+	}
+
+	void NoteDome() noexcept
+	{
+		gReadDomes = true;
+		QueueRound();
+	}
+
+	// a new effect may sit at the address of one that just ended: it is not that one
+	void NoteDomeStart(const RE::ModelReferenceEffect* a_effect) noexcept
+	{
 		try {
-			{
-				std::scoped_lock l{ gSleepLock };
-				gAsleep = false;
-				gSleepy.store(false);
-			}
-			gSleep.notify_one();
+			std::scoped_lock l{ gNoteLock };
+			std::erase(gGone, a_effect);
 		} catch (...) {
-			// a lock the system could not give: the next wake (every frame while a ward of ours shows) tries again
+			// a lock the system could not give: his next event reads the domes again
 		}
+		NoteDome();
+	}
+
+	void NoteDomeGone(const RE::ModelReferenceEffect* a_effect) noexcept
+	{
+		try {
+			std::scoped_lock l{ gNoteLock };
+			gGone.push_back(a_effect);
+		} catch (...) {
+			// a lock or memory the system could not give: its finished flag tells the round
+		}
+		NoteDome();
+	}
+
+	void NoteHands(RE::FormID a_actor) noexcept
+	{
+		try {
+			std::scoped_lock l{ gNoteLock };
+			if (std::ranges::find(gNotedHands, a_actor) == gNotedHands.end()) {
+				gNotedHands.push_back(a_actor);
+			}
+		} catch (...) {
+			// a lock or memory the system could not give: his next event names him again
+		}
+		QueueRound();
 	}
 
 	void StartDomeLights()
@@ -637,19 +696,6 @@ namespace Plugin
 		}
 		SKSE::log::info("dome lights: {} dome model(s) in {}{}; dome and hand lights hung by this plugin", gSpecs.size(), kPath,
 			gBadLines ? std::format(" ({} line(s) left out: a number that does not read)", gBadLines) : std::string());
-		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock. Nothing thrown in it
-		// may leave the thread (that ends the game): each wait and each round is guarded, and so is the tick on the main thread
-		std::thread([]() {
-			std::atomic_bool queued{ false };
-			for (;;) {
-				Guarded("dome and hand lights asleep", []() {
-					std::unique_lock l{ gSleepLock };
-					gSleep.wait(l, []() { return !gAsleep; });
-				});
-				std::this_thread::sleep_for(kTick);
-				Guarded("dome and hand lights", [&]() { (void)LaterOnce(queued, "dome and hand lights", []() { Tick(); }); });
-			}
-		}).detach();
 		WakeLights();
 	}
 
@@ -677,6 +723,6 @@ namespace Plugin
 		}
 		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
 			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
-			{ "asleep", gSleepy.load() }, { "ticks", gTicks.load() }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
 	}
 }

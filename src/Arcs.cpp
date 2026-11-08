@@ -14,7 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <chrono>
+#include <cmath>
 #include <cstdint>
 
 // Reticle Arcs' own header (theirs, MIT) needs GetModuleHandleW / GetProcAddress; its warnings are not ours
@@ -77,54 +77,45 @@ namespace
 		a_state.alarm = a_state.percent <= 0.0f;
 	}
 
-	// the ward's row color, read again when a ward is raised or changes, and once a second: the frame waits for Update (main thread)
-	struct RowColorSeen
-	{
-		const RE::EffectSetting*     ward{ nullptr };
-		float                        age{ 0.0f };
-		std::optional<Plugin::Color> color;
-	};
-	RowColorSeen gSeen;
+	// the ward up and its row color, read again only when what her wards give changes, or the colors or the bar's switch do
+	const RE::EffectSetting*     gWard{ nullptr };
+	std::optional<Plugin::Color> gColor;
+	float                        gGave{ 0.0f };
+	std::atomic_bool             gStale{ true };
 
 	// what the bar showed last frame, for devbench's report
-	std::atomic_bool   gRegistered{ false };
-	std::atomic_bool   gShown{ false };
-	std::atomic<float> gPercent{ 0.0f };
-	// when Reticle Arcs last asked (it skips kill moves, killcams and paused menus): the report says how old its reading is
-	std::atomic<std::int64_t> gAskedAt{ 0 };
+	std::atomic_bool           gRegistered{ false };
+	std::atomic_bool           gShown{ false };
+	std::atomic<float>         gPercent{ 0.0f };
+	std::atomic<std::uint64_t> gAsked{ 0 };  // how often Reticle Arcs asked (it skips kill moves, killcams and paused menus)
 
-	std::int64_t NowMs()
-	{
-		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-	}
-
-	// Reticle Arcs calls this on the main thread every frame
-	void Update(float a_delta, BarState& a_state)
+	// Reticle Arcs calls this on the main thread every frame and its interface has no way to stop it (ReticleArcsAPI.h): two values are read here
+	void Update(float, BarState& a_state)
 	{
 		const FrameCost::Scope cost{ 6, "Reticle Arcs' ward bar (each frame)" };
 		Plugin::Guarded("reticle arcs bar", [&]() {
 			auto* player = RE::PlayerCharacter::GetSingleton();
-			gAskedAt = NowMs();
+			++gAsked;
 			gShown = false;
 			const float left = player ? player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower) : 0.0f;
 			// hits come off the ward as a damage modifier (negative): the ward gave what is left plus what was taken
 			const float taken = player ? -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower) : 0.0f;
 			const float gave = left + std::max(taken, 0.0f);
-			// no Ward Power given at all: no ward is up, and her effect list is not walked this frame
-			const auto* ward = gave > 0.0f ? WardUp(*player) : nullptr;
-			if (!ward) {
-				gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
+			// her effect list is walked only when a ward starts or ends: a hit moves what is left and what was taken, never their sum
+			const bool stale = gStale.exchange(false);
+			if (stale || gave != gGave) {
+				gGave = gave;
+				gWard = gave > 0.0f ? WardUp(*player) : nullptr;
+				const auto row = gWard ? Plugin::WardRowOf(gWard) : Plugin::kRows;
+				gColor = row < Plugin::kRows ? Plugin::RowColor(row) : std::nullopt;
+			}
+			if (!gWard) {
 				return;
 			}
 			Fill(a_state, left / gave);
-			gSeen.age += std::max(a_delta, 0.0f);
-			if (ward != gSeen.ward || gSeen.age > 1.0f) {
-				const auto row = Plugin::WardRowOf(ward);
-				gSeen = { ward, 0.0f, row < Plugin::kRows ? Plugin::RowColor(row) : std::nullopt };
-			}
-			if (gSeen.color) {
+			if (gColor) {
 				a_state.useColor = true;
-				a_state.color = *gSeen.color & 0xFFFFFF;
+				a_state.color = *gColor & 0xFFFFFF;
 			}
 			gShown = a_state.active;
 			gPercent = a_state.percent;
@@ -164,6 +155,11 @@ namespace Plugin
 		SKSE::log::info("Reticle Arcs (interface {}) {} the ward bar", arcs->GetVersion(), taken ? "took" : "refused");
 	}
 
+	void ArcBarStale() noexcept
+	{
+		gStale = true;
+	}
+
 	bool ArcBarRegistered()
 	{
 		return gRegistered;
@@ -171,8 +167,7 @@ namespace Plugin
 
 	nlohmann::json ArcBarReport()
 	{
-		const auto asked = gAskedAt.load();
 		return { { "registered", gRegistered.load() }, { "shown", gShown.load() }, { "percent", gPercent.load() }, { "alwaysOnBar", AlwaysOnBar() },
-			{ "ageMs", asked ? NowMs() - asked : -1 } };
+			{ "asked", gAsked.load() } };
 	}
 }

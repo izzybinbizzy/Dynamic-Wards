@@ -290,6 +290,7 @@ namespace Plugin
 	void SetAlwaysOnBar(bool a_on)
 	{
 		Change([&](auto& s) { s.alwaysOnBar = a_on; });
+		ArcBarStale();
 	}
 
 	void ApplyScheme(const Scheme& a_scheme)
