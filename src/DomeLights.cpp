@@ -589,6 +589,13 @@ namespace Plugin
 		{
 			const FrameCost::Scope cost{ 0, "dome and hand lights (each round, on an event)" };
 			++gTicks;
+			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+			auto* lists = RE::ProcessLists::GetSingleton();
+			if (!scene || !lists) {
+				// no scene yet (a load, the main menu): what was asked waits for the next round
+				ReleaseOld();
+				return;
+			}
 			const bool                                   domes = gReadDomes.exchange(false);
 			const bool                                   all = gAllHands.exchange(false);
 			const bool                                   again = gHangAgain.exchange(false);
@@ -599,9 +606,7 @@ namespace Plugin
 				hands.swap(gNotedHands);
 				gone.swap(gGone);
 			}
-			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-			auto* lists = RE::ProcessLists::GetSingleton();
-			if (scene && lists) {
+			{
 				std::scoped_lock l{ gLock };
 				if (again) {
 					DropAll(scene);
@@ -649,6 +654,7 @@ namespace Plugin
 	void NoteDome() noexcept
 	{
 		gReadDomes = true;
+		ArcBarStale();  // a ward replaced by one giving the same Ward Power: the bar reads which is up
 		QueueRound();
 	}
 

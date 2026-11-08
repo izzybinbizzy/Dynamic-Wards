@@ -631,7 +631,7 @@ namespace
 		const auto passes = [](const B& a_b) { return PassesCloneArgs(std::span<const std::uint8_t, kCloneArgBytes>(a_b)); };
 		// the bytes of 1.6.1170: mov rdx, [rdi + 0xE0]; lea rcx, [rdi + 0xB0]
 		CHECK(passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 0, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
-		// the other order, and through r12 (REX.B)
+		// the other order, and through r14 (REX.B)
 		CHECK(passes({ 0x48, 0x8D, 0x8B, 0xB0, 0, 0, 0, 0x48, 0x8B, 0x93, 0xE0, 0, 0, 0 }));
 		CHECK(passes({ 0x49, 0x8B, 0x96, 0xE0, 0, 0, 0, 0x49, 0x8D, 0x8E, 0xB0, 0, 0, 0 }));
 		// off two registers, another offset, other target registers, rsp's encoding

@@ -176,9 +176,11 @@ namespace Plugin
 				// the caster's look is read here, on whichever thread the engine starts an art effect
 				static std::array<std::atomic_bool, 2> seen{};
 				NoteThread(seen, "other casters: an art effect started");
+				bool       started = false;
+				RE::FormID wearer = 0;
 				{
 					const FrameCost::Scope cost{ 5, "an art effect starts (each, before it)" };
-					Guarded("other casters' art", [a_self]() {
+					Guarded("other casters' art", [a_self, &started, &wearer]() {
 						if (!a_self->artObject) {
 							return;
 						}
@@ -194,11 +196,8 @@ namespace Plugin
 						if (!ours) {
 							return;
 						}
-						// a ward of ours starts: its dome light and its caster's hand lights
-						NoteDomeStart(a_self);
-						if (ref) {
-							NoteHands(ref->GetFormID());
-						}
+						started = true;
+						wearer = ref ? ref->GetFormID() : 0;
 						// art another mod swapped since her last draw or cast is dressed again before his ward shows long
 						(void)QueueArtCheck("as another caster's ward started");
 						const auto        slot = TheirSlot(ref.get(), ours->row);
@@ -216,10 +215,26 @@ namespace Plugin
 						}
 					});
 				}
-				return func(a_self);
+				const bool kept = func(a_self);
+				// a ward of ours started: its dome light and its caster's hand lights, once the game has the effect
+				if (started && kept) {
+					NoteDomeStart(a_self);
+					if (wearer) {
+						NoteHands(wearer);
+					}
+				}
+				return kept;
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
+
+		// a ward's end names its wearer: a drawn staff's hand light hangs on an always-on ward, and no cast or equip says it ended
+		void NoteWearer(const RE::ModelReferenceEffect* a_effect) noexcept
+		{
+			if (const auto ref = a_effect->target.get()) {
+				NoteHands(ref->GetFormID());
+			}
+		}
 
 		// an art effect of ours is gone any other way (a cell left, its wearer's 3D): the round drops its dome light
 		struct DetachHook
@@ -228,6 +243,7 @@ namespace Plugin
 			{
 				if (OurArt(a_self->artObject)) {
 					NoteDomeGone(a_self);
+					NoteWearer(a_self);
 				}
 				func(a_self);
 			}
@@ -243,6 +259,7 @@ namespace Plugin
 				const auto result = func(a_self, a_effect);
 				if (a_effect && a_effect->GetType() == RE::TEMP_EFFECT_TYPE::kRefModel && OurArt(static_cast<RE::ModelReferenceEffect*>(a_effect)->artObject)) {
 					NoteDome();
+					NoteWearer(static_cast<RE::ModelReferenceEffect*>(a_effect));
 				}
 				return result;
 			}

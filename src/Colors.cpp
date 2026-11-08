@@ -166,7 +166,7 @@ namespace Plugin
 			const ArtOf*                          art{ nullptr };
 			std::chrono::steady_clock::time_point at{};
 		};
-		constexpr auto    kCopyHeld = std::chrono::seconds(5);
+		constexpr auto    kCopyHeld = std::chrono::seconds(30);
 		std::vector<Copy> gCopies;
 		std::size_t       gCopiesLogged = 0;  // gNewCopies at the last apply's log line
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with

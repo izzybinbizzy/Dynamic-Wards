@@ -121,6 +121,14 @@ namespace
 		{
 			if (a_event && a_event->actor) {
 				NoteHands(a_event->actor->GetFormID());
+				// a spell or staff equipped with her hands out copies its art at once: art a script swapped since is dressed first
+				if (a_event->equipped && a_event->actor->IsPlayerRef()) {
+					const auto* form = RE::TESForm::LookupByID(a_event->baseObject);
+					const auto* weapon = form ? form->As<RE::TESObjectWEAP>() : nullptr;
+					if (form && (form->Is(RE::FormType::Spell) || (weapon && weapon->IsStaff()))) {
+						Guarded("her equip", []() { (void)QueueArtCheck("as she equipped"); });
+					}
+				}
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}

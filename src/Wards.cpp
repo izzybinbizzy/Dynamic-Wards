@@ -1639,8 +1639,9 @@ namespace Plugin
 		{
 			static RE::BSEventNotifyControl thunk(RE::BSTEventSink<RE::BSAnimationGraphEvent>* a_self, const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* a_source)
 			{
+				const auto result = func(a_self, a_event, a_source);
 				NoteAnimationEvent(a_event);
-				return func(a_self, a_event, a_source);
+				return result;
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
