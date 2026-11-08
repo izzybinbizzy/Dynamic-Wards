@@ -198,6 +198,7 @@ namespace Plugin
 	void           NoteDomeStart(const RE::ModelReferenceEffect* a_effect) noexcept;  // any thread: that art effect of ours started
 	void           NoteDomeGone(const RE::ModelReferenceEffect* a_effect) noexcept;   // any thread: that art effect of ours ended
 	bool           DomeLit() noexcept;                                                // any thread: any dome light up - an event may be its wearer sneaking
+	void           InstallBodyWatch();                                                // SKSE's post-load: an actor's 3D let go or set names him
 	void           NoteHands(RE::FormID a_actor) noexcept;                            // any thread: his hands may have changed - one round reads him
 	void           SetDomeMode(DomeMode a_mode);
 	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)

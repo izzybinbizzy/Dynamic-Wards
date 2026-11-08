@@ -694,6 +694,34 @@ namespace Plugin
 		QueueRound();
 	}
 
+	namespace
+	{
+		// An actor's 3D let go or set, at his own slot (Light Placer's way of hooking a reference's 3D, powerof3, GPL-3.0, with his permission). The
+		// game's load event names only a reference with a script or in an alias: for anyone else nothing says he left, and his lights would
+		// stay in the scene where he stood. Any thread: only noted
+		template <class T>
+		struct BodySet
+		{
+			static void thunk(T* a_this, RE::NiAVObject* a_object, bool a_queue3DTasks)
+			{
+				func(a_this, a_object, a_queue3DTasks);
+				NoteHands(a_this->GetFormID());
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+			static void                                    Install()
+			{
+				REL::Relocation<std::uintptr_t> vtbl{ T::VTABLE[0] };
+				func = vtbl.write_vfunc(0x6C, thunk);
+			}
+		};
+	}
+
+	void InstallBodyWatch()
+	{
+		BodySet<RE::Character>::Install();
+		BodySet<RE::PlayerCharacter>::Install();
+	}
+
 	void StartDomeLights()
 	{
 		{
