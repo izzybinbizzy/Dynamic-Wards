@@ -33,7 +33,6 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
-#include <thread>
 #include <tuple>
 
 namespace Plugin
@@ -391,8 +390,9 @@ namespace Plugin
 			a_row.loaded = true;
 			std::set<std::string> paths, handPaths, normalDomePaths;
 			for (const auto& model : a_row.models) {
-				Master m{ model, nullptr, {}, 0 };
-				m.hand = Lower(model).find("wardinhandfx") != std::string::npos;
+				Master     m{ model, nullptr, {}, 0 };
+				const auto lm = Lower(model);
+				m.hand = lm.find("wardinhandfx") != std::string::npos;
 				RE::BSModelDB::DBTraits::ArgsType args{};
 				if (RE::BSModelDB::Demand(model.c_str(), m.root, args) != RE::BSResource::ErrorCode::kNone || !m.root) {
 					++gMissing;
@@ -411,7 +411,6 @@ namespace Plugin
 					b.loadStart = a_mat->falloffStartOpacity;
 					b.loadStop = a_mat->falloffStopOpacity;
 					{
-						const auto lm = Lower(model);
 						const bool normalDome = lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos;
 						// layer 1 = the vapour block on the lower palette row (0.39; layer 2 sits at 0.74)
 						b.vapourOne = normalDome && b.palette && src.find("vapor") != std::string::npos && a_mat->baseColor.red < 0.5f;
@@ -428,7 +427,7 @@ namespace Plugin
 					}
 					// a dome's fill: falloff on, and more opaque facing you (the larger cos angle) than at the rim
 					if (a_prop->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kFalloff) &&
-						Lower(model).find("wardbodyfx") != std::string::npos) {
+						lm.find("wardbodyfx") != std::string::npos) {
 						b.startFaces = a_mat->falloffStartAngle >= a_mat->falloffStopAngle;
 						b.facing = b.startFaces ? a_mat->falloffStartOpacity : a_mat->falloffStopOpacity;
 						const float rim = b.startFaces ? a_mat->falloffStopOpacity : a_mat->falloffStartOpacity;
@@ -436,7 +435,6 @@ namespace Plugin
 					}
 					if (b.palette && a_mat->greyscaleTexturePath.c_str() && *a_mat->greyscaleTexturePath.c_str()) {
 						paths.insert(a_mat->greyscaleTexturePath.c_str());
-						const auto lm = Lower(model);
 						if (lm.find("wardinhandfx") != std::string::npos) {
 							handPaths.insert(a_mat->greyscaleTexturePath.c_str());
 						} else if (lm.find("wardbodyfx") != std::string::npos && lm.find("360") == std::string::npos) {
@@ -759,8 +757,6 @@ namespace Plugin
 					const FrameCost::Scope cost{ 2, "a model copied (each art object copied)" };
 					Guarded("a new ward copy", [a_self, copy]() {
 						if (const auto art = gArtOf.find(a_self); art != gArtOf.end()) {
-							static std::array<std::atomic_bool, 2> seen{};
-							NoteThread(seen, "colors: a ward copy made");
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(copy, art->second) ? 1 : 0;
 						}

@@ -174,8 +174,6 @@ namespace Plugin
 			static bool thunk(RE::ModelReferenceEffect* a_self)
 			{
 				// the caster's look is read here, on whichever thread the engine starts an art effect
-				static std::array<std::atomic_bool, 2> seen{};
-				NoteThread(seen, "other casters: an art effect started");
 				bool       started = false;
 				RE::FormID wearer = 0;
 				{
@@ -184,12 +182,17 @@ namespace Plugin
 						if (!a_self->artObject) {
 							return;
 						}
+						// the game's other art effects, most of them, stop here
+						const auto it = gOurs.find(a_self->artObject);
+						if (it == gOurs.end() && !gAnyGame) {
+							return;
+						}
 						const auto               ref = a_self->target.get();
 						const RE::EffectSetting* effect = nullptr;
 						std::optional<Ours>      ours;
-						if (const auto it = gOurs.find(a_self->artObject); it != gOurs.end()) {
+						if (it != gOurs.end()) {
 							ours = it->second;
-						} else if (gAnyGame && ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
+						} else if (ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
 							effect = EffectOf(a_self, ref.get());
 							ours = effect ? GameOurs(effect, a_self->artObject) : std::nullopt;
 						}

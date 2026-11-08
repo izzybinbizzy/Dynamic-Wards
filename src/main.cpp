@@ -217,7 +217,6 @@ namespace
 		MakeArt();
 		ResolveFactions();
 		FindWards();
-		gTaskThread = std::this_thread::get_id();  // the game's main thread, which runs the data-load message and SKSE's tasks
 		ApplyAll(kWhyDataLoaded);
 		StartDomeLights();
 		GameEvents::Register();

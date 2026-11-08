@@ -86,7 +86,8 @@ namespace Plugin
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
 		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
 		RE::NiColor                                gLastAmbient{};
-		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
+		bool                                       gDomeWaiting = false;  // gLock: a dome that shows has a point not hung yet
+		std::size_t                                gBadLines = 0;         // Dome Lights.txt lines left out (a number that did not read)
 		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
 		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
@@ -476,19 +477,20 @@ namespace Plugin
 		// the hands of the one actor an event named; one gone or with no 3D loses his lights
 		void HandsOf(RE::FormID a_id, RE::ShadowSceneNode* a_scene, bool a_on)
 		{
-			auto* actor = a_on ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
-			if (actor) {
-				TickActor(actor, actor->Get3D(false), gHands[a_id], a_scene);
-			}
+			auto*      actor = a_on ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
 			const auto it = gHands.find(a_id);
-			if (it == gHands.end()) {
-				return;
+			ActorHands none;
+			auto&      hands = it != gHands.end() ? it->second : none;
+			if (actor) {
+				TickActor(actor, actor->Get3D(false), hands, a_scene);
+			} else {
+				DropHand(hands.h[0], a_scene);
+				DropHand(hands.h[1], a_scene);
 			}
-			if (!actor) {
-				DropHand(it->second.h[0], a_scene);
-				DropHand(it->second.h[1], a_scene);
-			}
-			if (!it->second.h[0].light && !it->second.h[1].light) {
+			const bool lit = hands.h[0].light || hands.h[1].light;
+			if (it == gHands.end() && lit) {
+				gHands.emplace(a_id, std::move(none));
+			} else if (it != gHands.end() && !lit) {
 				gHands.erase(it);
 			}
 		}
@@ -540,11 +542,15 @@ namespace Plugin
 				}
 				return !keep;
 			});
+			const auto allHung = [](const Showing& a_s) {
+				return static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == a_s.effect; })) >= a_s.spec->points.size();
+			};
+			gDomeWaiting = false;
 			for (const auto& s : live) {
 				// a dome the scene gave only part of its lights keeps them: the missing points are tried again at the next round
-				const auto hung = static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }));
-				if (hung < s.spec->points.size()) {
+				if (!allHung(s)) {
 					Hang(s, a_scene, shadowOn);
+					gDomeWaiting = gDomeWaiting || !allHung(s);
 				}
 			}
 			// read once a round, not once a light
@@ -611,8 +617,8 @@ namespace Plugin
 				if (again) {
 					DropAll(scene);
 				}
-				// an event of an actor may be the wearer's 3D arriving or his sneaking changing
-				if (domes || !hands.empty()) {
+				// an event of an actor may be a wearer's 3D arriving or his sneaking changing: only with a dome of ours up or waiting. A new one says so itself
+				if (domes || (!hands.empty() && (!gLit.empty() || gDomeWaiting))) {
 					ReadDomes(scene, lists, gone);
 				}
 				const bool on = WardLightOn();

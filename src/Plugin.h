@@ -180,7 +180,7 @@ namespace Plugin
 	void           ReadLighting();  // data load, before MakeArt
 	Lighting       LightingPick();
 	void           SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool           InverseSquare();                   // Community Shaders' inverse square lighting is installed, or CommunityShaders.dll is loaded (3.4)
+	bool           InverseSquare();                   // CommunityShaders.dll is loaded
 	nlohmann::json LightingReport();
 	std::string    ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
 	RE::NiColor    LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear
@@ -276,20 +276,6 @@ namespace Plugin
 		} catch (...) {
 		}
 		return false;
-	}
-
-	// the thread SKSE's tasks run on - the game's own loop - noted at data load (main.cpp); the art hooks' thread lines are
-	// measured against it
-	inline std::atomic<std::thread::id> gTaskThread{};
-
-	// the thread a hook runs on, against gTaskThread: logged once each way (the engine picks it), "<a_what> on / OFF the main thread"
-	inline void NoteThread(std::array<std::atomic_bool, 2>& a_seen, std::string_view a_what)
-	{
-		const auto task = gTaskThread.load();
-		const bool mainThread = std::this_thread::get_id() == task;
-		if (task != std::thread::id{} && !a_seen[mainThread ? 0 : 1].exchange(true)) {
-			SKSE::log::info("{} {} the main thread", a_what, mainThread ? "on" : "OFF");
-		}
 	}
 
 	// Later, but one job of this caller at a time (a_queued): the flag drops as the job starts, or at once when nothing could be

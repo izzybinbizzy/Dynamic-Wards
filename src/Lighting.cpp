@@ -30,10 +30,6 @@ namespace Plugin
 	namespace
 	{
 		constexpr const char* kEffects11 = "Data/Shaders/Features/Effects11.ini";
-		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
-		// a Community Shaders that builds inverse square lights into Light Limit Fix (no separate shader file): its attenuation
-		// reads each light's InverseSquare flag
-		constexpr const char* kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
 		constexpr const char* kEnbFiles[] = { "enbseries.ini", "enblocal.ini" };
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 
@@ -48,16 +44,6 @@ namespace Plugin
 		}
 
 		[[nodiscard]] bool CommunityShadersLoaded() { return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr; }
-
-		[[nodiscard]] bool IslBuiltIntoLightLimitFix()
-		{
-			std::ifstream in(kLlfAttenuation, std::ios::binary);
-			if (!in) {
-				return false;
-			}
-			const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
-			return text.find("InverseSquare") != std::string::npos;
-		}
 
 		// an ENB that is running: a loaded module exports its SDK - d3d11.dll as usual, or any other name an injector gave it;
 		// nullopt when the module list could not be read, so the caller falls back to ENB's settings files. ENB's settings files
@@ -115,8 +101,6 @@ namespace Plugin
 
 	void ReadLighting()
 	{
-		const bool shaderFile = Exists(kIslShader);
-		const bool inLlf = IslBuiltIntoLightLimitFix();
 		gCs = CommunityShadersLoaded();
 		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not it
 		gIsl = gCs.load();
@@ -124,7 +108,7 @@ namespace Plugin
 		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
 		const auto running = EnbRunning();
 		gEnbRunning = running.value_or(gEnbFiles.load());
-		// a shader file a running ENB sits beside is a leftover: Community Shaders only when its DLL is loaded or no ENB runs
+		// Community Shaders only when its DLL is loaded or no ENB runs
 		gSeen = gCs ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
 		                                                 Lighting::kVanilla;
 		gPick = gSeen.load();
@@ -132,9 +116,9 @@ namespace Plugin
 			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
 		}
 		SKSE::log::info(
-			"lighting: Automatic - {} (CommunityShaders.dll {}, inverse square shader {}, in Light Limit Fix {}, ENB running {}, ENB "
+			"lighting: Automatic - {} (CommunityShaders.dll {}, ENB running {}, ENB "
 			"settings in the game folder {}); Effects 11 {}; lights drawn {}",
-			kNames[static_cast<int>(gPick.load())], gCs ? "loaded" : "not loaded", shaderFile ? "installed" : "not installed", inLlf ? "yes" : "no",
+			kNames[static_cast<int>(gPick.load())], gCs ? "loaded" : "not loaded",
 			gEnbRunning ? "yes" : "no", gEnbFiles ? "yes" : "no", gE11 ? "installed" : "not installed", gIsl ? "inverse square" : "plain");
 	}
 
