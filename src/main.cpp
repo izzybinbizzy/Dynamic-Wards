@@ -21,8 +21,8 @@
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
 //   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, form lookups
 //   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)
-//   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h are the master
-//                      copies the other plugins carry word for word
+//   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h, RuntimeGuard.h and
+//                      FrameCost.h (what each pass costs) are copies of Tools\Shared Plugin Code, word for word
 //   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
 
 #include "Plugin.h"
@@ -112,10 +112,12 @@ namespace
 			OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
+			FrameCost::Reset();  // the worst times start again with each game
 			ApplyAll(kWhyGameLoaded);
 			WatchBlocking();
 			break;
 		case SKSE::MessagingInterface::kNewGame:
+			FrameCost::Reset();
 			ApplyAll(kWhyNewGame);
 			WatchBlocking();
 			break;

@@ -175,36 +175,39 @@ namespace Plugin
 				// the caster's look is read here, on whichever thread the engine starts an art effect
 				static std::array<std::atomic_bool, 2> seen{};
 				NoteThread(seen, "other casters: an art effect started");
-				Guarded("other casters' art", [a_self]() {
-					if (!a_self->artObject) {
-						return;
-					}
-					const auto               ref = a_self->target.get();
-					const RE::EffectSetting* effect = nullptr;
-					std::optional<Ours>      ours;
-					if (const auto it = gOurs.find(a_self->artObject); it != gOurs.end()) {
-						ours = it->second;
-					} else if (gAnyGame && ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
-						effect = EffectOf(a_self, ref.get());
-						ours = effect ? GameOurs(effect, a_self->artObject) : std::nullopt;
-					}
-					if (!ours) {
-						return;
-					}
-					const auto        slot = TheirSlot(ref.get(), ours->row);
-					RE::BGSArtObject* swap = nullptr;
-					if (slot >= kSlots) {
-						swap = GameArt(effect ? effect : EffectOf(a_self, ref.get()), a_self->artObject);
-					} else if (slot >= kRows) {
-						swap = LookArt(slot - kRows, ours->kind);
-					}
-					if (swap && swap != a_self->artObject) {
-						a_self->artObject = swap;
-						if (gSwapped.fetch_add(1) < 20) {
-							SKSE::log::info("other casters: {:08X} wears {}", ref->GetFormID(), slot >= kSlots ? std::string_view("the game's own ward art") : SlotToken(slot));
+				{
+					const FrameCost::Scope cost{ 5, "an art effect starts (each, before it)" };
+					Guarded("other casters' art", [a_self]() {
+						if (!a_self->artObject) {
+							return;
 						}
-					}
-				});
+						const auto               ref = a_self->target.get();
+						const RE::EffectSetting* effect = nullptr;
+						std::optional<Ours>      ours;
+						if (const auto it = gOurs.find(a_self->artObject); it != gOurs.end()) {
+							ours = it->second;
+						} else if (gAnyGame && ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
+							effect = EffectOf(a_self, ref.get());
+							ours = effect ? GameOurs(effect, a_self->artObject) : std::nullopt;
+						}
+						if (!ours) {
+							return;
+						}
+						const auto        slot = TheirSlot(ref.get(), ours->row);
+						RE::BGSArtObject* swap = nullptr;
+						if (slot >= kSlots) {
+							swap = GameArt(effect ? effect : EffectOf(a_self, ref.get()), a_self->artObject);
+						} else if (slot >= kRows) {
+							swap = LookArt(slot - kRows, ours->kind);
+						}
+						if (swap && swap != a_self->artObject) {
+							a_self->artObject = swap;
+							if (gSwapped.fetch_add(1) < 20) {
+								SKSE::log::info("other casters: {:08X} wears {}", ref->GetFormID(), slot >= kSlots ? std::string_view("the game's own ward art") : SlotToken(slot));
+							}
+						}
+					});
+				}
 				return func(a_self);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;

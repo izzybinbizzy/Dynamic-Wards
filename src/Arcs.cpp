@@ -101,6 +101,7 @@ namespace
 	// Reticle Arcs calls this on the main thread every frame
 	void Update(float a_delta, BarState& a_state)
 	{
+		const FrameCost::Scope cost{ 6, "Reticle Arcs' ward bar (each frame)" };
 		Plugin::Guarded("reticle arcs bar", [&]() {
 			auto*       player = RE::PlayerCharacter::GetSingleton();
 			const auto* ward = player ? WardUp(*player) : nullptr;

@@ -479,8 +479,9 @@ namespace Plugin
 		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks
 		void Tick()
 		{
-			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-			auto* lists = RE::ProcessLists::GetSingleton();
+			const FrameCost::Scope cost{ 0, "dome and hand lights (each 100 ms tick)" };
+			auto*                  scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+			auto*                  lists = RE::ProcessLists::GetSingleton();
 			if (!scene || !lists) {
 				return;
 			}

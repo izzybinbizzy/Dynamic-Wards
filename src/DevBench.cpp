@@ -28,7 +28,7 @@ namespace Plugin
 		constexpr const char* kKey = "dynamicwards";
 
 		constexpr const char* kDescriptor =
-			R"json({"description":"Dynamic Wards - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, the settings, the others test switch with how many art effects it swapped (others, others.swapped), and Reticle Arcs' ward bar (arcBar: registered, shown, percent). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
+			R"json({"description":"Dynamic Wards - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, the settings, the others test switch with how many art effects it swapped (others, others.swapped), Reticle Arcs' ward bar (arcBar: registered, shown, percent), and what each of its passes costs (cost: microseconds, the average of about the last 20 runs and the worst since the load). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
 
 		constexpr const char* kTool =
 			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default, vanilla, strangewards or strangerunes - those two a rank only), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), domeboost (0-100, the menu's Dome color boost; 0 off), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, alwaysonbar (0/1; alwaysonbar: Reticle Arcs' Ward strength bar for an always-on ward too), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), perk:<0xID~Plugin>, and the test switches never saved: domeLights (0 auto, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default), domeShadow (0/1: the dome lights cast shadows - a trial), others (0/1: every caster who is not the player wears the game's own ward art, his hand light in the game's own light color), menuPage (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open: that menu page in a window of its own, for a picture); and look:<Look> (color = mine, vanilla, default - a faction only - or RRGGBB; Looks: Followers, Enemies, Neutral and the faction tokens of the inspect report's others.looks keys), saved. Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default, vanilla, strangewards or strangerunes"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
@@ -50,6 +50,18 @@ namespace Plugin
 			};
 			const auto* base = is->GetCurrentBaseData();
 			return { { "base", base ? grading(*base) : json(nullptr) }, { "now", grading(is->GetImageSpaceData().baseData) } };
+		}
+
+		// each pass's time (FrameCost.h): the passes that ran since the load, about the last 20 runs as the average
+		json CostReport()
+		{
+			auto out = json::array();
+			for (const auto& s : FrameCost::Slots()) {
+				if (const char* name = s.name.load(std::memory_order_relaxed)) {
+					out.push_back({ { "pass", name }, { "usAvg", s.usAvg.load(std::memory_order_relaxed) }, { "usMax", s.usMax.load(std::memory_order_relaxed) } });
+				}
+			}
+			return out;
 		}
 
 		// a catch's reply: a literal, since building a refusal can itself throw (out of memory); a plain string, as raw ones are
@@ -84,6 +96,7 @@ namespace Plugin
 				report["imageSpace"] = read ? (*game)["image"] : json(nullptr);
 				report["others"] = OthersReport();
 				report["arcBar"] = ArcBarReport();
+				report["cost"] = CostReport();
 				DevBenchGlue::Reply(a_sink, a_write, report);
 			} catch (...) {
 				Refuse(a_sink, a_write, "{\"ok\":false,\"error\":\"Dynamic Wards could not make its report\"}");

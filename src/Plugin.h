@@ -5,6 +5,7 @@
 #pragma once
 
 #include "PCH.h"
+#include "FrameCost.h"
 #include "SettingsText.h"
 #include "WardMath.h"
 

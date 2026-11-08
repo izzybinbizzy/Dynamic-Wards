@@ -937,6 +937,7 @@ namespace Plugin
 	{
 		// one check waiting at a time: a long load would otherwise queue one every 2 s
 		Every(std::chrono::seconds(2), "art watch", []() {
+			const FrameCost::Scope cost{ 1, "art watch (each 2 s round)" };
 			gTaskThread = std::this_thread::get_id();
 			std::size_t swapped = 0;
 			{
@@ -1625,6 +1626,7 @@ namespace Plugin
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) override
 			{
+				const FrameCost::Scope cost{ 7, "her animation events (each)" };
 				Guarded("block watch", [a_event]() {
 					static const RE::BSFixedString blockTag{ kBlockTag };  // the game's strings are pooled: one pointer compare per event
 					if (!a_event || a_event->tag != blockTag) {

@@ -825,7 +825,8 @@ namespace Plugin
 		{
 			static bool thunk(RE::ModelReferenceEffect* a_self, float a_delta)
 			{
-				const bool alive = func(a_self, a_delta);
+				const bool             alive = func(a_self, a_delta);
+				const FrameCost::Scope cost{ 2, "an art effect's update (each effect, each frame)" };
 				if (gReady && a_self->artObject3D && !a_self->finished) {
 					Guarded("a new ward copy", [a_self]() {
 						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
@@ -910,12 +911,16 @@ namespace Plugin
 			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
 			{
 				gHandCalls.fetch_add(1, std::memory_order_relaxed);
-				// before the update: its first call attaches the casting art, which another caster takes in his look
-				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
+				{
+					const FrameCost::Scope cost{ 3, "a magic caster's update, before it (each caster, each frame)" };
+					// before the update: its first call attaches the casting art, which another caster takes in his look
+					Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
+				}
 				const auto* before = a_self->castingArt;  // the update may clear it once the art is attached
 				func(a_self, a_delta);
-				auto*      root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				const bool player = a_self->actor && a_self->actor->IsPlayerRef();
+				const FrameCost::Scope cost{ 4, "a magic caster's update, after it (each caster, each frame)" };
+				auto*                  root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
+				const bool             player = a_self->actor && a_self->actor->IsPlayerRef();
 				if (!root) {
 					if (player && (before || a_self->castingArt)) {
 						gHandNoRoot.fetch_add(1, std::memory_order_relaxed);
