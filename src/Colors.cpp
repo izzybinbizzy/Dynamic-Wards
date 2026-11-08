@@ -832,6 +832,7 @@ namespace Plugin
 						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
 							static std::array<std::atomic_bool, 2> seen{};
 							NoteThread(seen, "colors: a ward copy updated");
+							WakeLights();  // a ward of ours shows: its light, and its copy's release later
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(a_self->artObject3D.get(), art->second) ? 1 : 0;
 						}
@@ -913,6 +914,10 @@ namespace Plugin
 				gHandCalls.fetch_add(1, std::memory_order_relaxed);
 				{
 					const FrameCost::Scope cost{ 3, "a magic caster's update, before it (each caster, each frame)" };
+					// a ward of ours about to be attached wakes the hand lights, whatever look he takes it in
+					if (gReady && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
+						WakeLights();
+					}
 					// before the update: its first call attaches the casting art, which another caster takes in his look
 					Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
 				}
@@ -933,6 +938,7 @@ namespace Plugin
 					Guarded("a hand art that is not ours", [a_self, before, root]() { NoteHandMiss(a_self, before ? before : a_self->castingArt, root); });
 				}
 				if (art != gArtOf.end()) {
+					WakeLights();
 					gHandOurs.fetch_add(1, std::memory_order_relaxed);
 					gHandViaSpell.fetch_add(viaSpell ? 1 : 0, std::memory_order_relaxed);
 					Guarded("a new ward in the hand", [root, &art]() {
@@ -986,6 +992,7 @@ namespace Plugin
 
 	bool ApplyColors(bool a_quiet)
 	{
+		WakeLights();  // the lights take the new look, and the palettes it retires are given back by their tick
 		const int        opacity = Opacity();
 		const int        transparency = Has360Ward() ? Transparency() : 0;  // the menu greys it out otherwise
 		const int        brightness = Brightness();
@@ -1083,9 +1090,10 @@ namespace Plugin
 		gKeptTest = std::clamp(a_percent, -1, 100);
 	}
 
-	// the 2 s art watch (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
-	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass
-	void ReleaseOld()
+	// the dome lights' tick (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
+	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass.
+	// True while any are still held (the tick stays awake to give them back)
+	bool ReleaseOld()
 	{
 		std::scoped_lock l{ gLock };
 		Bury();
@@ -1096,5 +1104,6 @@ namespace Plugin
 			a_c.root->DecRefCount();
 			return true;
 		});
+		return !gCopies.empty() || !gGrave.empty();
 	}
 }

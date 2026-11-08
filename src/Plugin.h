@@ -78,7 +78,7 @@ namespace Plugin
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);                         // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);                // the row a ward of ours wears, kRows when it is not one
 	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
-	void                                             WatchBlocking();                                             // main thread, at a load and every 2 s: the shield's ward at once when the player blocks
+	void                                             WatchBlocking();                                             // main thread, at a load and when her graphs are rebuilt: the shield's ward at once when the player blocks
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
@@ -127,9 +127,11 @@ namespace Plugin
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
 	bool                         StrangeRunesLoaded();
-	void                         WatchArt();                     // every 2 s: a ward whose art another mod swapped is dressed again (main.cpp starts it)
-	std::optional<Color>         RowColor(std::size_t a_row);    // what the row wears now; nothing = Vanilla
-	std::optional<Color>         SlotColor(std::size_t a_slot);  // a row's (RowColor) or a look's own color; nothing = no art of ours
+	void                         CheckArt(const char* a_why);                 // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
+	bool                         QueueArtCheck(const char* a_why);            // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
+	void                         FollowArt(int a_rounds, const char* a_why);  // CheckArt every 2 s for a_rounds rounds (after a load, after the journal closes)
+	std::optional<Color>         RowColor(std::size_t a_row);                 // what the row wears now; nothing = Vanilla
+	std::optional<Color>         SlotColor(std::size_t a_slot);               // a row's (RowColor) or a look's own color; nothing = no art of ours
 	LookPick                     LookOf(std::size_t a_look);
 	std::array<LookPick, kLooks> Looks();
 	void                         SetLook(std::size_t a_look, LookPick a_pick);
@@ -151,7 +153,7 @@ namespace Plugin
 	void           LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	nlohmann::json ColorsReport();
 	void           SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
-	void           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the 2 s art watch)
+	bool           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the dome lights' tick); true while any are held
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
 	// master's blocks and a live copy's pair up by index
@@ -189,7 +191,8 @@ namespace Plugin
 		kAuto = 0,
 		kOff = 2,
 	};
-	void           StartDomeLights();  // data load, after MakeArt
+	void           StartDomeLights();      // data load, after MakeArt
+	void           WakeLights() noexcept;  // any thread: something of ours may show - the asleep tick runs again
 	void           SetDomeMode(DomeMode a_mode);
 	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	nlohmann::json DomeLightsReport();
@@ -250,7 +253,7 @@ namespace Plugin
 		}
 	}
 
-	// a_job onto the game's main thread (the menu draws off it; DevBench and our two threads call from their own), run there
+	// a_job onto the game's main thread (the menu draws off it; DevBench and our threads call from their own), run there
 	// inside Guarded under a_where - one flag per caller when each caller's job is a lambda. False when nothing was queued
 	// (no task interface, or no memory for the task): a caller that raised a "queued" flag lowers it again, or it would stay up,
 	// and a caller that reports to someone (DevBench) says it did not happen - so the result is never dropped
@@ -267,8 +270,8 @@ namespace Plugin
 		return false;
 	}
 
-	// the thread SKSE's tasks run on - the game's own loop - noted by every 2 s art watch round (a task); the art hooks' thread
-	// lines are measured against it (unset until the first round)
+	// the thread SKSE's tasks run on - the game's own loop - noted at data load (main.cpp); the art hooks' thread lines are
+	// measured against it
 	inline std::atomic<std::thread::id> gTaskThread{};
 
 	// the thread a hook runs on, against gTaskThread: logged once each way (the engine picks it), "<a_what> on / OFF the main thread"
@@ -297,19 +300,5 @@ namespace Plugin
 		}
 		a_queued = false;
 		return false;
-	}
-
-	// a_job on the main thread every a_period, one at a time, from a detached thread - never joined: a join from a DLL's static
-	// destructor at exit can hang on the loader lock. Each round is guarded: nothing thrown may leave the thread
-	template <class F>
-	void Every(std::chrono::milliseconds a_period, const char* a_where, F a_job)
-	{
-		std::thread([a_period, a_where, job = std::move(a_job)]() {
-			std::atomic_bool queued{ false };
-			for (;;) {
-				std::this_thread::sleep_for(a_period);
-				Guarded(a_where, [&]() { (void)LaterOnce(queued, a_where, job); });
-			}
-		}).detach();
 	}
 }

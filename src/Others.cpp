@@ -193,6 +193,7 @@ namespace Plugin
 						if (!ours) {
 							return;
 						}
+						WakeLights();  // a ward of ours starts: its dome light and its caster's hand lights
 						const auto        slot = TheirSlot(ref.get(), ours->row);
 						RE::BGSArtObject* swap = nullptr;
 						if (slot >= kSlots) {
