@@ -19,6 +19,11 @@ SKSE and Address Library for SKSE Plugins; SKSE Menu Framework for the menu. The
 ## Settings
 SKSE Menu Framework > Dynamic Wards, saved to `DynamicWards.ini` at once.
 
+## Credits
+The ward lights are made and registered the way [ReLight](https://github.com/TrumanGIT/ReLight) by Truman makes its
+lights, used with his permission. Hooking an art effect's start to act before its model loads follows
+[Light Placer](https://github.com/powerof3/LightPlacer) by powerofthree (GPL-3.0), used with his permission.
+
 ## Third-party files
 `src/DevBenchAPI.h` and `src/DevBenchAPI.cpp` are devbench's own interface files, MIT licensed by
 their author (see `src/DevBenchAPI.LICENSE.txt`) and copied unchanged. devbench is not required.
