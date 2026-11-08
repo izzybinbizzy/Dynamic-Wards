@@ -424,9 +424,10 @@ namespace Plugin
 			SetItemTooltip("%s", T(kLookTip[a_look]));
 			// beside its pick, never under it (his rule)
 			if (LookOf(a_look).mode == LookMode::kCustom) {
-				BesideIfRoom(ColorRowWidth());
-				if (!LookArtInstalled(a_look)) {
-					TextColored(kMuted, "%s", T("This look's meshes are not installed - install Dynamic Wards again."));
+				const char* missing = LookArtInstalled(a_look) ? nullptr : T("This look's meshes are not installed - install Dynamic Wards again.");
+				BesideIfRoom(missing ? CalcTextSize(missing).x : ColorRowWidth());
+				if (missing) {
+					TextColored(kMuted, "%s", missing);
 				} else if (EditColor("own", a_held, LookOf(a_look).color, [a_look](Color a_c) { SetLook(a_look, { LookMode::kCustom, a_c }); })) {
 					Changed();
 				}
@@ -532,7 +533,8 @@ namespace Plugin
 								preview = name;
 							}
 						}
-						BesideIfRoom(220.0f);  // the unlock's own pick
+						// the unlock's own pick: the 220 list and its label
+						BesideIfRoom(220.0f + GetStyle()->ItemInnerSpacing.x + CalcTextSize(T("Perk")).x);
 						SetNextItemWidth(220.0f);
 						if (BeginCombo(T("Perk"), preview.c_str())) {
 							for (const auto& [id, name] : perks) {
