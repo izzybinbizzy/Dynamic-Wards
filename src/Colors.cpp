@@ -825,12 +825,14 @@ namespace Plugin
 		{
 			static bool thunk(RE::ModelReferenceEffect* a_self, float a_delta)
 			{
-				const bool alive = func(a_self, a_delta);
+				const bool             alive = func(a_self, a_delta);
+				const FrameCost::Scope cost{ 2, "an art effect's update (each effect, each frame)" };
 				if (gReady && a_self->artObject3D && !a_self->finished) {
 					Guarded("a new ward copy", [a_self]() {
 						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
 							static std::array<std::atomic_bool, 2> seen{};
 							NoteThread(seen, "colors: a ward copy updated");
+							WakeLights();  // a ward of ours shows: its light, and its copy's release later
 							std::scoped_lock l{ gLock };
 							gNewCopies += PaintStale(a_self->artObject3D.get(), art->second) ? 1 : 0;
 						}
@@ -910,12 +912,20 @@ namespace Plugin
 			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
 			{
 				gHandCalls.fetch_add(1, std::memory_order_relaxed);
-				// before the update: its first call attaches the casting art, which another caster takes in his look
-				Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
+				{
+					const FrameCost::Scope cost{ 3, "a magic caster's update, before it (each caster, each frame)" };
+					// a ward of ours about to be attached wakes the hand lights, whatever look he takes it in
+					if (gReady && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
+						WakeLights();
+					}
+					// before the update: its first call attaches the casting art, which another caster takes in his look
+					Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
+				}
 				const auto* before = a_self->castingArt;  // the update may clear it once the art is attached
 				func(a_self, a_delta);
-				auto*      root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				const bool player = a_self->actor && a_self->actor->IsPlayerRef();
+				const FrameCost::Scope cost{ 4, "a magic caster's update, after it (each caster, each frame)" };
+				auto*                  root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
+				const bool             player = a_self->actor && a_self->actor->IsPlayerRef();
 				if (!root) {
 					if (player && (before || a_self->castingArt)) {
 						gHandNoRoot.fetch_add(1, std::memory_order_relaxed);
@@ -928,6 +938,7 @@ namespace Plugin
 					Guarded("a hand art that is not ours", [a_self, before, root]() { NoteHandMiss(a_self, before ? before : a_self->castingArt, root); });
 				}
 				if (art != gArtOf.end()) {
+					WakeLights();
 					gHandOurs.fetch_add(1, std::memory_order_relaxed);
 					gHandViaSpell.fetch_add(viaSpell ? 1 : 0, std::memory_order_relaxed);
 					Guarded("a new ward in the hand", [root, &art]() {
@@ -981,6 +992,7 @@ namespace Plugin
 
 	bool ApplyColors(bool a_quiet)
 	{
+		WakeLights();  // the lights take the new look, and the palettes it retires are given back by their tick
 		const int        opacity = Opacity();
 		const int        transparency = Has360Ward() ? Transparency() : 0;  // the menu greys it out otherwise
 		const int        brightness = Brightness();
@@ -1078,9 +1090,10 @@ namespace Plugin
 		gKeptTest = std::clamp(a_percent, -1, 100);
 	}
 
-	// the 2 s art watch (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
-	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass
-	void ReleaseOld()
+	// the dome lights' tick (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
+	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass.
+	// True while any are still held (the tick stays awake to give them back)
+	bool ReleaseOld()
 	{
 		std::scoped_lock l{ gLock };
 		Bury();
@@ -1091,5 +1104,6 @@ namespace Plugin
 			a_c.root->DecRefCount();
 			return true;
 		});
+		return !gCopies.empty() || !gGrave.empty();
 	}
 }

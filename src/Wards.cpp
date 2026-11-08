@@ -71,7 +71,7 @@ namespace Plugin
 		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";   // the hand light (Ward casting light)
 		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";  // always 1: the light mods' ward lights step down
 		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight - Spell Addon: casting art moved, find the hand lights again
-		// the two applies made in the background (WatchArt's round), named once: ApplyAll keeps the hands' look for the menu
+		// the two applies made in the background (CheckArt), named once: ApplyAll keeps the hands' look for the menu
 		constexpr const char* kWhyArtSwapped = "art swapped by another mod";
 		constexpr const char* kWhyUnlock = "the 360 unlock changed";
 
@@ -216,7 +216,7 @@ namespace Plugin
 		}
 
 		// the art a dressed ward wears in each of its three slots (nullptr: that slot is not ours to dress) - ApplyAll puts it
-		// on and WatchArt checks it, so the two never disagree
+		// on and CheckArt checks it, so the two never disagree
 		struct Dress
 		{
 			RE::BGSArtObject* cast = nullptr;
@@ -930,41 +930,83 @@ namespace Plugin
 		return loaded;
 	}
 
-	// another mod's script can swap a dressed ward's art after we dressed it (Strange Runes does at every load and on its
-	// MCM): checked every 2 s on the main thread, and a swapped ward is dressed again; the same round re-reads the 360 unlock. Wards left to another mod (Worn null)
-	// are never touched here, so two mods never fight over one.
-	void WatchArt()
+	// another mod's script can swap a dressed ward's art after we dressed it (Strange Runes does at every load and on its MCM):
+	// looked at when that can happen - a menu closing, her drawing her hands or casting, and for a minute after a load (its
+	// load-time scripts) - and a swapped ward is dressed again; otherwise the 360 unlock is read again (one actor value, an apply
+	// only when the answer changed). Main thread. Wards left to another mod (Worn null) are never touched, so two mods never
+	// fight over one.
+	void CheckArt(const char* a_why)
 	{
-		// one check waiting at a time: a long load would otherwise queue one every 2 s
-		Every(std::chrono::seconds(2), "art watch", []() {
-			gTaskThread = std::this_thread::get_id();
-			std::size_t swapped = 0;
-			{
-				std::scoped_lock l{ gLock };
-				for (const auto& t : gTargets) {
-					const Art* a = Worn(t);
-					if (!a) {
-						continue;
-					}
-					const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
-					const auto& e = t.effect->data;
-					if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
-						++swapped;
-					}
+		const FrameCost::Scope cost{ 1, "art check (on its events)" };
+		std::size_t            swapped = 0;
+		{
+			std::scoped_lock l{ gLock };
+			for (const auto& t : gTargets) {
+				const Art* a = Worn(t);
+				if (!a) {
+					continue;
+				}
+				const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
+				const auto& e = t.effect->data;
+				if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
+					++swapped;
 				}
 			}
-			if (swapped) {
-				SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s); dressing them again", swapped);
-				ApplyAll(kWhyArtSwapped);
-			} else {
-				// the 360 unlock follows the skill (or the perk) within 2 s: until 3.5 it was read again only when a
-				// menu closed, so a Restoration level-up mid-fight changed nothing (the outside review). Cheap: one
-				// actor value read; ApplyAll runs only when the answer changed
-				CheckUnlock(kWhyUnlock);
-			}
-			WatchBlocking();  // a transformation or a 3D reset gives her a new graph: the block watch goes onto it
-			ReleaseOld();     // a recolor's retired palettes and the ward copies nothing shows any more
-		});
+		}
+		if (swapped) {
+			SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s) (seen {}); dressing them again", swapped, a_why);
+			ApplyAll(kWhyArtSwapped);
+		} else {
+			CheckUnlock(kWhyUnlock);
+		}
+	}
+
+	namespace
+	{
+		std::atomic_bool          gArtQueued{ false };
+		std::atomic_bool          gFollowing{ false };  // the one follower thread runs
+		std::atomic<std::int64_t> gFollowUntil{ 0 };    // it checks every kFollowEvery until then (steady clock, ms)
+		std::atomic<const char*>  gFollowWhy{ nullptr };
+		constexpr auto            kFollowEvery = std::chrono::milliseconds(2000);
+
+		std::int64_t SteadyMs()
+		{
+			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		}
+	}
+
+	bool QueueArtCheck(const char* a_why)
+	{
+		return LaterOnce(gArtQueued, a_why, [a_why]() { CheckArt(a_why); });
+	}
+
+	// one detached follower, never joined (a join at exit can hang on the loader lock); a later follow only moves its end later,
+	// so a short one (the journal) never cuts a longer one (a load) short
+	void FollowArt(int a_rounds, const char* a_why)
+	{
+		const auto until = SteadyMs() + a_rounds * kFollowEvery.count();
+		auto       old = gFollowUntil.load();
+		while (old < until && !gFollowUntil.compare_exchange_weak(old, until)) {
+		}
+		gFollowWhy = a_why;
+		if (gFollowing.exchange(true)) {
+			return;
+		}
+		try {
+			std::thread([]() {
+				do {
+					while (SteadyMs() < gFollowUntil.load()) {
+						std::this_thread::sleep_for(kFollowEvery);
+						Guarded("art check followed", []() { (void)QueueArtCheck(gFollowWhy.load()); });
+					}
+					gFollowing = false;
+					// a follow that came as this one ended found it still running: carry it on
+				} while (SteadyMs() < gFollowUntil.load() && !gFollowing.exchange(true));
+			}).detach();
+		} catch (...) {
+			gFollowing = false;
+			throw;
+		}
 	}
 
 	namespace
@@ -1127,7 +1169,7 @@ namespace Plugin
 
 		// a ward already in the hand takes its new art now, not at the next equip: the casting art a background apply swapped is
 		// taken by a menu or devbench apply, which re-equips only the hands it changed, and dropped by a load, a new game or a
-		// loading screen, which equip everything afresh. Every other apply (the 2 s re-dress after another mod swapped the art, an
+		// loading screen, which equip everything afresh. Every other apply (the re-dress after another mod swapped the art, an
 		// unlock check) keeps it for the next menu or devbench apply
 		// gLock held, after the colors were applied
 		std::vector<HandCall> HandsAfterColors(std::string_view a_why, std::unordered_set<const RE::EffectSetting*> a_castChanged)
@@ -1496,14 +1538,14 @@ namespace Plugin
 	// ------------------------------------------------------------------ the shield's ward at once
 	// A shield raises its ward through its enchantment, whose effects ask IsBlocking; the game re-checks an active effect's
 	// conditions only on its own timer, so the dome came up to a second after the block (and stayed as long after it). When the
-	// player's block starts, those effects are checked at once and again a moment later in case she is not marked blocking yet,
-	// then her block is followed and they are checked the moment it ends. Nothing else changes.
+	// player's block starts or ends (her graph's own events), those effects are checked at once and again a moment later in case
+	// the game has not marked the change yet. Nothing else changes.
 	namespace
 	{
-		// the event her graph sends as a block begins ("blockStart" is the input event and never reaches the graph)
+		// the events her graph sends as a block begins and ends ("blockStart" is the input event and never reaches the graph)
 		constexpr std::string_view kBlockTag = "blockStartOut";
+		constexpr std::string_view kBlockEndTag = "blockStop";
 		constexpr auto             kSecondCheck = std::chrono::milliseconds(50);
-		constexpr auto             kBlockLook = std::chrono::milliseconds(100);
 
 		[[nodiscard]] bool AsksBlocking(const RE::TESCondition& a_conditions)
 		{
@@ -1566,56 +1608,39 @@ namespace Plugin
 			}
 		}
 
-		// both graphs send each block start, so the checks are merged: one queued check at a time, and one helper thread (made
-		// at the first block, asleep between blocks) for the check a moment later and the look for the block's end. A task
-		// queued from a task runs in the same frame, hence a thread for the waits
+		// both graphs send each block event, so the checks are merged: one queued check at a time, and one helper thread (made
+		// at the first block event, asleep between them) for the check a moment later - a task queued from a task runs in the
+		// same frame. Were a block's end event missed, the game's own condition timer ends the ward as it did before
 		std::atomic_bool           gCheckQueued{ false };
-		std::atomic_bool           gLookQueued{ false };
-		std::atomic<bool>          gBlockEnded{ false };
-		std::atomic<std::uint32_t> gBlockStarts{ 0 };
-		// the first look ~150 ms after a block starts can come before the game sets her blocking: a block ends only once she was
-		// seen blocking, or after kBlockLooksBlind looks that never saw it (a tap too short to read)
-		std::atomic<bool> gSeenBlocking{ false };
-		std::atomic<int>  gLooks{ 0 };
-		constexpr int     kBlockLooksBlind = 10;
+		std::atomic<std::uint32_t> gBlockEvents{ 0 };
+		std::atomic_bool           gBlockEnding{ false };  // the last event was the block's end
+		// after a block's end the game may still mark her blocking a moment: checked again at these times after the event
+		constexpr std::array kEndChecks{ std::chrono::milliseconds(50), std::chrono::milliseconds(150), std::chrono::milliseconds(350) };
 
 		void QueueCheck(const char* a_why)
 		{
 			(void)LaterOnce(gCheckQueued, a_why, []() { RecheckShieldWards(); });
 		}
 
-		// main thread: once she no longer blocks, the shield wards are checked so they end at once
-		// a_block: the block it was queued for - a check still waiting when the next block starts does nothing
-		void LookForBlockEnd(std::uint32_t a_block)
-		{
-			const auto* player = RE::PlayerCharacter::GetSingleton();
-			if (gBlockEnded || gBlockStarts.load() != a_block) {
-				return;
-			}
-			if (player && player->IsBlocking()) {
-				gSeenBlocking = true;
-				return;
-			}
-			if (!player || gSeenBlocking || ++gLooks >= kBlockLooksBlind) {
-				gBlockEnded = true;
-				RecheckShieldWards();
-			}
-		}
-
 		void FollowBlocks()
 		{
 			std::uint32_t seen = 0;
 			for (;;) {
-				gBlockStarts.wait(seen);
-				seen = gBlockStarts.load();
-				std::this_thread::sleep_for(kSecondCheck);
-				QueueCheck("shield ward check (a moment later)");
-				gSeenBlocking = false;
-				gLooks = 0;
-				gBlockEnded = false;
-				while (!gBlockEnded && gBlockStarts.load() == seen) {
-					std::this_thread::sleep_for(kBlockLook);
-					(void)LaterOnce(gLookQueued, "block end check", [seen]() { LookForBlockEnd(seen); });
+				gBlockEvents.wait(seen);
+				seen = gBlockEvents.load();
+				if (!gBlockEnding) {
+					std::this_thread::sleep_for(kSecondCheck);
+					QueueCheck("shield ward check (a moment later)");
+					continue;
+				}
+				auto waited = std::chrono::milliseconds(0);
+				for (const auto at : kEndChecks) {
+					std::this_thread::sleep_for(at - waited);
+					waited = at;
+					if (gBlockEvents.load() != seen) {
+						break;  // a new block event: its own checks follow
+					}
+					QueueCheck("shield ward check (a moment after the block ended)");
 				}
 			}
 		}
@@ -1625,20 +1650,29 @@ namespace Plugin
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) override
 			{
+				const FrameCost::Scope cost{ 7, "her animation events (each)" };
 				Guarded("block watch", [a_event]() {
-					static const RE::BSFixedString blockTag{ kBlockTag };  // the game's strings are pooled: one pointer compare per event
-					if (!a_event || a_event->tag != blockTag) {
+					// the game's strings are pooled: a pointer compare per event
+					static const RE::BSFixedString blockTag{ kBlockTag };
+					static const RE::BSFixedString endTag{ kBlockEndTag };
+					const bool                     start = a_event && a_event->tag == blockTag;
+					if (!start && (!a_event || a_event->tag != endTag)) {
 						return;
 					}
 					static std::atomic<bool> told{ false };
 					if (!told.exchange(true)) {
-						SKSE::log::info("[WARD] a block started - the shield wards are checked at once");
+						SKSE::log::info("[WARD] her block events are followed - the shield wards are checked as a block starts and ends");
 						std::thread(FollowBlocks).detach();
 					}
 					// the graph's events may come off the main thread: the effects are read on it
-					QueueCheck("shield ward check");
-					++gBlockStarts;
-					gBlockStarts.notify_one();
+					QueueCheck(start ? "shield ward check" : "shield ward check (block ended)");
+					// a 360 unlock perk a script gave her is read before her shield's ward shows
+					if (start) {
+						(void)QueueArtCheck("as she blocked");
+					}
+					gBlockEnding = !start;
+					++gBlockEvents;
+					gBlockEvents.notify_one();
 				});
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -1647,7 +1681,7 @@ namespace Plugin
 	}
 
 	// every graph she has (third and first person) gets the watch; a source keeps a sink only once, so a rebuilt graph (a
-	// transformation, a 3D reset) simply gets it on the next round, and nothing of the game is held
+	// transformation, a 3D reload: main.cpp's events) simply gets it again, and nothing of the game is held
 	void WatchBlocking()
 	{
 		auto*                                            player = RE::PlayerCharacter::GetSingleton();

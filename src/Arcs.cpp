@@ -101,20 +101,22 @@ namespace
 	// Reticle Arcs calls this on the main thread every frame
 	void Update(float a_delta, BarState& a_state)
 	{
+		const FrameCost::Scope cost{ 6, "Reticle Arcs' ward bar (each frame)" };
 		Plugin::Guarded("reticle arcs bar", [&]() {
-			auto*       player = RE::PlayerCharacter::GetSingleton();
-			const auto* ward = player ? WardUp(*player) : nullptr;
+			auto* player = RE::PlayerCharacter::GetSingleton();
 			gAskedAt = NowMs();
 			gShown = false;
+			const float left = player ? player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower) : 0.0f;
+			// hits come off the ward as a damage modifier (negative): the ward gave what is left plus what was taken
+			const float taken = player ? -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower) : 0.0f;
+			const float gave = left + std::max(taken, 0.0f);
+			// no Ward Power given at all: no ward is up, and her effect list is not walked this frame
+			const auto* ward = gave > 0.0f ? WardUp(*player) : nullptr;
 			if (!ward) {
 				gSeen = {};  // a color changed in the menu while no ward was up shows on the next one
 				return;
 			}
-			const float left = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kWardPower);
-			// hits come off the ward as a damage modifier (negative): the ward gave what is left plus what was taken
-			const float taken = -player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kWardPower);
-			const float gave = left + std::max(taken, 0.0f);
-			Fill(a_state, gave > 0.0f ? left / gave : 0.0f);
+			Fill(a_state, left / gave);
 			gSeen.age += std::max(a_delta, 0.0f);
 			if (ward != gSeen.ward || gSeen.age > 1.0f) {
 				const auto row = Plugin::WardRowOf(ward);

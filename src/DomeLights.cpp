@@ -11,6 +11,9 @@
 // Why a 100 ms tick on the main thread and not the player's update (Illuminated's frame hook): the player's update stops
 // while a menu pauses the game and while DevBench's camera is free (measured on Illuminated's lights), and those are the
 // times the wards' colors are set live and filmed. A queued task runs in both.
+// The tick sleeps while nothing of ours shows: the game's own moments wake it (an art effect of ours starting, a magic caster
+// holding a ward of ours, SKSE's draw / sheathe / cast actions, a settings change), and it sleeps again once no light, copy or
+// retired palette of ours is left and nothing woke it for kAwake - no task runs and no list is walked while no ward is up.
 //
 // CREDIT: a light is made and registered the way ReLight by Truman does it (github.com/TrumanGIT/ReLight,
 // GPL-3.0-or-later, used with his permission): a master NiPointLight cloned for every use, the size in the radius'
@@ -21,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <condition_variable>
 #include <numbers>
 
 namespace Plugin
@@ -32,6 +36,8 @@ namespace Plugin
 		constexpr const char* kHandName = "DWHand1st";
 		constexpr float       kAmbientRatio = 0.1f;  // RE::Light's default ambientRatio (Truman's config.h)
 		constexpr auto        kTick = std::chrono::milliseconds(100);
+		constexpr auto        kAwake = std::chrono::milliseconds(1000);                                // awake this long after the last wake, lit or not
+		constexpr std::size_t kReleaseEvery = 20;                                                      // ticks between the releases of spent copies (2 s)
 		constexpr const char* kMagicNodes[] = { "NPC L MagicNode [LMag]", "NPC R MagicNode [RMag]" };  // Actor::SlotTypes order
 
 		// a light's numbers: its reach under inverse square, and in the game's own lighting (plain); the house light by default
@@ -102,6 +108,20 @@ namespace Plugin
 		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
 		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
+
+		// the tick's sleep: gAsleep under gSleepLock, gSleepy its mirror for the wakers. A waker stores the time, then reads
+		// gSleepy; the tick sets gSleepy, then reads the time (both seq_cst), so one of the two sees the other: no wake is lost
+		std::mutex                 gSleepLock;
+		std::condition_variable    gSleep;
+		bool                       gAsleep{ true };
+		std::atomic_bool           gSleepy{ true };
+		std::atomic<std::int64_t>  gWokeAt{ 0 };  // steady clock, milliseconds
+		std::atomic<std::uint64_t> gTicks{ 0 };   // rounds run since data load: none while no ward is up
+
+		std::int64_t NowMs()
+		{
+			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		}
 
 		bool Wanted()
 		{
@@ -476,13 +496,14 @@ namespace Plugin
 			});
 		}
 
-		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks
-		void Tick()
+		// main thread: light every dome that shows, drop the lights of domes that have gone, dark while the wearer sneaks. True
+		// while a light of ours is up or a dome waits for one (the tick stays awake)
+		bool Round()
 		{
 			auto* scene = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 			auto* lists = RE::ProcessLists::GetSingleton();
 			if (!scene || !lists) {
-				return;
+				return false;  // no scene (a load, the main menu): the next ward of ours wakes the tick again
 			}
 			const bool           on = Wanted() && ColoredLightsOn();
 			std::vector<Showing> live;
@@ -560,6 +581,51 @@ namespace Plugin
 				}
 			}
 			TickHands(scene, WardLightOn());
+			return !gLit.empty() || !gRefused.empty() || std::ranges::any_of(gHands, [](const auto& a_entry) { return a_entry.second.h[0].light || a_entry.second.h[1].light; });
+		}
+
+		// one round, then whether to sleep: only with no light of ours up, no copy or retired palette left to release (Colors.cpp
+		// ReleaseOld - given back here, outside the game's effect updates) and no wake for kAwake
+		void Tick()
+		{
+			const FrameCost::Scope cost{ 0, "dome and hand lights (each 100 ms tick while awake)" };
+			const auto             tick = ++gTicks;
+			bool                   busy = Round();
+			const bool             idle = !busy && NowMs() - gWokeAt.load() > kAwake.count();
+			if (idle || tick % kReleaseEvery == 0) {
+				busy = ReleaseOld() || busy;
+			}
+			if (!idle || busy) {
+				return;
+			}
+			std::scoped_lock l{ gSleepLock };
+			gAsleep = true;
+			gSleepy.store(true);
+			if (NowMs() - gWokeAt.load() <= kAwake.count()) {
+				gAsleep = false;
+				gSleepy.store(false);
+			}
+		}
+	}
+
+	void WakeLights() noexcept
+	{
+		const auto now = NowMs();
+		if (now - gWokeAt.load(std::memory_order_relaxed) >= kTick.count()) {
+			gWokeAt.store(now);
+		}
+		if (!gSleepy.load()) {
+			return;
+		}
+		try {
+			{
+				std::scoped_lock l{ gSleepLock };
+				gAsleep = false;
+				gSleepy.store(false);
+			}
+			gSleep.notify_one();
+		} catch (...) {
+			// a lock the system could not give: the next wake (every frame while a ward of ours shows) tries again
 		}
 	}
 
@@ -572,18 +638,31 @@ namespace Plugin
 		SKSE::log::info("dome lights: {} dome model(s) in {}{}; dome and hand lights hung by this plugin", gSpecs.size(), kPath,
 			gBadLines ? std::format(" ({} line(s) left out: a number that does not read)", gBadLines) : std::string());
 		// detached, never joined: a join from a DLL's static destructor at exit can hang on the loader lock. Nothing thrown in it
-		// may leave the thread (that ends the game): each round is guarded, and so is the tick on the main thread
-		Every(kTick, "dome and hand lights", []() { Tick(); });
+		// may leave the thread (that ends the game): each wait and each round is guarded, and so is the tick on the main thread
+		std::thread([]() {
+			std::atomic_bool queued{ false };
+			for (;;) {
+				Guarded("dome and hand lights asleep", []() {
+					std::unique_lock l{ gSleepLock };
+					gSleep.wait(l, []() { return !gAsleep; });
+				});
+				std::this_thread::sleep_for(kTick);
+				Guarded("dome and hand lights", [&]() { (void)LaterOnce(queued, "dome and hand lights", []() { Tick(); }); });
+			}
+		}).detach();
+		WakeLights();
 	}
 
 	void SetDomeMode(DomeMode a_mode)
 	{
 		gMode = a_mode;
+		WakeLights();
 	}
 
 	void SetDomeShadowTest(bool a_on)
 	{
 		gShadowTest = a_on;
+		WakeLights();
 	}
 
 	nlohmann::json DomeLightsReport()
@@ -598,6 +677,6 @@ namespace Plugin
 		}
 		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
 			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
-			{ "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+			{ "asleep", gSleepy.load() }, { "ticks", gTicks.load() }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
 	}
 }
