@@ -365,13 +365,12 @@ namespace Plugin
 						SameLine();
 						TextColored(kMuted, "(%s)", kRowFrom[i]);
 					}
+					// a setting's own control sits beside it, never under it (his rule); the ward follows the drag live, saved when let go
 					if (RowModeOf(i) == RowMode::kCustom) {
-						Indent(26.0f);
-						// the ward follows the drag live; saved when let go
+						SameLine(0.0f, 24.0f);
 						if (EditColor("own", heldRow[i], RowCustom(i), [i](Color a_c) { SetRow(i, RowMode::kCustom, a_c); })) {
 							Changed();
 						}
-						Unindent(26.0f);
 					}
 					PopID();
 				}
@@ -407,14 +406,14 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s", T(kLookTip[a_look]));
+			// beside its pick, never under it (his rule)
 			if (LookOf(a_look).mode == LookMode::kCustom) {
-				Indent(26.0f);
+				SameLine(0.0f, 24.0f);
 				if (!LookArtInstalled(a_look)) {
 					TextColored(kMuted, "%s", T("This look's meshes are not installed - install Dynamic Wards again."));
 				} else if (EditColor("own", a_held, LookOf(a_look).color, [a_look](Color a_c) { SetLook(a_look, { LookMode::kCustom, a_c }); })) {
 					Changed();
 				}
-				Unindent(26.0f);
 			}
 			PopID();
 		}
@@ -517,6 +516,8 @@ namespace Plugin
 								preview = name;
 							}
 						}
+						SameLine(0.0f, 24.0f);  // the unlock's own pick, beside it (his rule)
+						SetNextItemWidth(220.0f);
 						if (BeginCombo(T("Perk"), preview.c_str())) {
 							for (const auto& [id, name] : perks) {
 								if (Selectable(name.c_str(), id == cur)) {
