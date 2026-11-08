@@ -22,7 +22,10 @@ SKSE Menu Framework > Dynamic Wards, saved to `DynamicWards.ini` at once.
 ## Credits
 The ward lights are made and registered the way [ReLight](https://github.com/TrumanGIT/ReLight) by Truman makes its
 lights, used with his permission. Hooking an art effect's start to act before its model loads follows
-[Light Placer](https://github.com/powerof3/LightPlacer) by powerofthree (GPL-3.0), used with his permission.
+[Light Placer](https://github.com/powerof3/LightPlacer) by powerofthree (GPL-3.0), used with his permission. Hearing
+every character's graph events through the sink in his own vtable follows
+[valhallaCombat](https://github.com/D7ry/valhallaCombat) by D7ry (BSD-3-Clause) and
+[TK Dodge RE](https://github.com/max-su-2019/TK_Dodge_RE) by max-su-2019 (MIT); ours is written from the game's own call.
 
 ## Third-party files
 `src/DevBenchAPI.h` and `src/DevBenchAPI.cpp` are devbench's own interface files, MIT licensed by

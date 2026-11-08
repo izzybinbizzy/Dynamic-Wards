@@ -33,11 +33,6 @@ using namespace Plugin;
 
 namespace
 {
-	// how long the art is looked at again (2 s rounds): a minute after a load (Strange Runes' load-time scripts), a few seconds
-	// after the journal closes (an MCM)
-	constexpr int kAfterLoadRounds = 30;
-	constexpr int kAfterMenuRounds = 3;
-
 	// a loading screen re-applies; any other menu closing looks for art another mod swapped (an MCM) and re-checks the 360 unlock
 	struct MenuWatch : RE::BSTEventSink<RE::MenuOpenCloseEvent>
 	{
@@ -54,20 +49,15 @@ namespace
 				if (name == RE::LoadingMenu::MENU_NAME) {
 					if (!Later(kWhyLoadingScreen, []() {
 							ApplyAll(kWhyLoadingScreen);
-							WatchBlocking();
+							HangLightsAgain();
 						}) &&
 						!toldLoad.exchange(true)) {
 						SKSE::log::warn("loading screen closed: the wards could not be re-applied (no main-thread task); later ones are not logged");
 					}
-					FollowArt(kAfterLoadRounds, "after a load");
 				} else if (name != RE::HUDMenu::MENU_NAME && name != RE::CursorMenu::MENU_NAME) {
 					FlushHeldColor();
 					if (!QueueArtCheck("a menu closed") && !toldMenu.exchange(true)) {
 						SKSE::log::warn("a menu closed: the art and the 360 unlock could not be re-checked (no main-thread task); later ones are not logged");
-					}
-					// an MCM's script may change the art a moment after its menu closes
-					if (name == RE::JournalMenu::MENU_NAME) {
-						FollowArt(kAfterMenuRounds, "after the journal closed");
 					}
 				}
 			});
@@ -80,18 +70,19 @@ namespace
 		}
 	};
 
-	// The game's own moments, instead of a watch on a timer (rule file 2 rule 19c). Anyone's SKSE actions (a draw, a sheathe, a
-	// spell cast or fired) and any equip wake the ward lights - a drawn staff's always-on ward has no art of ours to wake them,
-	// and one equipped while the hands are out sends no draw - and her draw or cast looks for art another mod swapped (another
-	// caster's wards also wake them through the art and caster hooks). Her Restoration rising re-checks the 360 unlock; her 3D
-	// loaded again, her race switched (a transformation) or her view switched gives her graphs that may be new, which get the
-	// block watch
+	// The game's own moments, instead of a watch on a timer (rule file 2 rule 19c). Anyone's SKSE actions (a draw, a sheathe, a spell cast or
+	// fired), equip, 3D load, 3D rebuilt, death, combat or magic effect names him for the ward lights - a drawn staff's always-on ward has no art
+	// of ours to wake them, and one equipped while the hands are out sends no draw - and her draw or cast looks for art another mod swapped. Her
+	// Restoration rising re-checks the 360 unlock. A sink only notes: the main thread reads the actor
 	struct GameEvents :
 		RE::BSTEventSink<SKSE::ActionEvent>,
-		RE::BSTEventSink<SKSE::CameraEvent>,
 		RE::BSTEventSink<RE::SkillIncrease::Event>,
 		RE::BSTEventSink<RE::TESObjectLoadedEvent>,
 		RE::BSTEventSink<RE::TESEquipEvent>,
+		RE::BSTEventSink<RE::TESDeathEvent>,
+		RE::BSTEventSink<RE::TESCombatEvent>,
+		RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
+		RE::BSTEventSink<SKSE::NiNodeUpdateEvent>,
 		RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent>
 	{
 		RE::BSEventNotifyControl ProcessEvent(const SKSE::ActionEvent* a_event, RE::BSTEventSource<SKSE::ActionEvent>*) override
@@ -101,17 +92,11 @@ namespace
 			const auto type = a_event ? a_event->type.get() : T::kWeaponSwing;
 			const bool hands = type == T::kBeginDraw || type == T::kEndDraw || type == T::kBeginSheathe || type == T::kEndSheathe;
 			if ((hands || type == T::kSpellCast || type == T::kSpellFire) && a_event->actor) {
-				WakeLights();
+				NoteHands(a_event->actor->GetFormID());
 				if ((type == T::kBeginDraw || type == T::kSpellCast) && a_event->actor->IsPlayerRef()) {
 					Guarded("her action", []() { (void)QueueArtCheck("as she drew or cast"); });
 				}
 			}
-			return RE::BSEventNotifyControl::kContinue;
-		}
-
-		RE::BSEventNotifyControl ProcessEvent(const SKSE::CameraEvent*, RE::BSTEventSource<SKSE::CameraEvent>*) override
-		{
-			Guarded("her view switched", []() { (void)Later("her view switched", []() { WatchBlocking(); }); });
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
@@ -125,23 +110,69 @@ namespace
 
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
 		{
-			if (a_event && a_event->loaded && a_event->formID == 0x14) {
-				Guarded("her 3D loaded", []() { (void)Later("her 3D loaded", []() { WatchBlocking(); }); });
+			// an actor that arrives with a ward readied, or leaves; only actors, so a cell's load names no door or plant
+			if (a_event && RE::TESForm::LookupByID<RE::Actor>(a_event->formID)) {
+				NoteHands(a_event->formID);
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
-		// the sink only wakes the tick (any thread); the tick reads the hands on the main thread
-		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent*, RE::BSTEventSource<RE::TESEquipEvent>*) override
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>*) override
 		{
-			WakeLights();
+			if (a_event && a_event->actor) {
+				NoteHands(a_event->actor->GetFormID());
+				// a spell or staff equipped with her hands out copies its art at once: art a script swapped since is dressed first
+				if (a_event->equipped && a_event->actor->IsPlayerRef()) {
+					const auto* form = RE::TESForm::LookupByID(a_event->baseObject);
+					const auto* weapon = form ? form->As<RE::TESObjectWEAP>() : nullptr;
+					if (form && (form->Is(RE::FormType::Spell) || (weapon && weapon->IsStaff()))) {
+						Guarded("her equip", []() { (void)QueueArtCheck("as she equipped"); });
+					}
+				}
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override
+		{
+			if (a_event && a_event->actorDying) {
+				NoteHands(a_event->actorDying->GetFormID());
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		// his look may follow who he fights (Others.cpp TheirSlot)
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* a_event, RE::BSTEventSource<RE::TESCombatEvent>*) override
+		{
+			if (a_event && a_event->actor) {
+				NoteHands(a_event->actor->GetFormID());
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		// an always-on ward given while a staff is drawn. A held ward's own effect is applied again and again: only a constant effect names him
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent* a_event, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*) override
+		{
+			const auto* effect = a_event && a_event->target ? RE::TESForm::LookupByID<RE::EffectSetting>(a_event->magicEffect) : nullptr;
+			if (effect && effect->data.castingType == RE::MagicSystem::CastingType::kConstantEffect) {
+				NoteHands(a_event->target->GetFormID());
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		// a 3D rebuilt: the lights follow the new body
+		RE::BSEventNotifyControl ProcessEvent(const SKSE::NiNodeUpdateEvent* a_event, RE::BSTEventSource<SKSE::NiNodeUpdateEvent>*) override
+		{
+			if (a_event && a_event->reference) {
+				NoteHands(a_event->reference->GetFormID());
+			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESSwitchRaceCompleteEvent* a_event, RE::BSTEventSource<RE::TESSwitchRaceCompleteEvent>*) override
 		{
-			if (a_event && a_event->subject && a_event->subject->IsPlayerRef()) {
-				Guarded("her race switched", []() { (void)Later("her race switched", []() { WatchBlocking(); }); });
+			if (a_event && a_event->subject) {
+				NoteHands(a_event->subject->GetFormID());
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
@@ -158,8 +189,8 @@ namespace
 			if (auto* actions = SKSE::GetActionEventSource()) {
 				actions->AddEventSink<SKSE::ActionEvent>(events);
 			}
-			if (auto* camera = SKSE::GetCameraEventSource()) {
-				camera->AddEventSink<SKSE::CameraEvent>(events);
+			if (auto* nodes = SKSE::GetNiNodeUpdateEventSource()) {
+				nodes->AddEventSink<SKSE::NiNodeUpdateEvent>(events);
 			}
 			if (auto* skills = RE::SkillIncrease::GetEventSource()) {
 				skills->AddEventSink<RE::SkillIncrease::Event>(events);
@@ -167,6 +198,9 @@ namespace
 			if (auto* scripts = RE::ScriptEventSourceHolder::GetSingleton()) {
 				scripts->AddEventSink<RE::TESObjectLoadedEvent>(events);
 				scripts->AddEventSink<RE::TESEquipEvent>(events);
+				scripts->AddEventSink<RE::TESDeathEvent>(events);
+				scripts->AddEventSink<RE::TESCombatEvent>(events);
+				scripts->AddEventSink<RE::TESMagicEffectApplyEvent>(events);
 				scripts->AddEventSink<RE::TESSwitchRaceCompleteEvent>(events);
 			}
 		}
@@ -211,6 +245,7 @@ namespace
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
 			InstallOthers();
+			InstallAnimationHook();
 			InstallCopyPaint();
 			OfferToDevBench();
 			RegisterArcBar();
@@ -221,14 +256,12 @@ namespace
 		case SKSE::MessagingInterface::kPostLoadGame:
 			FrameCost::Reset();  // the worst times start again with each game
 			ApplyAll(kWhyGameLoaded);
-			WatchBlocking();
-			FollowArt(kAfterLoadRounds, "after a load");
+			WakeLights();
 			break;
 		case SKSE::MessagingInterface::kNewGame:
 			FrameCost::Reset();
 			ApplyAll(kWhyNewGame);
-			WatchBlocking();
-			FollowArt(kAfterLoadRounds, "after a new game");
+			WakeLights();
 			break;
 		default:
 			break;
@@ -246,7 +279,10 @@ namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
-	SKSE::Init(a_skse);
+	SKSE::InitInfo info{};
+	info.trampoline = true;  // the hand art hook (Others.cpp)
+	info.trampolineSize = 14;
+	SKSE::Init(a_skse, info);
 	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
 		return true;
 	}

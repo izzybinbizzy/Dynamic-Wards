@@ -612,25 +612,35 @@ namespace
 		CHECK(((gold >> 16) & 0xFF) == 0xFF);  // as bright as asked at its brightest channel
 	}
 
-	// ---------------------------------------------------------------- the ward in the hand
-	void HandArt()
+	// ---------------------------------------------------------------- the hand's art copy call
+	void Posture()
 	{
-		const int                         ours1 = 1, ours2 = 2, other = 3, other2 = 4;
-		const auto                        known = [&](const int* a_art) { return a_art == &ours1 || a_art == &ours2; };
-		bool                              via = true;
-		const int*                        spell[] = { &other, &ours2 };
-		const std::span<const int* const> arts(spell);
-		CHECK(FindOurHandArt<int>(&ours1, nullptr, {}, true, known, via) == &ours1 && !via);       // the art it holds
-		CHECK(FindOurHandArt<int>(nullptr, &ours1, {}, true, known, via) == &ours1 && !via);       // held before the update cleared it
-		CHECK(FindOurHandArt<int>(&other, nullptr, arts, true, known, via) == nullptr && !via);    // another art: never ours through its spell
-		CHECK(FindOurHandArt<int>(nullptr, nullptr, arts, true, known, via) == &ours2 && via);     // held none: her spell route
-		CHECK(FindOurHandArt<int>(nullptr, nullptr, arts, false, known, via) == nullptr && !via);  // never another caster's
-		const int* neither[] = { &other, &other2, nullptr };
-		CHECK(FindOurHandArt<int>(nullptr, nullptr, neither, true, known, via) == nullptr);
-		CHECK(FindOurHandArt<int>(nullptr, nullptr, {}, true, known, via) == nullptr);
-		int        looked = 0;
-		const auto counting = [&](const int*) { ++looked; return false; };
-		CHECK(FindOurHandArt<int>(&other, &other, {}, true, counting, via) == nullptr && looked == 1);  // the same pointer is looked at once
+		CHECK(PostureTag("tailSneakIdle"));
+		CHECK(PostureTag("tailMTIdle"));
+		CHECK(PostureTag("tailCombatIdle"));
+		CHECK(PostureTag("TailSneakIdle"));
+		CHECK(!PostureTag("tai"));
+		CHECK(!PostureTag("blockStop"));
+		CHECK(!PostureTag("WeaponSheathe"));
+		CHECK(!PostureTag(""));
+	}
+
+	void HandClone()
+	{
+		using B = std::array<std::uint8_t, kCloneArgBytes>;
+		const auto passes = [](const B& a_b) { return PassesCloneArgs(std::span<const std::uint8_t, kCloneArgBytes>(a_b)); };
+		// the bytes of 1.6.1170: mov rdx, [rdi + 0xE0]; lea rcx, [rdi + 0xB0]
+		CHECK(passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 0, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
+		// the other order, and through r14 (REX.B)
+		CHECK(passes({ 0x48, 0x8D, 0x8B, 0xB0, 0, 0, 0, 0x48, 0x8B, 0x93, 0xE0, 0, 0, 0 }));
+		CHECK(passes({ 0x49, 0x8B, 0x96, 0xE0, 0, 0, 0, 0x49, 0x8D, 0x8E, 0xB0, 0, 0, 0 }));
+		// off two registers, another offset, other target registers, rsp's encoding
+		CHECK(!passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 0, 0x48, 0x8D, 0x8B, 0xB0, 0, 0, 0 }));
+		CHECK(!passes({ 0x48, 0x8B, 0x97, 0xE8, 0, 0, 0, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
+		CHECK(!passes({ 0x48, 0x8B, 0x8F, 0xE0, 0, 0, 0, 0x48, 0x8D, 0x97, 0xB0, 0, 0, 0 }));
+		CHECK(!passes({ 0x48, 0x8B, 0x94, 0xE0, 0, 0, 0, 0x48, 0x8D, 0x8C, 0xB0, 0, 0, 0 }));
+		CHECK(!passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 1, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
+		CHECK(!passes(B{}));
 	}
 }
 
@@ -643,7 +653,8 @@ int main()
 	Settings();
 	Lights();
 	ScreenColor();
-	HandArt();
+	HandClone();
+	Posture();
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
 		std::printf("FAIL: only %d checks ran, under the floor of %d - a test stopped part way\n", gPassed, kFloor);

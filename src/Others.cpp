@@ -85,7 +85,6 @@ namespace Plugin
 		std::atomic_int          gTest{ 0 };  // devbench's others: 1 = every other caster wears the game's art
 		std::atomic<std::size_t> gSwapped{ 0 };
 		std::atomic<std::size_t> gHandSwapped{ 0 };
-		std::atomic_bool         gHandLate{ false };
 
 		// the ward an art effect belongs to: a dome through its active effect; the hand's casting art has none, so the spell the
 		// caster holds whose effect wears that art
@@ -177,9 +176,11 @@ namespace Plugin
 				// the caster's look is read here, on whichever thread the engine starts an art effect
 				static std::array<std::atomic_bool, 2> seen{};
 				NoteThread(seen, "other casters: an art effect started");
+				bool       started = false;
+				RE::FormID wearer = 0;
 				{
 					const FrameCost::Scope cost{ 5, "an art effect starts (each, before it)" };
-					Guarded("other casters' art", [a_self]() {
+					Guarded("other casters' art", [a_self, &started, &wearer]() {
 						if (!a_self->artObject) {
 							return;
 						}
@@ -195,7 +196,8 @@ namespace Plugin
 						if (!ours) {
 							return;
 						}
-						WakeLights();  // a ward of ours starts: its dome light and its caster's hand lights
+						started = true;
+						wearer = ref ? ref->GetFormID() : 0;
 						// art another mod swapped since her last draw or cast is dressed again before his ward shows long
 						(void)QueueArtCheck("as another caster's ward started");
 						const auto        slot = TheirSlot(ref.get(), ours->row);
@@ -213,9 +215,120 @@ namespace Plugin
 						}
 					});
 				}
-				return func(a_self);
+				const bool kept = func(a_self);
+				// a ward of ours started: its dome light and its caster's hand lights, once the game has the effect
+				if (started && kept) {
+					NoteDomeStart(a_self);
+					if (wearer) {
+						NoteHands(wearer);
+					}
+				}
+				return kept;
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// a ward's end names its wearer: a drawn staff's hand light hangs on an always-on ward, and no cast or equip says it ended
+		void NoteWearer(const RE::ModelReferenceEffect* a_effect) noexcept
+		{
+			if (const auto ref = a_effect->target.get()) {
+				NoteHands(ref->GetFormID());
+			}
+		}
+
+		// an art effect of ours is gone any other way (a cell left, its wearer's 3D): the round drops its dome light
+		struct DetachHook
+		{
+			static void thunk(RE::ModelReferenceEffect* a_self)
+			{
+				if (OurArt(a_self->artObject)) {
+					NoteDomeGone(a_self);
+					NoteWearer(a_self);
+				}
+				func(a_self);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// an art effect of ours is told to stop: ActiveEffect::StopHitEffects walks a finishing effect's art with this visitor, which sets finished and
+		// lets the controller go. The dome fades out from here while the effect lives on ~0.6 s, so the round drops the dome's light now
+		struct StopHook
+		{
+			static RE::BSContainer::ForEachResult thunk(void* a_self, RE::ReferenceEffect* a_effect)
+			{
+				const auto result = func(a_self, a_effect);
+				if (a_effect && a_effect->GetType() == RE::TEMP_EFFECT_TYPE::kRefModel && OurArt(static_cast<RE::ModelReferenceEffect*>(a_effect)->artObject)) {
+					NoteDome();
+					NoteWearer(static_cast<RE::ModelReferenceEffect*>(a_effect));
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// A caster's cast ends, or his spell is selected or let go: no SKSE action says so (a ward released or interrupted with the hands still out, the AI
+		// changing spells), and his hand lights follow what he holds. Every end passes FinishCastImpl (7); the game uses nothing these slots return
+		template <std::size_t Slot>
+		struct CasterHook
+		{
+			static void thunk(RE::ActorMagicCaster* a_self)
+			{
+				func(a_self);
+				if (a_self->actor) {
+					const FrameCost::Scope cost{ 3, "a caster's cast ends or his spell changes (each)" };
+					NoteHands(a_self->actor->GetFormID());
+				}
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+
+			static void Install()
+			{
+				REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ActorMagicCaster[0] };
+				func = vtbl.write_vfunc(Slot, thunk);
+			}
+		};
+
+		// The one call that starts a magic caster's art copy (ActorMagicCaster::CheckAttachCastingArt, once per art it attaches). Found by what it
+		// passes, not by an offset, so it holds on any game version; another mod's hook on that call, or another layout, leaves the hand as the
+		// game has it (logged). A credit: Light Placer (powerofthree, GPL-3.0, his permission) showed these caster calls can be taken one by one
+		struct HandCloneHook
+		{
+			static std::uint64_t thunk(void* a_task, RE::BGSArtObject* a_art)
+			{
+				auto* art = a_art;
+				Guarded("a ward about to load in a hand", [a_task, &art]() {
+					if (!art || !OurArt(art)) {
+						return;
+					}
+					auto* caster = reinterpret_cast<RE::ActorMagicCaster*>(static_cast<std::byte*>(a_task) - kCloneTaskAt);
+					LookHandArt(caster);
+					art = caster->castingArt;
+					if (caster->actor) {
+						NoteHands(caster->actor->GetFormID());
+					}
+				});
+				// the art he wears is none: no copy, as the game does for a caster that holds no art
+				return art ? func(a_task, art) : 0;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+
+			static void Install()
+			{
+				const auto                 fn = REL::Relocation<std::uintptr_t>{ RELOCATION_ID(33403, 34185) }.address();
+				const auto*                code = reinterpret_cast<const std::uint8_t*>(fn);
+				std::optional<std::size_t> at;
+				for (std::size_t i = kCloneArgBytes; i < kCloneScan && !at; ++i) {
+					if (code[i] == 0xE8 && PassesCloneArgs(std::span<const std::uint8_t, kCloneArgBytes>(code + i - kCloneArgBytes, kCloneArgBytes))) {
+						at = i;
+					}
+				}
+				if (!at) {
+					SKSE::log::warn("other casters: the hand's art copy call was not found - another caster's ward in the hand wears the player's look");
+					return;
+				}
+				func = SKSE::GetTrampoline().write_call<5>(fn + *at, thunk);
+				SKSE::log::info("other casters: the hand art hook is in (+0x{:X})", *at);
+			}
 		};
 	}
 
@@ -246,12 +359,9 @@ namespace Plugin
 		}
 	}
 
-	// Another caster's ward IN THE HAND wears his look from the start. His magic caster attaches its casting art itself
-	// (CheckAttachCastingArt, the first call of its update - never an art effect, so InitHook never sees it): the hand hook calls
-	// this before that update, and while nothing is loading or attached yet the caster is handed the art his look wears. A model
-	// already loading stays as it is (logged once). It runs inside his caster's own update, on whatever thread the game runs
-	// that update: the castingArt it sets is read next by that same update, so no other thread is between the write and the
-	// attach. No allocation; the tables are read-only after data load, GameArt takes gLock
+	// Another caster's ward IN THE HAND wears his look from the start. His magic caster attaches its casting art itself (never an art effect, so
+	// InitHook never sees it), from a copy it starts once per art (HandCloneHook): right before that, the caster is handed the art his look wears.
+	// No allocation; the tables are read-only after data load, GameArt takes gLock
 	void LookHandArt(RE::ActorMagicCaster* a_caster)
 	{
 		auto* art = a_caster ? a_caster->castingArt : nullptr;
@@ -268,12 +378,6 @@ namespace Plugin
 		const auto        slot = TheirSlot(actor, ours->second.row);
 		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->second.kind) : nullptr;
 		if (slot < kSlots && !look) {
-			return;
-		}
-		if (a_caster->cloneTask) {
-			if (!gHandLate.exchange(true)) {
-				SKSE::log::info("other casters: a ward in the hand was already loading the player's art - left as it is (logged once)");
-			}
 			return;
 		}
 		RE::BGSArtObject* swap = look;
@@ -302,7 +406,14 @@ namespace Plugin
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ModelReferenceEffect[0] };
 		InitHook::func = vtbl.write_vfunc(0x36, InitHook::thunk);
-		SKSE::log::info("other casters: the art effect hook is in");
+		DetachHook::func = vtbl.write_vfunc(0x27, DetachHook::thunk);
+		REL::Relocation<std::uintptr_t> stop{ RE::VTABLE___StopHitEffectsVisitor[0] };
+		StopHook::func = stop.write_vfunc(0x1, StopHook::thunk);
+		CasterHook<0x7>::Install();
+		CasterHook<0x11>::Install();
+		CasterHook<0x12>::Install();
+		SKSE::log::info("other casters: the art effect hooks are in");
+		HandCloneHook::Install();
 	}
 
 	void NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
@@ -410,6 +521,7 @@ namespace Plugin
 	void SetOthersTest(int a_value)
 	{
 		gTest = a_value;
+		WakeLights();
 	}
 
 	nlohmann::json OthersReport()
@@ -423,7 +535,7 @@ namespace Plugin
 			                                                                                           "mine";
 			out[std::string(kLookTokens[i])] = { { "mode", mode }, { "color", HexColor(p.color) }, { "installed", LookInstalled(i) }, { "loaded", FactionLoaded(i) } };
 		}
-		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() }, { "handLate", gHandLate.load() },
+		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() },
 			{ "looks", std::move(out) } };
 	}
 }

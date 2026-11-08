@@ -9,8 +9,8 @@
 //      object behind a palette is that row's alone: its pixels are rebuilt from the neutral source in the ward's color (the
 //      same curve the 2.x build baked - wardgen.pal_retint) and swapped in on the graphics card. Every live ward of the row
 //      changes at once.
-//   2. the GLOW of its other blocks (their emissive), on each COPY of a ward's model: a copy the moment it shows (its art
-//      effect's first update - CopyHook below) and every copy on screen when the look changes. A block whose emissive is a
+//   2. the GLOW of its other blocks (their emissive), on each COPY of a ward's model: a copy as the game makes it (CloneHook
+//      below) and every copy on screen when the look changes. A block whose emissive is a
 //      color takes the ward's hue at its own brightness (wardgen.retint); a palette block's emissive is a coordinate into its
 //      palette and keeps its number. The ENB light sprite takes the ward's color at full saturation. The cached MODEL the game
 //      copies from (BSModelDB) is painted once, at the first apply before anything copies it, and never again: a loader
@@ -156,14 +156,17 @@ namespace Plugin
 		};
 		std::unordered_map<const RE::BGSArtObject*, ArtOf> gArtOf;
 		std::atomic_bool                                   gReady{ false };  // the first apply is done: the cached models are never painted again
-		// a copy of one of our models on screen and the look it wears (gLock). Its reference is taken by hand, so its address is
-		// never reused while it is listed and no static destructor releases it at exit, after the engine is gone; ReleaseOld
-		// gives it back once nothing else holds it
+		// a copy of one of our models and the look it wears (gLock). Its reference is taken by hand, so its address is never reused while
+		// it is listed and no static destructor releases it at exit, after the engine is gone; ReleaseOld gives it back once nothing else
+		// holds it and kCopyHeld has passed - the game takes its own reference only after the copy is made
 		struct Copy
 		{
-			RE::NiAVObject* root{ nullptr };
-			Setting         with{};
+			RE::NiAVObject*                       root{ nullptr };
+			Setting                               with{};
+			const ArtOf*                          art{ nullptr };
+			std::chrono::steady_clock::time_point at{};
 		};
+		constexpr auto    kCopyHeld = std::chrono::seconds(30);
 		std::vector<Copy> gCopies;
 		std::size_t       gCopiesLogged = 0;  // gNewCopies at the last apply's log line
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
@@ -719,236 +722,51 @@ namespace Plugin
 			return it != masters.end() ? &*it : nullptr;
 		}
 
-		// the copy's record: the look it wears now (a copy that did not match its model is noted too, so it is not tried every frame)
-		void NoteCopy(RE::NiAVObject* a_root, const Setting& a_with)
+		// the copy's record: the look it wears now
+		void NoteCopy(RE::NiAVObject* a_root, const Setting& a_with, const ArtOf& a_art)
 		{
 			if (const auto it = std::ranges::find(gCopies, a_root, &Copy::root); it != gCopies.end()) {
 				it->with = a_with;
 				return;
 			}
 			a_root->IncRefCount();
-			gCopies.push_back({ a_root, a_with });
+			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now() });
 		}
 
-		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted
+		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted. A row never colored
+		// this session (Vanilla) leaves the copy as built, noted for the day its row takes a color
 		bool PaintStale(RE::NiAVObject* a_root, const ArtOf& a_art)
 		{
 			const auto& row = gRows[a_art.slot];
-			if (row.live.c == 0xFFFFFFFF) {
-				return false;  // never colored this session (a Vanilla row): the copy is the model as built
-			}
-			const auto had = std::ranges::find(gCopies, a_root, &Copy::root);
+			const auto  had = std::ranges::find(gCopies, a_root, &Copy::root);
 			if (had != gCopies.end() && had->with == row.live) {
 				return false;
 			}
-			const auto* master = MasterOf(a_art);
+			const auto* master = row.live.c == 0xFFFFFFFF ? nullptr : MasterOf(a_art);
 			const bool  painted = master && PaintCopy(a_root, *master, LookOf(row.live));
-			NoteCopy(a_root, row.live);
+			NoteCopy(a_root, row.live, a_art);
 			return painted;
 		}
 
-		using ArtIt = std::unordered_map<const RE::BGSArtObject*, ArtOf>::const_iterator;
-
-		// the spell in a caster's hand: the one it is casting, else the one equipped there (a ward attached in an earlier frame holds no
-		// casting art any more and no spell is current)
-		const RE::MagicItem* SpellInHand(const RE::ActorMagicCaster* a_self)
+		// Every art object's model is copied through this call, an art effect's and a ward in the hand alike (the game's BGSArtObjectCloneTask): the
+		// copy of an art of ours is painted once here, before the game shows it. On whichever thread the game makes it; only this thread holds it yet
+		struct CloneHook
 		{
-			if (a_self->currentSpell) {
-				return a_self->currentSpell;
-			}
-			const auto hand = static_cast<std::size_t>(a_self->castingSource);
-			return a_self->actor && hand <= static_cast<std::size_t>(RE::MagicSystem::CastingSource::kRightHand) ? a_self->actor->GetActorRuntimeData().selectedSpells[hand] : nullptr;
-		}
-
-		// The art object of ours a magic caster's attached art came from (WardMath.h FindOurHandArt): the castingArt it holds, the one it held
-		// before this update, or - a_spellRoute, her own casters only, and only when it holds none - the casting art the effects of the spell in
-		// its hand carry
-		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_before, bool a_spellRoute, bool& a_viaSpell)
-		{
-			std::array<const RE::BGSArtObject*, 8> spell{};
-			std::size_t                            n = 0;
-			const auto*                            inHand = a_spellRoute && !a_self->castingArt && !a_before ? SpellInHand(a_self) : nullptr;
-			if (inHand) {
-				for (const auto* e : inHand->effects) {
-					if (n < spell.size()) {
-						spell[n++] = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-					}
-				}
-			}
-			const auto* art = FindOurHandArt<RE::BGSArtObject>(
-				a_self->castingArt, a_before, std::span(spell.data(), n), a_spellRoute, [](const RE::BGSArtObject* a_art) { return gArtOf.contains(a_art); }, a_viaSpell);
-			return art ? gArtOf.find(art) : gArtOf.end();
-		}
-
-		// a color drag (a main-thread task) over her own casters: the ward in the hand told by the spell in it once its casting art is gone
-		ArtIt HandArtOf(const RE::ActorMagicCaster* a_self)
-		{
-			bool viaSpell = false;
-			return HandArtOf(a_self, nullptr, true, viaSpell);
-		}
-
-		// Every copy of ours on screen (a held ward's, the menu's preview, the ward in her hands), listed under the game's lock
-		// with gLock NOT held: the art hook takes gLock inside the game's update, so holding ours here while asking for the
-		// game's could deadlock. gArtOf is read-only once gReady. Another caster's hands follow at his next update (the menu is
-		// open only while the game stands still, and then only hers are on show); a look switched to or from Vanilla reaches
-		// his hand at his next cast - the art he holds is his old look's
-		std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> LiveCopies()
-		{
-			std::vector<std::pair<RE::NiPointer<RE::NiAVObject>, const ArtOf*>> live;
-			if (auto* lists = RE::ProcessLists::GetSingleton()) {
-				RE::BSSpinLockGuard guard{ lists->magicEffectsLock };
-				for (auto& temp : lists->magicEffects) {
-					auto* e = temp.get();
-					if (!e || e->GetType() != RE::TEMP_EFFECT_TYPE::kRefModel) {
-						continue;
-					}
-					const auto* m = static_cast<RE::ModelReferenceEffect*>(e);
-					const auto  art = m->finished || !m->artObject3D ? gArtOf.end() : gArtOf.find(m->artObject);
-					if (art != gArtOf.end()) {
-						live.emplace_back(m->artObject3D, &art->second);
-					}
-				}
-			}
-			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-				for (auto* caster : player->GetActorRuntimeData().magicCasters) {
-					const auto art = caster && caster->castingArtData.attachedArt ? HandArtOf(caster) : ArtIt{ gArtOf.end() };
-					if (art != gArtOf.end()) {
-						live.emplace_back(caster->castingArtData.attachedArt, &art->second);
-					}
-				}
-			}
-			return live;
-		}
-
-		// an art effect's update: the copy it shows, painted the frame it appears, before it is drawn
-		struct CopyHook
-		{
-			static bool thunk(RE::ModelReferenceEffect* a_self, float a_delta)
+			static RE::NiAVObject* thunk(RE::BGSArtObject* a_self, RE::TESObjectREFR* a_ref, std::uintptr_t a_arg)
 			{
-				const bool             alive = func(a_self, a_delta);
-				const FrameCost::Scope cost{ 2, "an art effect's update (each effect, each frame)" };
-				if (gReady && a_self->artObject3D && !a_self->finished) {
-					Guarded("a new ward copy", [a_self]() {
-						if (const auto art = gArtOf.find(a_self->artObject); art != gArtOf.end()) {
+				auto* copy = func(a_self, a_ref, a_arg);
+				if (copy && gReady) {
+					const FrameCost::Scope cost{ 2, "a model copied (each art object copied)" };
+					Guarded("a new ward copy", [a_self, copy]() {
+						if (const auto art = gArtOf.find(a_self); art != gArtOf.end()) {
 							static std::array<std::atomic_bool, 2> seen{};
-							NoteThread(seen, "colors: a ward copy updated");
-							WakeLights();  // a ward of ours shows: its light, and its copy's release later
+							NoteThread(seen, "colors: a ward copy made");
 							std::scoped_lock l{ gLock };
-							gNewCopies += PaintStale(a_self->artObject3D.get(), art->second) ? 1 : 0;
+							gNewCopies += PaintStale(copy, art->second) ? 1 : 0;
 						}
 					});
 				}
-				return alive;
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
-		// a magic caster's update: the ward in the hand - attached by the caster itself (its casting art), never as an art
-		// effect - painted the frame it appears, in its caster's look (another caster's from his look's own model and palettes)
-		// the hand hook's own count: every call, and every call that found a ward copy of ours attached (the readout's handUpdates)
-		std::atomic<std::uint64_t> gHandCalls{ 0 };
-		std::atomic<std::uint64_t> gHandOurs{ 0 };
-		// why it found none on HER casters: a caster that holds a casting art but has none attached, one tied to a ward of ours only through
-		// its spell, and the first few art objects she held that were not ours - where a ward in the hand really lives is read off these
-		// (the readout's handUpdates)
-		constexpr std::size_t                             kMostMisses = 6;
-		std::atomic<std::uint64_t>                        gHandNoRoot{ 0 };
-		std::atomic<std::uint64_t>                        gHandViaSpell{ 0 };
-		std::array<std::atomic<const void*>, kMostMisses> gHandMissSeen{};
-		std::vector<nlohmann::json>                       gHandMisses;  // gLock
-
-		// a_held: the casting art the caster held before the update; a miss is kept once per art (per spell when it held none)
-		void NoteHandMiss(const RE::ActorMagicCaster* a_self, const RE::BGSArtObject* a_held, RE::NiNode* a_root)
-		{
-			const auto*               inHand = SpellInHand(a_self);
-			const void*               key = a_held ? static_cast<const void*>(a_held) :
-			                                inHand ? static_cast<const void*>(inHand) :
-			                                         static_cast<const void*>(a_root);
-			std::atomic<const void*>* mine = nullptr;
-			for (auto& slot : gHandMissSeen) {
-				const void* now = slot.load(std::memory_order_relaxed);
-				if (now == key) {
-					return;
-				}
-				const void* none = nullptr;
-				if (!now && slot.compare_exchange_strong(none, key)) {
-					mine = &slot;
-					break;
-				}
-				if (none == key) {
-					return;  // another thread took this slot for the same art
-				}
-			}
-			if (!mine) {
-				return;
-			}
-			try {
-				const auto text = [](const char* a_s) { return std::string(a_s ? a_s : ""); };
-				auto       children = nlohmann::json::array();
-				for (auto& child : a_root->GetChildren()) {
-					if (child && children.size() < 6) {
-						children.push_back(text(child->name.c_str()));
-					}
-				}
-				auto effects = nlohmann::json::array();
-				if (inHand) {
-					for (const auto* e : inHand->effects) {
-						const auto* art = e && e->baseEffect ? e->baseEffect->data.castingArt : nullptr;
-						effects.push_back(art ? Lower(text(art->GetModel())) : std::string("none"));
-					}
-				}
-				std::scoped_lock l{ gLock };
-				gHandMisses.push_back({ { "castingArt", a_held ? Lower(text(a_held->GetModel())) : std::string("none") }, { "attached", text(a_root->name.c_str()) },
-					{ "children", std::move(children) }, { "spell", inHand ? text(inHand->GetName()) : std::string() },
-					{ "effectArts", std::move(effects) } });
-			} catch (...) {
-				mine->store(nullptr, std::memory_order_relaxed);  // given back: a record that failed is tried again
-				throw;
-			}
-		}
-
-		struct HandHook
-		{
-			static void thunk(RE::ActorMagicCaster* a_self, float a_delta)
-			{
-				gHandCalls.fetch_add(1, std::memory_order_relaxed);
-				{
-					const FrameCost::Scope cost{ 3, "a magic caster's update, before it (each caster, each frame)" };
-					// a ward of ours about to be attached wakes the hand lights, whatever look he takes it in
-					if (gReady && a_self->castingArt && gArtOf.contains(a_self->castingArt)) {
-						WakeLights();
-					}
-					// before the update: its first call attaches the casting art, which another caster takes in his look
-					Guarded("another caster's ward in the hand", [a_self]() { LookHandArt(a_self); });
-				}
-				const auto* before = a_self->castingArt;  // the update may clear it once the art is attached
-				func(a_self, a_delta);
-				const FrameCost::Scope cost{ 4, "a magic caster's update, after it (each caster, each frame)" };
-				auto*                  root = gReady ? a_self->castingArtData.attachedArt.get() : nullptr;
-				const bool             player = a_self->actor && a_self->actor->IsPlayerRef();
-				if (!root) {
-					if (player && (before || a_self->castingArt)) {
-						gHandNoRoot.fetch_add(1, std::memory_order_relaxed);
-					}
-					return;
-				}
-				bool       viaSpell = false;
-				const auto art = HandArtOf(a_self, before, player, viaSpell);
-				if (art == gArtOf.end() && player) {
-					Guarded("a hand art that is not ours", [a_self, before, root]() { NoteHandMiss(a_self, before ? before : a_self->castingArt, root); });
-				}
-				if (art != gArtOf.end()) {
-					WakeLights();
-					gHandOurs.fetch_add(1, std::memory_order_relaxed);
-					gHandViaSpell.fetch_add(viaSpell ? 1 : 0, std::memory_order_relaxed);
-					Guarded("a new ward in the hand", [root, &art]() {
-						static std::array<std::atomic_bool, 2> seen{};
-						NoteThread(seen, "colors: a ward in the hand updated");
-						// the art attached is already his look's (LookHandArt): painted from its own palettes, no look read per frame
-						std::scoped_lock l{ gLock };
-						gNewCopies += PaintStale(root, art->second) ? 1 : 0;
-					});
-				}
+				return copy;
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -992,7 +810,8 @@ namespace Plugin
 
 	bool ApplyColors(bool a_quiet)
 	{
-		WakeLights();  // the lights take the new look, and the palettes it retires are given back by their tick
+		WakeLights();  // the lights take the new look, and the palettes it retires are given back by a later round
+		ArcBarStale();
 		const int        opacity = Opacity();
 		const int        transparency = Has360Ward() ? Transparency() : 0;  // the menu greys it out otherwise
 		const int        brightness = Brightness();
@@ -1029,14 +848,14 @@ namespace Plugin
 			}
 		}
 		gReady = true;
-		// every copy on screen whose row's look moved, painted at once: a color drag shows on the ward while the menu is open,
-		// when no art effect updates. A call that changed nothing repainted nothing
-		l.unlock();
-		const auto live = changed ? LiveCopies() : decltype(LiveCopies()){};
-		l.lock();
+		// every copy on screen whose row's look moved, painted at once: a color drag shows on the ward while the menu is open. A call that
+		// changed nothing repainted nothing
 		gLiveDomes = 0;
-		for (const auto& [root, art] : live) {
-			gLiveDomes += PaintStale(root.get(), *art) ? 1 : 0;
+		if (changed) {
+			for (std::size_t i = 0; i < gCopies.size(); ++i) {
+				const auto c = gCopies[i];
+				gLiveDomes += PaintStale(c.root, *c.art) ? 1 : 0;
+			}
 		}
 		if (!a_quiet) {
 			SKSE::log::info("colors: {} palette(s) swapped, {} failed, {} glow block(s) set, {} live dome(s) repainted, {} new cop(ies) painted since the last apply{}",
@@ -1048,11 +867,9 @@ namespace Plugin
 
 	void InstallCopyPaint()
 	{
-		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ModelReferenceEffect[0] };
-		CopyHook::func = vtbl.write_vfunc(0x28, CopyHook::thunk);
-		REL::Relocation<std::uintptr_t> casters{ RE::VTABLE_ActorMagicCaster[0] };
-		HandHook::func = casters.write_vfunc(REL::Relocate(0x1D, 0x1D, 0x1F), HandHook::thunk);
-		SKSE::log::info("colors: a ward copy is painted the frame it appears (the art effect's and the magic caster's update hooks are in)");
+		REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_BGSArtObject[0] };
+		CloneHook::func = vtbl.write_vfunc(0x40, CloneHook::thunk);
+		SKSE::log::info("colors: a ward copy is painted as the game makes it (the art object's copy hook is in)");
 	}
 
 	nlohmann::json ColorsReport()
@@ -1079,9 +896,6 @@ namespace Plugin
 		}
 		return { { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
-			{ "handUpdates", { { "calls", gHandCalls.load(std::memory_order_relaxed) }, { "ours", gHandOurs.load(std::memory_order_relaxed) },
-								 { "viaSpell", gHandViaSpell.load(std::memory_order_relaxed) }, { "playerNoRoot", gHandNoRoot.load(std::memory_order_relaxed) },
-								 { "playerMisses", gHandMisses } } },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}
 
@@ -1090,20 +904,24 @@ namespace Plugin
 		gKeptTest = std::clamp(a_percent, -1, 100);
 	}
 
-	// the dome lights' tick (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies
-	// nothing else holds - given back here only, never from the art hook, so no copy is destroyed during the game's update pass.
-	// True while any are still held (the tick stays awake to give them back)
-	bool ReleaseOld()
+	// each round of the lights (a main-thread task, outside the game's effect updates): the palettes a recolor replaced, and the copies nothing
+	// else holds - given back here only, never from the copy hook, so no copy is destroyed during the game's update pass
+	void ReleaseOld()
 	{
 		std::scoped_lock l{ gLock };
 		Bury();
-		std::erase_if(gCopies, [](const Copy& a_c) {
-			if (a_c.root->GetRefCount() > 1) {
+		const auto now = std::chrono::steady_clock::now();
+		std::erase_if(gCopies, [now](const Copy& a_c) {
+			if (now - a_c.at < kCopyHeld || a_c.root->GetRefCount() > 1) {
 				return false;
 			}
 			a_c.root->DecRefCount();
 			return true;
 		});
-		return !gCopies.empty() || !gGrave.empty();
+	}
+
+	bool OurArt(const RE::BGSArtObject* a_art)
+	{
+		return gReady && gArtOf.contains(a_art);
 	}
 }

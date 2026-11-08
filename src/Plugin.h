@@ -78,7 +78,7 @@ namespace Plugin
 	std::size_t                                      AlwaysOnWardRow(RE::Actor* a_actor);                         // the row of an always-on ward of ours active on the actor (a held staff's), else kRows
 	std::size_t                                      WardRowOf(const RE::EffectSetting* a_effect);                // the row a ward of ours wears, kRows when it is not one
 	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
-	void                                             WatchBlocking();                                             // main thread, at a load and when her graphs are rebuilt: the shield's ward at once when the player blocks
+	void                                             InstallAnimationHook();                                      // SKSE's post-load: every character's graph events - a shield's ward at once, a dome's wearer sneaking
 	std::vector<std::pair<std::string, std::string>> WardPerks();
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
@@ -127,11 +127,10 @@ namespace Plugin
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
 	bool                         StrangeRunesLoaded();
-	void                         CheckArt(const char* a_why);                 // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
-	bool                         QueueArtCheck(const char* a_why);            // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
-	void                         FollowArt(int a_rounds, const char* a_why);  // CheckArt every 2 s for a_rounds rounds (after a load, after the journal closes)
-	std::optional<Color>         RowColor(std::size_t a_row);                 // what the row wears now; nothing = Vanilla
-	std::optional<Color>         SlotColor(std::size_t a_slot);               // a row's (RowColor) or a look's own color; nothing = no art of ours
+	void                         CheckArt(const char* a_why);       // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
+	bool                         QueueArtCheck(const char* a_why);  // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
+	std::optional<Color>         RowColor(std::size_t a_row);       // what the row wears now; nothing = Vanilla
+	std::optional<Color>         SlotColor(std::size_t a_slot);     // a row's (RowColor) or a look's own color; nothing = no art of ours
 	LookPick                     LookOf(std::size_t a_look);
 	std::array<LookPick, kLooks> Looks();
 	void                         SetLook(std::size_t a_look, LookPick a_pick);
@@ -145,15 +144,16 @@ namespace Plugin
 	int  StopPercent(std::size_t a_rank);     // where a rank sits on the ladder, 0 white - 100 the color
 
 	// Colors.cpp: the neutral art takes each row's color in memory - its palettes on the graphics card, its glow on each
-	// copy of its model the frame the copy appears (the cached model is painted once, before anything copies it)
+	// copy of its model as the game makes it (the cached model is painted once, before anything copies it)
 	void           RegisterRowArt(std::size_t a_slot, std::vector<std::pair<const RE::BGSArtObject*, std::string>> a_arts);  // data load, from MakeArt: a row's or a look's art and models
-	void           InstallCopyPaint();                                                                                       // SKSE's post-load: the art effect's update hook
+	void           InstallCopyPaint();                                                                                       // SKSE's post-load: the hook on an art object's copy
+	bool           OurArt(const RE::BGSArtObject* a_art);                                                                    // an art object of ours (any thread)
 	bool           ApplyColors(bool a_quiet = false);                                                                        // main thread; true when a row changed
 	bool           LivePending();                                                                                            // a throttled live recolor the menu sends again while the color is held
 	void           LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	nlohmann::json ColorsReport();
 	void           SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
-	bool           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (the dome lights' tick); true while any are held
+	void           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (each round of the lights)
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
 	// master's blocks and a live copy's pair up by index
@@ -191,8 +191,14 @@ namespace Plugin
 		kAuto = 0,
 		kOff = 2,
 	};
-	void           StartDomeLights();      // data load, after MakeArt
-	void           WakeLights() noexcept;  // any thread: something of ours may show - the asleep tick runs again
+	void           StartDomeLights();                                                 // data load, after MakeArt
+	void           HangLightsAgain() noexcept;                                        // any thread: a loading screen ended - every light of ours is made again
+	void           WakeLights() noexcept;                                             // any thread: a load or a setting - one round reads every dome and everyone's hands
+	void           NoteDome() noexcept;                                               // any thread: a ward of ours is ending - one round reads the domes
+	void           NoteDomeStart(const RE::ModelReferenceEffect* a_effect) noexcept;  // any thread: that art effect of ours started
+	void           NoteDomeGone(const RE::ModelReferenceEffect* a_effect) noexcept;   // any thread: that art effect of ours ended
+	bool           DomeLit() noexcept;                                                // any thread: any dome light up - an event may be its wearer sneaking
+	void           NoteHands(RE::FormID a_actor) noexcept;                            // any thread: his hands may have changed - one round reads him
 	void           SetDomeMode(DomeMode a_mode);
 	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	nlohmann::json DomeLightsReport();
@@ -206,7 +212,7 @@ namespace Plugin
 	void                 PublishTheirs();
 	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
 	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) before it loads one
+	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) right before it copies one
 	void           LookHandArt(RE::ActorMagicCaster* a_caster);
 	void           NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
@@ -216,7 +222,8 @@ namespace Plugin
 	nlohmann::json OthersReport();
 	void           SetOthersTest(int a_value);  // devbench only, never saved: 1 = other casters wear the game's own art
 
-	void           RegisterArcBar();  // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
+	void           RegisterArcBar();        // Arcs.cpp, SKSE's post-load (Reticle Arcs takes add-on bars only then): the ward's strength as its bar
+	void           ArcBarStale() noexcept;  // a color or the bar's switch changed: the next frame reads them again
 	bool           ArcBarRegistered();
 	nlohmann::json ArcBarReport();
 

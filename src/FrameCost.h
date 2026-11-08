@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 
 namespace FrameCost
 {
@@ -18,9 +19,10 @@ namespace FrameCost
 
 	struct Slot
 	{
-		std::atomic<const char*> name{ nullptr };
-		std::atomic<float>       usAvg{ 0.0f };
-		std::atomic<float>       usMax{ 0.0f };
+		std::atomic<const char*>   name{ nullptr };
+		std::atomic<float>         usAvg{ 0.0f };
+		std::atomic<float>         usMax{ 0.0f };
+		std::atomic<std::uint32_t> calls{ 0 };  // runs since the last Reset: the idle proof wants 0 new ones with nothing lit
 	};
 
 	[[nodiscard]] inline std::array<Slot, kSlots>& Slots()
@@ -36,6 +38,7 @@ namespace FrameCost
 		}
 		auto&       s = Slots()[a_slot];
 		const float avg = s.usAvg.load(std::memory_order_relaxed);
+		s.calls.fetch_add(1, std::memory_order_relaxed);
 		s.name.store(a_name, std::memory_order_relaxed);
 		s.usAvg.store(avg <= 0.0f ? a_us : avg + (a_us - avg) * 0.05f, std::memory_order_relaxed);
 		if (a_us > s.usMax.load(std::memory_order_relaxed)) {
@@ -48,6 +51,7 @@ namespace FrameCost
 		for (auto& s : Slots()) {
 			s.usAvg.store(0.0f, std::memory_order_relaxed);
 			s.usMax.store(0.0f, std::memory_order_relaxed);
+			s.calls.store(0, std::memory_order_relaxed);
 		}
 	}
 
