@@ -83,9 +83,9 @@ namespace
 	// The game's own moments, instead of a watch on a timer (rule file 2 rule 19c). Anyone's SKSE actions (a draw, a sheathe, a
 	// spell cast or fired) and any equip wake the ward lights - a drawn staff's always-on ward has no art of ours to wake them,
 	// and one equipped while the hands are out sends no draw - and her draw or cast looks for art another mod swapped (another
-	// caster's wards also wake them through the art and caster hooks). Her Restoration
-	// rising re-checks the 360 unlock; her 3D loaded again, her race switched (a transformation) or her view switched gives her
-	// graphs that may be new, which get the block watch
+	// caster's wards also wake them through the art and caster hooks). Her Restoration rising re-checks the 360 unlock; her 3D
+	// loaded again, her race switched (a transformation) or her view switched gives her graphs that may be new, which get the
+	// block watch
 	struct GameEvents :
 		RE::BSTEventSink<SKSE::ActionEvent>,
 		RE::BSTEventSink<SKSE::CameraEvent>,

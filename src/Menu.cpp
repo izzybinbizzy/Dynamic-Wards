@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <span>
 
 // SKSE Menu Framework's own header (theirs, MIT): its warnings are not ours, and ours are errors (xmake.lua) - under
@@ -195,6 +196,21 @@ namespace Plugin
 			SetItemTooltip("%s", a_tip);
 		}
 
+		// a setting's own control beside it (his rule), or on the next line when the panel is too narrow for its a_width
+		void BesideIfRoom(float a_width)
+		{
+			SameLine(0.0f, 24.0f);
+			if (GetContentRegionAvail().x < a_width) {
+				NewLine();
+			}
+		}
+
+		// a color row's first line: the 220 picker and a 20 swatch per preset (MenuStyle::ColorRow)
+		float ColorRowWidth()
+		{
+			return 220.0f + static_cast<float>(std::size(kPresets)) * (20.0f + GetStyle()->ItemSpacing.x);
+		}
+
 		// the next dropdown as wide as the longest of these names, so no choice is cut short
 		void FitCombo(std::span<const char* const> a_names)
 		{
@@ -367,7 +383,7 @@ namespace Plugin
 					}
 					// a setting's own control sits beside it, never under it (his rule); the ward follows the drag live, saved when let go
 					if (RowModeOf(i) == RowMode::kCustom) {
-						SameLine(0.0f, 24.0f);
+						BesideIfRoom(ColorRowWidth());
 						if (EditColor("own", heldRow[i], RowCustom(i), [i](Color a_c) { SetRow(i, RowMode::kCustom, a_c); })) {
 							Changed();
 						}
@@ -408,7 +424,7 @@ namespace Plugin
 			SetItemTooltip("%s", T(kLookTip[a_look]));
 			// beside its pick, never under it (his rule)
 			if (LookOf(a_look).mode == LookMode::kCustom) {
-				SameLine(0.0f, 24.0f);
+				BesideIfRoom(ColorRowWidth());
 				if (!LookArtInstalled(a_look)) {
 					TextColored(kMuted, "%s", T("This look's meshes are not installed - install Dynamic Wards again."));
 				} else if (EditColor("own", a_held, LookOf(a_look).color, [a_look](Color a_c) { SetLook(a_look, { LookMode::kCustom, a_c }); })) {
@@ -516,7 +532,7 @@ namespace Plugin
 								preview = name;
 							}
 						}
-						SameLine(0.0f, 24.0f);  // the unlock's own pick, beside it (his rule)
+						BesideIfRoom(220.0f);  // the unlock's own pick
 						SetNextItemWidth(220.0f);
 						if (BeginCombo(T("Perk"), preview.c_str())) {
 							for (const auto& [id, name] : perks) {

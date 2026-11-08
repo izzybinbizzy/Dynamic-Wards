@@ -963,9 +963,16 @@ namespace Plugin
 
 	namespace
 	{
-		std::atomic_bool           gArtQueued{ false };
-		std::atomic<std::uint32_t> gArtFollows{ 0 };
-		constexpr auto             kFollowEvery = std::chrono::seconds(2);
+		std::atomic_bool          gArtQueued{ false };
+		std::atomic_bool          gFollowing{ false };  // the one follower thread runs
+		std::atomic<std::int64_t> gFollowUntil{ 0 };    // it checks every kFollowEvery until then (steady clock, ms)
+		std::atomic<const char*>  gFollowWhy{ nullptr };
+		constexpr auto            kFollowEvery = std::chrono::milliseconds(2000);
+
+		std::int64_t SteadyMs()
+		{
+			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		}
 	}
 
 	bool QueueArtCheck(const char* a_why)
@@ -973,17 +980,33 @@ namespace Plugin
 		return LaterOnce(gArtQueued, a_why, [a_why]() { CheckArt(a_why); });
 	}
 
-	// detached, never joined (a join at exit can hang on the loader lock); it ends by itself after its rounds, or at the next
-	// round once a later follow started its own
+	// one detached follower, never joined (a join at exit can hang on the loader lock); a later follow only moves its end later,
+	// so a short one (the journal) never cuts a longer one (a load) short
 	void FollowArt(int a_rounds, const char* a_why)
 	{
-		const auto follow = ++gArtFollows;
-		std::thread([follow, a_rounds, a_why]() {
-			for (int i = 0; i < a_rounds && gArtFollows.load() == follow; ++i) {
-				std::this_thread::sleep_for(kFollowEvery);
-				Guarded("art check followed", [a_why]() { (void)QueueArtCheck(a_why); });
-			}
-		}).detach();
+		const auto until = SteadyMs() + a_rounds * kFollowEvery.count();
+		auto       old = gFollowUntil.load();
+		while (old < until && !gFollowUntil.compare_exchange_weak(old, until)) {
+		}
+		gFollowWhy = a_why;
+		if (gFollowing.exchange(true)) {
+			return;
+		}
+		try {
+			std::thread([]() {
+				do {
+					while (SteadyMs() < gFollowUntil.load()) {
+						std::this_thread::sleep_for(kFollowEvery);
+						Guarded("art check followed", []() { (void)QueueArtCheck(gFollowWhy.load()); });
+					}
+					gFollowing = false;
+					// a follow that came as this one ended found it still running: carry it on
+				} while (SteadyMs() < gFollowUntil.load() && !gFollowing.exchange(true));
+			}).detach();
+		} catch (...) {
+			gFollowing = false;
+			throw;
+		}
 	}
 
 	namespace
@@ -1643,6 +1666,10 @@ namespace Plugin
 					}
 					// the graph's events may come off the main thread: the effects are read on it
 					QueueCheck(start ? "shield ward check" : "shield ward check (block ended)");
+					// a 360 unlock perk a script gave her is read before her shield's ward shows
+					if (start) {
+						(void)QueueArtCheck("as she blocked");
+					}
 					gBlockEnding = !start;
 					++gBlockEvents;
 					gBlockEvents.notify_one();
