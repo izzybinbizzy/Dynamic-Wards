@@ -196,6 +196,8 @@ namespace Plugin
 							return;
 						}
 						WakeLights();  // a ward of ours starts: its dome light and its caster's hand lights
+						// art another mod swapped since her last draw or cast is dressed again before his ward shows long
+						(void)QueueArtCheck("as another caster's ward started");
 						const auto        slot = TheirSlot(ref.get(), ours->row);
 						RE::BGSArtObject* swap = nullptr;
 						if (slot >= kSlots) {
