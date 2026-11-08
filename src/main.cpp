@@ -80,9 +80,10 @@ namespace
 		}
 	};
 
-	// The game's own moments, instead of a watch on a timer (rule file 2 rule 19c). Her SKSE actions (a draw, a sheathe, a spell
-	// cast or fired) wake the ward lights - a drawn staff's always-on ward has no art of ours to wake them - and her draw or cast
-	// looks for art another mod swapped (another caster's wards wake them through the art and caster hooks). Her Restoration
+	// The game's own moments, instead of a watch on a timer (rule file 2 rule 19c). Anyone's SKSE actions (a draw, a sheathe, a
+	// spell cast or fired) and any equip wake the ward lights - a drawn staff's always-on ward has no art of ours to wake them,
+	// and one equipped while the hands are out sends no draw - and her draw or cast looks for art another mod swapped (another
+	// caster's wards also wake them through the art and caster hooks). Her Restoration
 	// rising re-checks the 360 unlock; her 3D loaded again, her race switched (a transformation) or her view switched gives her
 	// graphs that may be new, which get the block watch
 	struct GameEvents :
@@ -90,6 +91,7 @@ namespace
 		RE::BSTEventSink<SKSE::CameraEvent>,
 		RE::BSTEventSink<RE::SkillIncrease::Event>,
 		RE::BSTEventSink<RE::TESObjectLoadedEvent>,
+		RE::BSTEventSink<RE::TESEquipEvent>,
 		RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent>
 	{
 		RE::BSEventNotifyControl ProcessEvent(const SKSE::ActionEvent* a_event, RE::BSTEventSource<SKSE::ActionEvent>*) override
@@ -98,9 +100,9 @@ namespace
 			using T = SKSE::ActionEvent::Type;
 			const auto type = a_event ? a_event->type.get() : T::kWeaponSwing;
 			const bool hands = type == T::kBeginDraw || type == T::kEndDraw || type == T::kBeginSheathe || type == T::kEndSheathe;
-			if ((hands || type == T::kSpellCast || type == T::kSpellFire) && a_event->actor && a_event->actor->IsPlayerRef()) {
+			if ((hands || type == T::kSpellCast || type == T::kSpellFire) && a_event->actor) {
 				WakeLights();
-				if (type == T::kBeginDraw || type == T::kSpellCast) {
+				if ((type == T::kBeginDraw || type == T::kSpellCast) && a_event->actor->IsPlayerRef()) {
 					Guarded("her action", []() { (void)QueueArtCheck("as she drew or cast"); });
 				}
 			}
@@ -126,6 +128,13 @@ namespace
 			if (a_event && a_event->loaded && a_event->formID == 0x14) {
 				Guarded("her 3D loaded", []() { (void)Later("her 3D loaded", []() { WatchBlocking(); }); });
 			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		// the sink only wakes the tick (any thread); the tick reads the hands on the main thread
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent*, RE::BSTEventSource<RE::TESEquipEvent>*) override
+		{
+			WakeLights();
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
@@ -157,6 +166,7 @@ namespace
 			}
 			if (auto* scripts = RE::ScriptEventSourceHolder::GetSingleton()) {
 				scripts->AddEventSink<RE::TESObjectLoadedEvent>(events);
+				scripts->AddEventSink<RE::TESEquipEvent>(events);
 				scripts->AddEventSink<RE::TESSwitchRaceCompleteEvent>(events);
 			}
 		}

@@ -5,6 +5,8 @@
 // Other casters' own wards. A ward's art is set on its effect record, so every caster wears the same art. An art effect is
 // made per caster (ModelReferenceEffect), and its Init loads the art's model - so a caster who is not the player is given
 // the art of his look there, before the model is loaded. Nothing is swapped on screen.
+// CREDIT: hooking an art effect's Init to act before its model loads is Light Placer's way (powerofthree,
+// github.com/powerof3/LightPlacer, GPL-3.0; used with his permission).
 // His look: a follower always the Followers look; else the first faction group he is in that has a pick; else Enemies
 // (hostile to the player) or Neutral. A look keeps the player's art, wears its own color, or the game's own art.
 
