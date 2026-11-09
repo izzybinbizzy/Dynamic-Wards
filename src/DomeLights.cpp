@@ -729,9 +729,9 @@ namespace Plugin
 			}
 		};
 
-		// A queued load stores a character's body with no slot call and no event; the game then updates his alpha through this slot, on the main thread
+		// A queued load stores a character's body with no slot call and no event; the game then updates his alpha through this slot, on any thread
 		// (1.6.1170: id 13015 / 13005 -> 13355, read in the exe). One who arrives with his hands out, or with a dome waiting for a body, is named here.
-		// Not on VR, whose slot is not read here: there he is named at his next action
+		// It also runs each frame of a fade, so anyone else stops at two reads. Not on VR, whose slot is not read here: there he is named at his next action
 		struct BodyStored
 		{
 			static void thunk(RE::Character* a_this)
