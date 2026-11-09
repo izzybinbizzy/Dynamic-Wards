@@ -8,6 +8,8 @@
 #include "SettingsText.h"
 #include "WardMath.h"
 
+#include <bit>
+#include <cstdint>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -516,6 +518,12 @@ namespace
 		CHECK(CutoffFor(1.0f, 0.0f, 0.0f) == kHighestCutoff);       // no reach at all: never a division by zero
 		// the cutoff follows the dimmed fade: half the fade, half the cutoff (inside the clamp)
 		CHECK(Near(CutoffFor(0.5f, 133.0f, 2.0f) * 2.0f, CutoffFor(1.0f, 133.0f, 2.0f), 0.0001f));
+		// Light Limit Fix's words: inverse square carries its flag and the cutoff's bits; linear only Initialised, no cutoff, never a record
+		const auto isl = LlfWords(true, 0.5f);
+		CHECK(isl[0] == (kIslFlag | kIslInitialised) && isl[1] == std::bit_cast<std::uint32_t>(0.5f) && isl[2] == 0u);
+		const auto linear = LlfWords(false, 0.5f);
+		CHECK(linear[0] == kIslInitialised && linear[1] == 0u && linear[2] == 0u);
+		CHECK((linear[0] & ((1u << 0) | (1u << 1) | (1u << 9))) == 0u);  // never portal-strict, shadow or Disabled
 		// sRGB -> linear: the ends hold, the knee and a mid value (0.5 -> 0.2140)
 		CHECK(ToLinear(0.0f) == 0.0f);
 		CHECK(Near(ToLinear(1.0f), 1.0f));

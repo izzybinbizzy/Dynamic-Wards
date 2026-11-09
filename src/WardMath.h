@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -512,6 +513,16 @@ namespace Plugin
 	{
 		const float spread = a_reach * a_reach + a_size * a_size;
 		return spread > 0.0f ? std::clamp(kCutoffK * a_fade / spread, kLowestCutoff, kHighestCutoff) : kHighestCutoff;
+	}
+
+	// Light Limit Fix's three words for a light of ours: flags, cutoff, record. Initialised as it marks its own lights; the
+	// inverse-square flag and the cutoff only where it draws inverse square (its linear path reads no cutoff); no record
+	[[nodiscard]] inline std::array<std::uint32_t, 3> LlfWords(bool a_inverseSquare, float a_cutoff) noexcept
+	{
+		if (!a_inverseSquare) {
+			return { kIslInitialised, 0u, 0u };
+		}
+		return { kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(a_cutoff), 0u };
 	}
 
 	// one sRGB channel (0-1) as linear light

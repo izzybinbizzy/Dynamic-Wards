@@ -194,7 +194,7 @@ namespace Plugin
 			const bool isl = InverseSquare();
 			auto&      data = a_light->GetLightRuntimeData();
 			if (!isl && a_l.plain) {
-				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
+				data.diffuse = LightColor(a_color, false);  // linear lights (Vanilla, an ENB, a Community Shaders without inverse square): sRGB as it is
 				data.fade = a_l.plainFade * a_dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
 			} else {
@@ -205,19 +205,20 @@ namespace Plugin
 			// it writes the first two of the words below, so it goes first: written after them, every later tick ORed the flag onto
 			// the attenuation's float, which could read as Light Limit Fix's Disabled bit
 			a_light->SetLightAttenuation(data.radius.x);
-			if (!isl) {
+			if (!LightLimitFix()) {
 				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
-				// NiPointLight starts with a WHITE ambient. Under inverse square lighting these words carry its flags and cutoff.
+				// NiPointLight starts with a WHITE ambient. Under Light Limit Fix these words carry its flags and cutoff.
 				data.ambient = { data.diffuse.red * kAmbientRatio, data.diffuse.green * kAmbientRatio, data.diffuse.blue * kAmbientRatio };
 				gLastAmbient = data.ambient;
 				return;
 			}
-			// Community Shaders' flags, cutoff and light record in the three words before the color (LLFCommon::RuntimeLightDataExt).
-			// A light of our own, so Community Shaders set none of them: the words are ours whole, written as bytes. Initialised as
-			// Light Limit Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue
-			// (1.0) would read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the
-			// undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
-			const std::array<std::uint32_t, 3> words{ kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(CutoffFor(data.fade, a_l.reach, a_l.size)), 0u };
+			// Community Shaders' flags, cutoff and light record in the three words before the color (LLFCommon::RuntimeLightDataExt),
+			// read off every light whether it draws inverse square or not: an ambient color there would set its flag bits. A light of
+			// our own, so Community Shaders set none of them: the words are ours whole, written as bytes. Initialised as Light Limit
+			// Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue (1.0) would
+			// read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the undimmed fade Light
+			// Limit Fix's radius went below zero under ~11 % and the light went out
+			const auto words = LlfWords(isl, isl ? CutoffFor(data.fade, a_l.reach, a_l.size) : 0.0f);
 			std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 		}
 

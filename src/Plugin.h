@@ -180,7 +180,8 @@ namespace Plugin
 	void           ReadLighting();  // data load, before MakeArt
 	Lighting       LightingPick();
 	void           SetLightingPick(Lighting a_pick);  // devbench only, never saved
-	bool           InverseSquare();                   // CommunityShaders.dll is loaded
+	bool           InverseSquare();                   // CommunityShaders.dll is loaded and draws inverse square (its shader or Light Limit Fix's)
+	bool           LightLimitFix();                   // CommunityShaders.dll is loaded: every light carries Light Limit Fix's words
 	nlohmann::json LightingReport();
 	std::string    ModelKey(std::string_view a_model);        // lower case, back slashes, under the meshes folder
 	RE::NiColor    LightColor(Color a_color, bool a_linear);  // 0-1, sRGB or linear

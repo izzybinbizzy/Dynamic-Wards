@@ -5,7 +5,7 @@
 // Which lighting the game runs - found by the plugin itself, never picked.
 //
 //   Community Shaders   this plugin makes every ward light: the hand light and the dome light (DomeLights.cpp), inverse square
-//                       whenever Community Shaders runs
+//                       where Community Shaders draws it (its own shader, or one built into Light Limit Fix), else linear
 //   ENB                 an ENB light sprite inside each ward mesh, colored by Colors.cpp, and this plugin's hand and dome lights
 //                       as on Vanilla: the sprite alone barely lit the ground (the floor in front of her 18.5 -> 18.2 .. 22.7)
 //   Vanilla             as Community Shaders, in the game's own lighting (the house light, 178 / 1.14)
@@ -16,7 +16,8 @@
 //
 // COMMUNITY SHADERS' WORDS: Light Limit Fix reads the first three words of EVERY light's runtime data as its flags, cutoff and
 // record (LLFCommon::RuntimeLightDataExt; bit 9 Disabled), so whenever CommunityShaders.dll is loaded (Bottled and Open Shaders
-// keep the name) the lights are written in its words, never with an ambient color - whatever the pick says.
+// keep the name) the lights are written in its words, never with an ambient color - whatever the pick says. Inverse square only
+// where it draws it: Community Shaders 1.4.6 without its inverse square add-on reads every light as linear.
 
 #include "Plugin.h"
 
@@ -30,6 +31,10 @@ namespace Plugin
 	namespace
 	{
 		constexpr const char* kEffects11 = "Data/Shaders/Features/Effects11.ini";
+		constexpr const char* kIslShader = "Data/Shaders/InverseSquareLighting/InverseSquareLighting.hlsli";
+		// a Community Shaders that builds inverse square lights into Light Limit Fix (no separate shader file): its attenuation
+		// reads each light's InverseSquare flag
+		constexpr const char* kLlfAttenuation = "Data/Shaders/LightLimitFix/Attenuation.hlsli";
 		constexpr const char* kEnbFiles[] = { "enbseries.ini", "enblocal.ini" };
 		constexpr const char* kNames[] = { "Community Shaders", "ENB", "Vanilla" };
 
@@ -44,6 +49,16 @@ namespace Plugin
 		}
 
 		[[nodiscard]] bool CommunityShadersLoaded() { return REX::W32::GetModuleHandleA("CommunityShaders.dll") != nullptr; }
+
+		[[nodiscard]] bool IslBuiltIntoLightLimitFix()
+		{
+			std::ifstream in(kLlfAttenuation, std::ios::binary);
+			if (!in) {
+				return false;
+			}
+			const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+			return text.find("InverseSquare") != std::string::npos;
+		}
 
 		// an ENB that is running: a loaded module exports its SDK - d3d11.dll as usual, or any other name an injector gave it;
 		// nullopt when the module list could not be read, so the caller falls back to ENB's settings files. ENB's settings files
@@ -101,9 +116,12 @@ namespace Plugin
 
 	void ReadLighting()
 	{
+		const bool shaderFile = Exists(kIslShader);
+		const bool inLlf = IslBuiltIntoLightLimitFix();
 		gCs = CommunityShadersLoaded();
-		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not it
-		gIsl = gCs.load();
+		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not
+		// it, and a Community Shaders with neither shader draws every light linear
+		gIsl = gCs && (shaderFile || inLlf);
 		gE11 = Exists(kEffects11);
 		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
 		const auto running = EnbRunning();
@@ -116,9 +134,9 @@ namespace Plugin
 			SKSE::log::warn("lighting: the loaded modules could not be listed - ENB judged by its settings files");
 		}
 		SKSE::log::info(
-			"lighting: Automatic - {} (CommunityShaders.dll {}, ENB running {}, ENB "
+			"lighting: Automatic - {} (CommunityShaders.dll {}, inverse square shader {}, in Light Limit Fix {}, ENB running {}, ENB "
 			"settings in the game folder {}); Effects 11 {}; lights drawn {}",
-			kNames[static_cast<int>(gPick.load())], gCs ? "loaded" : "not loaded",
+			kNames[static_cast<int>(gPick.load())], gCs ? "loaded" : "not loaded", shaderFile ? "installed" : "not installed", inLlf ? "yes" : "no",
 			gEnbRunning ? "yes" : "no", gEnbFiles ? "yes" : "no", gE11 ? "installed" : "not installed", gIsl ? "inverse square" : "plain");
 	}
 
@@ -135,6 +153,11 @@ namespace Plugin
 	bool InverseSquare()
 	{
 		return gIsl.load();
+	}
+
+	bool LightLimitFix()
+	{
+		return gCs.load();
 	}
 
 	nlohmann::json LightingReport()
