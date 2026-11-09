@@ -92,7 +92,6 @@ namespace
 	// Reticle Arcs calls this on the main thread every frame and its interface has no way to stop it (ReticleArcsAPI.h): two values are read here
 	void Update(float, BarState& a_state)
 	{
-		const FrameCost::Scope cost{ 6, "Reticle Arcs' ward bar (each frame)" };
 		Plugin::Guarded("reticle arcs bar", [&]() {
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			++gAsked;
@@ -103,6 +102,11 @@ namespace
 			const float gave = left + std::max(taken, 0.0f);
 			// her effect list is walked only when a ward starts or ends: a hit moves what is left and what was taken, never their sum
 			const bool stale = gStale.exchange(false);
+			// no ward up and nothing changed: the idle path, two values read and nothing timed (the meter counts real work only)
+			if (!stale && gave == gGave && !gWard) {
+				return;
+			}
+			const FrameCost::Scope cost{ 6, "Reticle Arcs' ward bar (each frame)" };
 			if (stale || gave != gGave) {
 				gGave = gave;
 				gWard = gave > 0.0f ? WardUp(*player) : nullptr;

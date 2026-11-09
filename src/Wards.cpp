@@ -1599,7 +1599,6 @@ namespace Plugin
 		// his flag has flipped by the time his graph sends a posture event, so while a dome is lit such an event names him for a read
 		void NoteAnimationEvent(const RE::BSAnimationGraphEvent* a_event)
 		{
-			const FrameCost::Scope cost{ 7, "an actor's animation events (each)" };
 			Guarded("animation event", [a_event]() {
 				if (!a_event) {
 					return;
@@ -1612,7 +1611,9 @@ namespace Plugin
 				if (!block && !(DomeLit() && PostureTag(a_event->tag.c_str()))) {
 					return;
 				}
-				const auto* actor = a_event->holder ? a_event->holder->As<RE::Actor>() : nullptr;
+				// past the idle test: only a block or a lit dome's posture event is timed (the meter counts real work only)
+				const FrameCost::Scope cost{ 7, "an actor's animation events (each)" };
+				const auto*            actor = a_event->holder ? a_event->holder->As<RE::Actor>() : nullptr;
 				if (!actor) {
 					return;
 				}

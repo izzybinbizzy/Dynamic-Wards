@@ -110,7 +110,8 @@ namespace
 
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
 		{
-			// an actor that arrives with a ward readied, or leaves; only actors, so a cell's load names no door or plant
+			// an actor with a script or in an alias that arrives with a ward readied (the game sends this for no other);
+			// only actors, so a cell's load names no door or plant. Anyone's leaving: DomeLights.cpp BodySet
 			if (a_event && RE::TESForm::LookupByID<RE::Actor>(a_event->formID)) {
 				NoteHands(a_event->formID);
 			}
@@ -216,7 +217,6 @@ namespace
 		MakeArt();
 		ResolveFactions();
 		FindWards();
-		gTaskThread = std::this_thread::get_id();  // the game's main thread, which runs the data-load message and SKSE's tasks
 		ApplyAll(kWhyDataLoaded);
 		StartDomeLights();
 		GameEvents::Register();
@@ -246,6 +246,7 @@ namespace
 		case SKSE::MessagingInterface::kPostLoad:
 			InstallOthers();
 			InstallAnimationHook();
+			InstallBodyWatch();
 			InstallCopyPaint();
 			OfferToDevBench();
 			RegisterArcBar();

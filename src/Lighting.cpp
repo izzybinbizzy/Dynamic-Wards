@@ -5,7 +5,7 @@
 // Which lighting the game runs - found by the plugin itself, never picked.
 //
 //   Community Shaders   this plugin makes every ward light: the hand light and the dome light (DomeLights.cpp), inverse square
-//                       whenever Community Shaders runs
+//                       where Community Shaders draws it (its own shader, or one built into Light Limit Fix), else linear
 //   ENB                 an ENB light sprite inside each ward mesh, colored by Colors.cpp, and this plugin's hand and dome lights
 //                       as on Vanilla: the sprite alone barely lit the ground (the floor in front of her 18.5 -> 18.2 .. 22.7)
 //   Vanilla             as Community Shaders, in the game's own lighting (the house light, 178 / 1.14)
@@ -16,7 +16,8 @@
 //
 // COMMUNITY SHADERS' WORDS: Light Limit Fix reads the first three words of EVERY light's runtime data as its flags, cutoff and
 // record (LLFCommon::RuntimeLightDataExt; bit 9 Disabled), so whenever CommunityShaders.dll is loaded (Bottled and Open Shaders
-// keep the name) the lights are written in its words, never with an ambient color - whatever the pick says.
+// keep the name) the lights are written in its words, never with an ambient color - whatever the pick says. Inverse square only
+// where it draws it: Community Shaders 1.4.6 without its inverse square add-on reads every light as linear.
 
 #include "Plugin.h"
 
@@ -118,13 +119,14 @@ namespace Plugin
 		const bool shaderFile = Exists(kIslShader);
 		const bool inLlf = IslBuiltIntoLightLimitFix();
 		gCs = CommunityShadersLoaded();
-		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not it
-		gIsl = gCs.load();
+		// the light words are Light Limit Fix's, which runs inside Community Shaders: a leftover shader file without its DLL is not
+		// it, and a Community Shaders with neither shader draws every light linear
+		gIsl = gCs && (shaderFile || inLlf);
 		gE11 = Exists(kEffects11);
 		gEnbFiles = std::ranges::any_of(kEnbFiles, Exists);
 		const auto running = EnbRunning();
 		gEnbRunning = running.value_or(gEnbFiles.load());
-		// a shader file a running ENB sits beside is a leftover: Community Shaders only when its DLL is loaded or no ENB runs
+		// Community Shaders only when its DLL is loaded or no ENB runs
 		gSeen = gCs ? Lighting::kShaders : gEnbRunning ? Lighting::kEnb :
 		                                                 Lighting::kVanilla;
 		gPick = gSeen.load();
@@ -151,6 +153,11 @@ namespace Plugin
 	bool InverseSquare()
 	{
 		return gIsl.load();
+	}
+
+	bool LightLimitFix()
+	{
+		return gCs.load();
 	}
 
 	nlohmann::json LightingReport()

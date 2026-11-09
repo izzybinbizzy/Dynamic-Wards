@@ -86,7 +86,9 @@ namespace Plugin
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
 		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
 		RE::NiColor                                gLastAmbient{};
-		std::size_t                                gBadLines = 0;  // Dome Lights.txt lines left out (a number that did not read)
+		bool                                       gDomeWaiting = false;    // a dome that shows has a point not hung yet (the round only, under gLock)
+		std::atomic_bool                           gBodiesMatter{ false };  // a light of ours up, or a round reading bodies: a body let go with none ends nothing
+		std::size_t                                gBadLines = 0;           // Dome Lights.txt lines left out (a number that did not read)
 		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
 		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
@@ -192,7 +194,7 @@ namespace Plugin
 			const bool isl = InverseSquare();
 			auto&      data = a_light->GetLightRuntimeData();
 			if (!isl && a_l.plain) {
-				data.diffuse = LightColor(a_color, false);  // the game's own lighting (Vanilla, an ENB): an sRGB color, drawn as it is
+				data.diffuse = LightColor(a_color, false);  // linear lights (Vanilla, an ENB, a Community Shaders without inverse square): sRGB as it is
 				data.fade = a_l.plainFade * a_dim;
 				data.radius = { a_plainRadius, a_plainRadius, a_plainRadius };
 			} else {
@@ -203,19 +205,20 @@ namespace Plugin
 			// it writes the first two of the words below, so it goes first: written after them, every later tick ORed the flag onto
 			// the attenuation's float, which could read as Light Limit Fix's Disabled bit
 			a_light->SetLightAttenuation(data.radius.x);
-			if (!isl) {
+			if (!LightLimitFix()) {
 				// RE::Light's rule (Truman, LightData.cpp setNiPointLightAmbientAndDiffuse): ambient = diffuse x 0.1 - a new
-				// NiPointLight starts with a WHITE ambient. Under inverse square lighting these words carry its flags and cutoff.
+				// NiPointLight starts with a WHITE ambient. Under Light Limit Fix these words carry its flags and cutoff.
 				data.ambient = { data.diffuse.red * kAmbientRatio, data.diffuse.green * kAmbientRatio, data.diffuse.blue * kAmbientRatio };
 				gLastAmbient = data.ambient;
 				return;
 			}
-			// Community Shaders' flags, cutoff and light record in the three words before the color (LLFCommon::RuntimeLightDataExt).
-			// A light of our own, so Community Shaders set none of them: the words are ours whole, written as bytes. Initialised as
-			// Light Limit Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue
-			// (1.0) would read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the
-			// undimmed fade Light Limit Fix's radius went below zero under ~11 % and the light went out
-			const std::array<std::uint32_t, 3> words{ kIslFlag | kIslInitialised, std::bit_cast<std::uint32_t>(CutoffFor(data.fade, a_l.reach, a_l.size)), 0u };
+			// Community Shaders' flags, cutoff and light record in the three words before the color (LLFCommon::RuntimeLightDataExt),
+			// read off every light whether it draws inverse square or not: an ambient color there would set its flag bits. A light of
+			// our own, so Community Shaders set none of them: the words are ours whole, written as bytes. Initialised as Light Limit
+			// Fix marks its own lights (else it re-marks and logs ours each frame); no record - the clone's ambient blue (1.0) would
+			// read as one. The cutoff follows the DIMMED fade, so the reach holds while the light dims: off the undimmed fade Light
+			// Limit Fix's radius went below zero under ~11 % and the light went out
+			const auto words = LlfWords(isl, isl ? CutoffFor(data.fade, a_l.reach, a_l.size) : 0.0f);
 			std::memcpy(reinterpret_cast<std::byte*>(&data), words.data(), sizeof(words));
 		}
 
@@ -476,19 +479,20 @@ namespace Plugin
 		// the hands of the one actor an event named; one gone or with no 3D loses his lights
 		void HandsOf(RE::FormID a_id, RE::ShadowSceneNode* a_scene, bool a_on)
 		{
-			auto* actor = a_on ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
-			if (actor) {
-				TickActor(actor, actor->Get3D(false), gHands[a_id], a_scene);
-			}
+			auto*      actor = a_on ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
 			const auto it = gHands.find(a_id);
-			if (it == gHands.end()) {
-				return;
+			ActorHands none;
+			auto&      hands = it != gHands.end() ? it->second : none;
+			if (actor) {
+				TickActor(actor, actor->Get3D(false), hands, a_scene);
+			} else {
+				DropHand(hands.h[0], a_scene);
+				DropHand(hands.h[1], a_scene);
 			}
-			if (!actor) {
-				DropHand(it->second.h[0], a_scene);
-				DropHand(it->second.h[1], a_scene);
-			}
-			if (!it->second.h[0].light && !it->second.h[1].light) {
+			const bool lit = hands.h[0].light || hands.h[1].light;
+			if (it == gHands.end() && lit) {
+				gHands.emplace(a_id, std::move(none));
+			} else if (it != gHands.end() && !lit) {
 				gHands.erase(it);
 			}
 		}
@@ -540,11 +544,17 @@ namespace Plugin
 				}
 				return !keep;
 			});
+			const auto allHung = [](const Showing& a_s) {
+				return static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == a_s.effect; })) >= a_s.spec->points.size();
+			};
+			gDomeWaiting = false;
 			for (const auto& s : live) {
 				// a dome the scene gave only part of its lights keeps them: the missing points are tried again at the next round
-				const auto hung = static_cast<std::size_t>(std::ranges::count_if(gLit, [&](const Lit& a_lit) { return a_lit.effect == s.effect; }));
-				if (hung < s.spec->points.size()) {
+				if (!allHung(s)) {
 					Hang(s, a_scene, shadowOn);
+					if (!allHung(s)) {
+						gDomeWaiting = true;
+					}
 				}
 			}
 			// read once a round, not once a light
@@ -608,11 +618,13 @@ namespace Plugin
 			}
 			{
 				std::scoped_lock l{ gLock };
+				// before any body is read: a body let go after this is named, one let go before it is seen gone
+				gBodiesMatter = true;
 				if (again) {
 					DropAll(scene);
 				}
-				// an event of an actor may be the wearer's 3D arriving or his sneaking changing
-				if (domes || !hands.empty()) {
+				// an event of an actor may be a wearer's 3D arriving or his sneaking changing: only with a dome of ours up or waiting. A new one says so itself
+				if (domes || (!hands.empty() && (!gLit.empty() || gDomeWaiting))) {
 					ReadDomes(scene, lists, gone);
 				}
 				const bool on = WardLightOn();
@@ -623,6 +635,7 @@ namespace Plugin
 						HandsOf(id, scene, on);
 					}
 				}
+				gBodiesMatter = !gHands.empty() || !gLit.empty();
 			}
 			ReleaseOld();
 		}
@@ -692,6 +705,36 @@ namespace Plugin
 			// a lock or memory the system could not give: his next event names him again
 		}
 		QueueRound();
+	}
+
+	namespace
+	{
+		// An actor's 3D let go or set, at his own slot (Light Placer's way of hooking a reference's 3D, powerof3, GPL-3.0, with his permission). The
+		// game's load event names only a reference with a script or in an alias: for anyone else nothing says he left, and his lights would
+		// stay in the scene where he stood. Every actor passes here, so with nothing lit a body going stops at one read. Any thread: only noted
+		template <class T>
+		struct BodySet
+		{
+			static void thunk(T* a_this, RE::NiAVObject* a_object, bool a_queue3DTasks)
+			{
+				func(a_this, a_object, a_queue3DTasks);
+				if (a_object || gBodiesMatter) {
+					NoteHands(a_this->GetFormID());
+				}
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+			static void                                    Install()
+			{
+				REL::Relocation<std::uintptr_t> vtbl{ T::VTABLE[0] };
+				func = vtbl.write_vfunc(0x6C, thunk);
+			}
+		};
+	}
+
+	void InstallBodyWatch()
+	{
+		BodySet<RE::Character>::Install();
+		BodySet<RE::PlayerCharacter>::Install();
 	}
 
 	void StartDomeLights()
