@@ -280,6 +280,10 @@ namespace Plugin
 				if (a_self->actor) {
 					const FrameCost::Scope cost{ 3, "a caster's cast ends or his spell changes (each)" };
 					NoteHands(a_self->actor->GetFormID());
+					// her hands coming out with a spell send no SKSE draw: art a script swapped since her last look is dressed now
+					if (a_self->actor->IsPlayerRef()) {
+						Guarded("her caster", []() { (void)QueueArtCheck("as her hands changed"); });
+					}
 				}
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -371,10 +375,9 @@ namespace Plugin
 		if (!art || a_caster->castingArtData.attachedArt) {
 			return;
 		}
-		const auto  ours = gOurs.find(art);
-		auto*       actor = a_caster->actor;
-		const auto* spell = a_caster->currentSpell;
-		if (ours == gOurs.end() || !actor || actor->IsPlayerRef() || !spell) {
+		const auto ours = gOurs.find(art);
+		auto*      actor = a_caster->actor;
+		if (ours == gOurs.end() || !actor || actor->IsPlayerRef()) {
 			return;
 		}
 		// the player's look keeps the art he holds; a look of its own wears its art when installed; Vanilla the game's
@@ -385,11 +388,16 @@ namespace Plugin
 		}
 		RE::BGSArtObject* swap = look;
 		if (!look) {
+			// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
+			const auto               source = static_cast<std::size_t>(a_caster->castingSource);
+			const auto*              spell = source < RE::Actor::SlotTypes::kTotal ? actor->GetActorRuntimeData().selectedSpells[source] : nullptr;
 			const RE::EffectSetting* effect = nullptr;
-			for (const auto* e : spell->effects) {
-				if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
-					effect = e->baseEffect;
-					break;
+			if (spell) {
+				for (const auto* e : spell->effects) {
+					if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
+						effect = e->baseEffect;
+						break;
+					}
 				}
 			}
 			auto* game = effect ? GameArt(effect, art) : nullptr;
