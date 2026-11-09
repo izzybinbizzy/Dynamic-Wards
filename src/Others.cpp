@@ -86,29 +86,11 @@ namespace Plugin
 		std::atomic<std::size_t> gSwapped{ 0 };
 		std::atomic<std::size_t> gHandSwapped{ 0 };
 
-		// the ward an art effect belongs to: a dome through its active effect; the hand's casting art has none, so the spell the
-		// caster holds whose effect wears that art
-		const RE::EffectSetting* EffectOf(const RE::ModelReferenceEffect* a_self, RE::TESObjectREFR* a_ref)
+		// the ward an art effect belongs to, through its active effect; a hand's casting art never comes here (HandCloneHook)
+		const RE::EffectSetting* EffectOf(const RE::ModelReferenceEffect* a_self)
 		{
-			if (const auto* c = skyrim_cast<RE::ActiveEffectReferenceEffectController*>(a_self->controller); c && c->effect && c->effect->effect) {
-				return c->effect->effect->baseEffect;
-			}
-			auto* actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
-			if (!actor) {
-				return nullptr;
-			}
-			for (auto* caster : actor->GetActorRuntimeData().magicCasters) {
-				const auto* spell = caster ? caster->currentSpell : nullptr;
-				if (!spell) {
-					continue;
-				}
-				for (auto* e : spell->effects) {
-					if (e && e->baseEffect && e->baseEffect->data.castingArt == a_self->artObject) {
-						return e->baseEffect;
-					}
-				}
-			}
-			return nullptr;
+			const auto* c = skyrim_cast<RE::ActiveEffectReferenceEffectController*>(a_self->controller);
+			return c && c->effect && c->effect->effect ? c->effect->effect->baseEffect : nullptr;
 		}
 
 		RE::BGSArtObject* GameArt(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art)
@@ -193,7 +175,7 @@ namespace Plugin
 						if (it != gOurs.end()) {
 							ours = it->second;
 						} else if (ref && ref.get() != RE::PlayerCharacter::GetSingleton()) {
-							effect = EffectOf(a_self, ref.get());
+							effect = EffectOf(a_self);
 							ours = effect ? GameOurs(effect, a_self->artObject) : std::nullopt;
 						}
 						if (!ours) {
@@ -206,7 +188,7 @@ namespace Plugin
 						const auto        slot = TheirSlot(ref.get(), ours->row);
 						RE::BGSArtObject* swap = nullptr;
 						if (slot >= kSlots) {
-							swap = GameArt(effect ? effect : EffectOf(a_self, ref.get()), a_self->artObject);
+							swap = GameArt(effect ? effect : EffectOf(a_self), a_self->artObject);
 						} else if (slot >= kRows) {
 							swap = LookArt(slot - kRows, ours->kind);
 						}
@@ -280,9 +262,11 @@ namespace Plugin
 				if (a_self->actor) {
 					const FrameCost::Scope cost{ 3, "a caster's cast ends or his spell changes (each)" };
 					NoteHands(a_self->actor->GetFormID());
-					// her hands coming out with a spell send no SKSE draw: art a script swapped since her last look is dressed now
-					if (a_self->actor->IsPlayerRef()) {
-						Guarded("her caster", []() { (void)QueueArtCheck("as her hands changed"); });
+					// a spell selected with her hands out sends no SKSE draw: art a script swapped since her last look is dressed now
+					if constexpr (Slot == 0x11) {
+						if (a_self->actor->IsPlayerRef()) {
+							Guarded("her caster", []() { (void)QueueArtCheck("as her spell was selected"); });
+						}
 					}
 				}
 			}
@@ -292,6 +276,26 @@ namespace Plugin
 			{
 				REL::Relocation<std::uintptr_t> vtbl{ RE::VTABLE_ActorMagicCaster[0] };
 				func = vtbl.write_vfunc(Slot, thunk);
+			}
+		};
+
+		// Her hands start to come out: every draw passes this slot, and a spell's sends no SKSE draw. Art a script swapped since her last look is dressed
+		// before the game reads it for her hands. Not on VR, whose slot is not read here: the select slot above does it there, later in the draw
+		struct HerDraw
+		{
+			static void thunk(RE::PlayerCharacter* a_self, bool a_draw)
+			{
+				func(a_self, a_draw);
+				if (a_draw) {
+					Guarded("her draw", []() { (void)QueueArtCheck("as her hands came out"); });
+				}
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+
+			static void Install()
+			{
+				REL::Relocation<std::uintptr_t> vtbl{ RE::PlayerCharacter::VTABLE[0] };
+				func = vtbl.write_vfunc(0xA6, thunk);
 			}
 		};
 
@@ -423,6 +427,9 @@ namespace Plugin
 		CasterHook<0x7>::Install();
 		CasterHook<0x11>::Install();
 		CasterHook<0x12>::Install();
+		if (!REL::Module::IsVR()) {
+			HerDraw::Install();
+		}
 		SKSE::log::info("other casters: the art effect hooks are in");
 		HandCloneHook::Install();
 	}
