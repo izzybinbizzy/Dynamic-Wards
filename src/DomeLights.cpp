@@ -52,8 +52,7 @@ namespace Plugin
 		{
 			const RE::ModelReferenceEffect* effect{ nullptr };
 			RE::NiPointer<RE::NiNode>       parent;  // held, so a body the game lets go of never leaves the light a dangling parent
-			RE::NiPointer<RE::NiPointLight> light;
-			RE::NiPointer<RE::BSLight>      bs;
+			RE::NiPointer<RE::NiPointLight> light;   // no BSLight kept: the scene's lists hold it (Drop)
 			RE::ObjectRefHandle             target;
 			std::size_t                     row{ 0 };
 			const Spec*                     spec{ nullptr };
@@ -65,8 +64,7 @@ namespace Plugin
 		struct Hand1st
 		{
 			RE::NiPointer<RE::NiNode>       node;
-			RE::NiPointer<RE::NiPointLight> light;
-			RE::NiPointer<RE::BSLight>      bs;
+			RE::NiPointer<RE::NiPointLight> light;  // no BSLight kept: the scene's lists hold it (Drop)
 		};
 
 		std::mutex                            gLock;
@@ -225,7 +223,7 @@ namespace Plugin
 		// it. nullptr when the game could not make it or the scene refused it (then it is taken off again). Main thread.
 		template <class F>
 		RE::NiPointLight* Make(RE::NiNode* a_parent, const char* a_name, const RE::NiPoint3& a_at, RE::ShadowSceneNode* a_scene,
-			RE::NiPointer<RE::BSLight>& a_bs, bool a_shadow, F&& a_dress)
+			bool a_shadow, F&& a_dress)
 		{
 			auto* light = CloneMaster();
 			if (!light) {
@@ -248,8 +246,7 @@ namespace Plugin
 			params.falloff = 1.0f;
 			params.nearDistance = 5.0f;
 			params.depthBias = 1.0f;
-			a_bs.reset(a_scene->AddLight(light, params));
-			if (!a_bs) {
+			if (!a_scene->AddLight(light, params)) {
 				a_parent->DetachChild(light);
 				return nullptr;
 			}
@@ -306,29 +303,45 @@ namespace Plugin
 				if (std::ranges::any_of(gLit, [&](const Lit& a_lit) { return a_lit.effect == a_s.effect && a_lit.point == i; })) {
 					continue;
 				}
-				const auto&                at = a_s.spec->points[i];
-				RE::NiPointer<RE::BSLight> bs;
-				bool                       shadowable = playerDome && i == 0;
-				bool                       shadow = shadowable && a_shadowOn;
-				const auto                 dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec, LightDim()); };
-				auto*                      light = Make(parent, kLightName, at, a_scene, bs, shadow, dress);
+				const auto& at = a_s.spec->points[i];
+				bool        shadowable = playerDome && i == 0;
+				bool        shadow = shadowable && a_shadowOn;
+				const auto  dress = [&](RE::NiPointLight* a_light) { DressDome(a_light, *color, *a_s.spec, LightDim()); };
+				auto*       light = Make(parent, kLightName, at, a_scene, shadow, dress);
 				if (!light && shadow) {
 					// the renderer had no shadow map left: a plain light, and the switch leaves this one alone until the next cast
 					shadow = shadowable = false;
-					light = Make(parent, kLightName, at, a_scene, bs, false, dress);
+					light = Make(parent, kLightName, at, a_scene, false, dress);
 				}
 				if (!light) {
 					return;
 				}
-				gLit.push_back({ a_s.effect, RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs), a_s.target, a_s.row,
+				gLit.push_back({ a_s.effect, RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), a_s.target, a_s.row,
 					a_s.spec, shadow, shadowable, i });
 			}
 		}
 
-		void Drop(RE::NiPointLight* a_light, RE::NiPointer<RE::BSLight>& a_bs, RE::ShadowSceneNode* a_scene)
+		// Out of the scene, found by the light. No BSLight of ours is kept: when a loading screen empties the scene's lists it goes there and then, and no holder
+		// keeps it on the floors it lit. The game's own call walks the active and shadow lists; one added this round is still in the add queue
+		void Drop(RE::NiPointLight* a_light, RE::ShadowSceneNode* a_scene)
 		{
-			if (a_scene && a_bs) {
-				a_scene->RemoveLight(a_bs);
+			if (a_scene && a_light) {
+				RE::NiPointer<RE::BSLight> queued;
+				{
+					auto&               data = a_scene->GetRuntimeData();
+					RE::BSSpinLockGuard locker(data.lightQueueLock);
+					for (const auto& bs : data.lightQueueAdd) {
+						if (bs && bs->light.get() == a_light) {
+							queued = bs;
+							break;
+						}
+					}
+				}
+				if (queued) {
+					a_scene->RemoveLight(queued);
+				} else {
+					a_scene->RemoveLight(a_light);
+				}
 			}
 			if (a_light && a_light->parent) {
 				a_light->parent->DetachChild(a_light);
@@ -396,7 +409,7 @@ namespace Plugin
 
 		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
-			Drop(a_h.light.get(), a_h.bs, a_scene);
+			Drop(a_h.light.get(), a_scene);
 			a_h = {};
 		}
 
@@ -426,9 +439,8 @@ namespace Plugin
 				if (h.light) {
 					DressHand(h.light.get(), *color);
 				} else {
-					RE::NiPointer<RE::BSLight> bs;
-					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
-						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
+					if (auto* light = Make(parent, kHandName, {}, a_scene, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light) };
 						++gHandsMade;
 					}
 				}
@@ -539,7 +551,7 @@ namespace Plugin
 					return a_s.effect == a_lit.effect && a_s.row == a_lit.row && a_s.parent.get() == a_lit.parent.get();
 				});
 				if (!keep) {
-					Drop(a_lit.light.get(), a_lit.bs, a_scene);
+					Drop(a_lit.light.get(), a_scene);
 				}
 				return !keep;
 			});
@@ -582,7 +594,7 @@ namespace Plugin
 		void DropAll(RE::ShadowSceneNode* a_scene)
 		{
 			for (auto& lit : gLit) {
-				Drop(lit.light.get(), lit.bs, a_scene);
+				Drop(lit.light.get(), a_scene);
 			}
 			gLit.clear();
 			for (auto& [id, a] : gHands) {
