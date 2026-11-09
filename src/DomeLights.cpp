@@ -86,7 +86,7 @@ namespace Plugin
 		std::atomic<DomeMode>                      gMode{ DomeMode::kAuto };
 		std::atomic_bool                           gShadowTest{ false };  // devbench's domeShadow: the dome lights cast shadows (a trial)
 		RE::NiColor                                gLastAmbient{};
-		bool                                       gDomeWaiting = false;    // gLock: a dome that shows has a point not hung yet
+		std::atomic_bool                           gDomeWaiting{ false };   // a dome that shows has a point not hung yet
 		std::atomic_bool                           gBodiesMatter{ false };  // a light of ours up, or a round reading bodies: a body let go with none ends nothing
 		std::size_t                                gBadLines = 0;           // Dome Lights.txt lines left out (a number that did not read)
 		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
@@ -551,7 +551,9 @@ namespace Plugin
 				// a dome the scene gave only part of its lights keeps them: the missing points are tried again at the next round
 				if (!allHung(s)) {
 					Hang(s, a_scene, shadowOn);
-					gDomeWaiting = gDomeWaiting || !allHung(s);
+					if (!allHung(s)) {
+						gDomeWaiting = true;
+					}
 				}
 			}
 			// read once a round, not once a light
@@ -728,14 +730,14 @@ namespace Plugin
 		};
 
 		// A queued load stores a character's body with no slot call and no event; the game then updates his alpha through this slot, on the main thread
-		// (1.6.1170: id 13015 / 13005 -> 13355, read in the exe). One who arrives with his hands out is named here, anyone else stops at two reads.
+		// (1.6.1170: id 13015 / 13005 -> 13355, read in the exe). One who arrives with his hands out, or with a dome waiting for a body, is named here.
 		// Not on VR, whose slot is not read here: there he is named at his next action
 		struct BodyStored
 		{
 			static void thunk(RE::Character* a_this)
 			{
 				func(a_this);
-				if (a_this->AsActorState()->IsWeaponDrawn() && a_this->Get3D(false)) {
+				if ((gDomeWaiting || a_this->AsActorState()->IsWeaponDrawn()) && a_this->Get3D(false)) {
 					NoteHands(a_this->GetFormID());
 				}
 			}
