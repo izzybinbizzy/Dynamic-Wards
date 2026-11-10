@@ -1,10 +1,11 @@
-// Dynamic Wards - tests for src/WardMath.h and src/SettingsText.h (no game needed).
+// Dynamic Wards - tests for src/WardMath.h and src/SettingsText.h, plus the shared FloorLightChecks.h (no game needed).
 // Copyright (C) 2026 izzydoingit. GPL-3.0-or-later.
 //
 // PC Runner\plugin build.py dw builds and runs them (xmake target testwards), then again under clang's address and
 // undefined-behavior checkers. The run fails when a check fails, AND when fewer checks ran than kFloor (a test that stopped
 // part way proves nothing - Illuminated's fade tests count theirs the same way).
 
+#include "FloorLightChecks.h"
 #include "SettingsText.h"
 #include "WardMath.h"
 
@@ -33,7 +34,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 300 + 8 + 8;
+	constexpr int kFloor = 300 + 8 + 8 + FloorLightChecks::kCount;
 
 	using namespace Plugin;
 
@@ -663,6 +664,7 @@ int main()
 	ScreenColor();
 	HandClone();
 	Posture();
+	FloorLightChecks::Run(Check);
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
 		std::printf("FAIL: only %d checks ran, under the floor of %d - a test stopped part way\n", gPassed, kFloor);
