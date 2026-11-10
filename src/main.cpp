@@ -21,10 +21,13 @@
 //   Menu.cpp           the SKSE Menu Framework pages              Papyrus.cpp  DynamicWards.FlashFor
 //   DevBench.cpp       DevBench's inspect and control (optional)   Text.cpp     form names, form lookups
 //   Arcs.cpp           the ward's strength as a Reticle Arcs bar (its ReticleArcsAPI.h, MIT, copied unchanged)
-//   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h, RuntimeGuard.h and
-//                      FrameCost.h (what each pass costs) are copies of Tools\Shared Plugin Code, word for word
-//   tests\testwards.cpp the off-game tests of WardMath.h and SettingsText.h, built and run by every SE build of the plugin
+//   SKSEMenuFramework.h, DevBenchAPI.*  those mods' own files; DevBenchGlue.h, MenuStyle.h, Translation.h, RuntimeGuard.h,
+//                      FrameCost.h (what each pass costs) and FloorLight* (the Floor Light Fix our lighting mods carry) are copies
+//                      of Tools\Shared Plugin Code, word for word
+//   tests\testwards.cpp the off-game tests of WardMath.h, SettingsText.h and the shared FloorLightChecks.h, built and run by every
+//                      SE build of the plugin
 
+#include "FloorLightFix.h"
 #include "Plugin.h"
 #include "RuntimeGuard.h"
 #include "Translation.h"
@@ -281,12 +284,15 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::InitInfo info{};
-	info.trampoline = true;  // the hand art hook (Others.cpp)
-	info.trampolineSize = 14;
+	// the trampoline holds the hand art hook (Others.cpp) and the Floor Light Fix's two
+	info.trampoline = true;
+	info.trampolineSize = 14 + FloorLightFix::kTrampolineBytes;
 	SKSE::Init(a_skse, info);
 	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
 		return true;
 	}
+	// any light the scene erases stays on the floors it lit while anything holds it, a ward's too: the shared fix clears it first
+	FloorLightFix::Install();
 	// the version the DLL declares (xmake.lua set_version), never a typed number - 3.1's log still said "3.0"
 	const auto* decl = SKSE::PluginDeclaration::GetSingleton();
 	const auto  ver = decl ? std::format("{}.{}", decl->GetVersion().major(), decl->GetVersion().minor()) : std::string("?");
