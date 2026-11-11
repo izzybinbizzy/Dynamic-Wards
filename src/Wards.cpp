@@ -70,7 +70,7 @@ namespace Plugin
 		constexpr const char*   kLightsGlobal = "DynamicWardsLights";    // the dome lights (Colored ward lights)
 		constexpr const char*   kHandGlobal = "DynamicWardsHandLight";   // the hand light (Ward casting light)
 		constexpr const char*   kPresentGlobal = "DynamicWardsPresent";  // always 1: the light mods' ward lights step down
-		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight - Spell Addon: casting art moved, find the hand lights again
+		constexpr std::uint32_t kArtChanged = 'DWAC';                    // to RELight: casting art moved, find the hand lights again
 		// the two applies made in the background (CheckArt), named once: ApplyAll keeps the hands' look for the menu
 		constexpr const char* kWhyArtSwapped = "art swapped by another mod";
 		constexpr const char* kWhyUnlock = "the 360 unlock changed";
@@ -1058,15 +1058,9 @@ namespace Plugin
 			out.artChanged = c.art != 0;
 			out.castChanged = std::move(castChanged);
 			for (auto& t : gTargets) {
-				// HIS REPORT, 2026-09-24: a white flash on the first cast, a light that "starts strong then weakens", a hand light
-				// too big beside his other casting art. The silent row fires with EVERY vanilla ward and kept the game's white
-				// ward light, a second light on the hand; it never has one now. Under Light Placer a dressed ward's own light goes
-				// too - our config lights the hand in the ward's color, behind the Ward casting light switch (kHandGlobal).
-				// Under RE::Light the effect's light IS the colored hand light (RELight - Spell Addon points it), so the switch
-				// decides it. A Vanilla row only gets back a light the switch took.
-				// The lighting (Lighting.cpp): where this plugin makes the hand light itself (Vanilla, or
-				// no light framework loaded) a colored ward casts with the game's ward light in its own color. Since 2026-10-06
-				// every pick (ENB too) gets this plugin's hand light, so a dressed ward's own light always goes.
+				// The silent row fires with every vanilla ward: the game's white ward light on it would be a second light on the hand, so it never
+				// has one. A dressed ward's own light goes too: this plugin hangs the hand light on every lighting pick (DomeLights.cpp). A Vanilla
+				// row only gets back a light the switch took.
 				auto&       slot = t.effect->data.light;
 				auto* const before = slot;
 				std::size_t quiet = 0;
@@ -1081,9 +1075,8 @@ namespace Plugin
 						}
 						// another caster on the Vanilla look gets a hand light in this light's color (DomeLights.cpp)
 						NoteTheirLight(t.effect, t.takenLight ? t.takenLight : t.ownLight);
-						// 2026-10-05 (his report: the ward lit the caster but not the ground): the game's casting light never reaches
-						// the land, so DomeLights.cpp hangs the hand light itself on every caster (behind the same switch) and the
-						// effect carries none - two lights on one hand would double the caster
+						// the game's casting light never reaches the land, so DomeLights.cpp hangs the hand light itself on every caster and the
+						// effect carries none: two lights on one hand would double the caster
 						slot = nullptr;
 					} else {
 						// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
