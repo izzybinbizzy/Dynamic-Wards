@@ -15,6 +15,7 @@
 #include <istream>
 #include <ostream>
 #include <string>
+#include <utility>
 
 namespace Plugin
 {
@@ -221,7 +222,12 @@ namespace Plugin
 		std::array<int, kShieldRows.size()> oldSwitch{ -1, -1, -1 };  // the 2026-10-08 on / off keys, when the file has them
 		std::array<int, kShieldRows.size()> picks{ -1, -1, -1 };      // the dome picks the file has
 		bool                                keepRunes = false;        // 4.0's one switch: every rank ward kept Strange Runes' look
+		bool                                first = true;
 		while (a_in && std::getline(a_in, line)) {
+			// a file saved with a UTF-8 mark: left on, a [Settings] heading on its first line would not read as one, and the section would be lost
+			if (std::exchange(first, false) && line.starts_with("\xEF\xBB\xBF")) {
+				line.erase(0, 3);
+			}
 			line = Trim(line);
 			if (line.empty() || line[0] == ';' || line[0] == '#') {
 				continue;

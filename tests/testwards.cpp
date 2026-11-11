@@ -34,7 +34,7 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 300 + 8 + 8 + FloorLightChecks::kCount;
+	constexpr int kFloor = 300 + 8 + 8 + 3 + FloorLightChecks::kCount;
 
 	using namespace Plugin;
 
@@ -330,6 +330,10 @@ namespace
 		CHECK(LookFor(false, true, LookOfToken("Thalmor")) == LookOfToken("Thalmor") && LookFor(false, true, kLooks) == kEnemies);
 		CHECK(LookFor(false, false, kLooks) == kNeutral && LookFor(false, false, kEnemies) == kNeutral);
 		CHECK(SlotToken(kRows) == "Followers" && SlotToken(kSlots - 1) == "HostileMages" && SlotToken(kSlots).empty() && SlotToken(0) == "Novice");
+		// a file saved with a UTF-8 mark still reads its first heading; a mark anywhere else is not one
+		CHECK(Read("\xEF\xBB\xBF[Settings]\nOpacity=40\n").opacity == 40);
+		CHECK(Read("\xEF\xBB\xBF; a note\n[Settings]\nOpacity=40\n").opacity == 40);
+		CHECK(Read("[Others]\n\xEF\xBB\xBF[Settings]\nOpacity=40\n").opacity == 100);
 		CHECK(Read("[Settings]\nDomeColorBoost=500\n").domeBoost == 100);
 		CHECK(Read("[Settings]\nDomeColorBoost=-5\n").domeBoost == 0);
 		CHECK(none.ladder == Color{ 0x2468FF } && none.stages == 3 && !none.reversed);

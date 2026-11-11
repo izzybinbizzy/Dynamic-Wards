@@ -72,9 +72,8 @@ namespace Plugin
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
 		std::vector<Lit>                      gLit;
-		// every actor casting one of our wards: a light on each casting hand (his order 2026-10-05: first person on every pick,
-		// and the light must reach the GROUND - the game's casting light lit the caster but not the land, so on the picks where
-		// this plugin makes the lights it hangs the hand light itself, made like the dome light: affectLand on)
+		// every actor with a light of ours on a hand: the light must reach the ground, which the game's casting light does not, so it is made
+		// like the dome light, affectLand on
 		struct ActorHands
 		{
 			std::array<Hand1st, 2> h{};
@@ -89,9 +88,9 @@ namespace Plugin
 		bool                                       gDomeWaiting = false;    // a dome that shows has a point not hung yet (the round only, under gLock)
 		std::atomic_bool                           gBodiesMatter{ false };  // a light of ours up, or a round reading bodies: a body let go with none ends nothing
 		std::size_t                                gBadLines = 0;           // Dome Lights.txt lines left out (a number that did not read)
-		// each dome art object's light and row, found once (ModelKey made a string per effect per tick)
+		// each dome art object's light and row, found once
 		std::unordered_map<const RE::BGSArtObject*, std::pair<const Spec*, std::size_t>> gDomeOf;
-		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row (every hand, every tick)
+		std::unordered_map<const RE::BGSArtObject*, std::size_t>                         gRowOfArt;  // the same for a casting art's row
 
 		// what the next round reads, noted on any thread by the game's events and hooks; one round is queued at a time
 		std::mutex                                   gNoteLock;
@@ -202,7 +201,7 @@ namespace Plugin
 				data.fade = a_l.fade * a_dim;
 				data.radius = { a_l.reach, a_l.reach, a_l.size };
 			}
-			// it writes the first two of the words below, so it goes first: written after them, every later tick ORed the flag onto
+			// it writes the first two of the words below, so it goes first: written after them, a later round would OR the flag onto
 			// the attenuation's float, which could read as Light Limit Fix's Disabled bit
 			a_light->SetLightAttenuation(data.radius.x);
 			if (!LightLimitFix()) {
@@ -352,8 +351,8 @@ namespace Plugin
 		// the row of the ward a hand casts, or kRows: while cast (charging, ready, held) the caster's spell; while only readied
 		// (the casting art shows, nothing cast yet) the spell equipped in that hand, hands drawn
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
-		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
-		// above found no ward, so firing the staff keeps the light; read once per actor and tick (a_alwaysOn)
+		// as an ability while held): that ward's row. Asked after the spell
+		// above found no ward, so firing the staff keeps the light; read once per actor and round (a_alwaysOn)
 		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
@@ -388,7 +387,7 @@ namespace Plugin
 			return kRows;
 		}
 
-		// made on the first tick, after data load (the game's string cache is up by then)
+		// made on the first round, after data load (the game's string cache is up by then)
 		const RE::BSFixedString& MagicNode(std::size_t a_slot)
 		{
 			static const std::array<RE::BSFixedString, 2> names{ RE::BSFixedString(kMagicNodes[0]), RE::BSFixedString(kMagicNodes[1]) };
@@ -436,11 +435,9 @@ namespace Plugin
 			}
 		}
 
-		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too).
-		// Always under the THIRD-person body's magic nodes, first person included - MEASURED 2026-10-07
-		// on ENB (a user's report "the ENB light in first person did not work"): the same hand light hung under the
-		// first-person skeleton's magic nodes sat right (in front of her at camera height) yet lit nothing - the ground ON /
-		// OFF / ON 45.6 / 44.2 / 45.4 - while under the third-person nodes it doubled the ground (117.9 / 57.5 / 117.9).
+		// The hand lights: on every actor casting one of our wards, the player included, on every pick (ENB too). Always under the
+		// THIRD-person body's magic nodes, first person included: on ENB the same light under the first-person skeleton's nodes sat right
+		// yet lit nothing (the ground ON / OFF / ON 45.6 / 44.2 / 45.4), and under the third-person nodes it doubled the ground (117.9 / 57.5 / 117.9).
 		void TickHands(RE::ShadowSceneNode* a_scene, bool a_on)
 		{
 			for (auto& [id, a] : gHands) {
@@ -466,13 +463,14 @@ namespace Plugin
 					}
 				}
 			}
+			// an actor with no light keeps no entry: an entry is what says a body let go matters (gBodiesMatter)
 			std::erase_if(gHands, [&](auto& a_entry) {
 				auto& a = a_entry.second;
 				if (!a.seen) {
 					DropHand(a.h[0], a_scene);
 					DropHand(a.h[1], a_scene);
 				}
-				return !a.seen && !a.h[0].light && !a.h[1].light;
+				return !a.h[0].light && !a.h[1].light;
 			});
 		}
 
@@ -614,7 +612,10 @@ namespace Plugin
 			{
 				std::scoped_lock l{ gNoteLock };
 				hands.swap(gNotedHands);
-				gone.swap(gGone);
+				// a name noted before its flag went up waits for the round that flag queues: taken with no read of the domes, it would be lost
+				if (domes) {
+					gone.swap(gGone);
+				}
 			}
 			{
 				std::scoped_lock l{ gLock };
