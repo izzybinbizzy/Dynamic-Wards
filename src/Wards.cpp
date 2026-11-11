@@ -44,7 +44,7 @@ namespace Plugin
 			{ "Reman", "LegacyoftheDragonborn.esm", 0x124E5B },
 			{ "Spellbreaker", "Artificer.esp", 0x00094C },
 			{ "Spellbreaker", "Artificer.esp", 0x00094D },
-			// Reliquary of Myth's Spellbreaker (its own ability ward, 100 Ward Power, the game's ward art) - as Artificer's (3.4)
+			// Reliquary of Myth's Spellbreaker (its own ability ward, 100 Ward Power, the game's ward art) - as Artificer's
 			{ "Spellbreaker", "Reliquary of Myth.esp", 0x051867 },
 			{ "Vampire", "Better Vampires.esp", 0x47179D },
 			{ "Vampire", "Better Vampires.esp", 0x4717A0 },
@@ -83,7 +83,7 @@ namespace Plugin
 			RE::BGSReferenceEffect* flash = nullptr;
 			// a rank row's looping copies (the build's `worn` meshes, on Magic\BeginLoopEnd.hkx) for an always-on ward: the cast
 			// meshes' graph waits for a cast an item's constant effect never makes, so only the idle centre showed and the outer
-			// layers were missing - the shields' old bug (his report on the Staff of Magnus, 3.4). The shield rows' own meshes
+			// layers were missing. The shield rows' own meshes
 			// are already looping copies.
 			RE::BGSArtObject* wornHand = nullptr;
 			RE::BGSArtObject* wornDome = nullptr;
@@ -129,8 +129,8 @@ namespace Plugin
 		std::atomic_bool        gHas360{ false };       // 360 Ward.esp loaded AND its Universal Patch
 		bool                    gHas360Plugin = false;  // 360 Ward.esp alone (the menu says what is missing)
 		// our 360 domes are installed (any row's): the installer puts them in only when 360 Ward.esp was in the plugin list, so a
-		// player who adds 360 Ward later has the plugin and the patch but no 360 dome to wear - the outside review's "360 menu choice
-		// shown without the 360 meshes" (3.5: the menu then says how to get them, and never offers a choice that changes nothing)
+		// player who adds 360 Ward later has the plugin and the patch but no 360 dome to wear: the menu then says
+		// how to get them, and never offers a choice that changes nothing
 		std::atomic_bool                                                 gHas360Meshes{ false };
 		bool                                                             gUnlocked = true;
 		std::size_t                                                      gDressed = 0;
@@ -142,7 +142,7 @@ namespace Plugin
 		std::unordered_map<const RE::EffectSetting*, std::size_t>        gTargetOf;  // effect -> gTargets index
 		std::unordered_set<const RE::BGSArtObject*>                      gOurs;      // every art object made here: a slot holding one was dressed by us
 
-		// His order 2026-10-08: each shield ward has its own switch, and off means that shield raises no ward at all. A worn
+		// Each shield ward has its own switch, and off means that shield raises no ward at all. A worn
 		// shield raises its ward through its enchantment (Spellbreaker, the Crusader shields) or through an ability its equip
 		// script adds (Reman's shield). While a switch is off, each such entry points at an inert copy of the ward effect (no
 		// art, no light, no actor value, hidden), so the enchantment or ability keeps its length and a save's active effects
@@ -184,8 +184,7 @@ namespace Plugin
 		}
 
 		// The dome a row wears now: the 360 dome where the player wants it (the Dome pick for the spell wards, each shield's own
-		// pick for the shield rows - his yes 2026-10-12 after a user report: Spellbreaker kept the 360 sphere while he wanted it
-		// only on his spell wards) and 360 Ward + its Universal Patch are loaded and the 360 dome is unlocked; else the normal
+		// pick for the shield rows) and 360 Ward + its Universal Patch are loaded and the 360 dome is unlocked; else the normal
 		// dome. Either is our own art, so the Universal Patch never plays its pulse over it. gLock held.
 		RE::BGSArtObject* DomeOf(std::size_t a_row, const Art* a_art)
 		{
@@ -252,9 +251,9 @@ namespace Plugin
 		}
 
 		// The live effects follow at once, on the player and every actor near her. They are taken off BEFORE the entries are
-		// switched (run 1 of the in-game test, 2026-10-08: refreshed after the switch, Reman's ward ended on the inert copy and
+		// switched (refreshed after the switch, Reman's ward ended on the inert copy and
 		// its +20 Ward Power was never taken back - an effect must end on the base effect it started on): a shield's enchantment
-		// effect is dispelled (off: the ward is gone; on: the inert one goes, and since 2026-10-10 the worn shield is given its
+		// effect is dispelled (off: the ward is gone; on: the inert one goes, and the worn shield is given its
 		// ward again at once - Apply), an ability is taken off and, once the entries are switched, given back (rebuilt from its
 		// entries now).
 		std::vector<RE::Actor*> ShieldActors()
@@ -795,7 +794,7 @@ namespace Plugin
 			} else if (auto it = table.find(eff->GetFormID()); it != table.end() && !t.castWard && !t.hitWard && !t.enchWard && !power) {
 				// a table ward another mod made into something else - no ward art left, no Ward Power (Reliquary of Myth turns
 				// vanilla Spellbreaker's ward into a script effect and raises the ward from its own ability, in the table too):
-				// dressed, it would add a second dome over the real one (3.4)
+				// dressed, it would add a second dome over the real one
 				++skipped;
 				SKSE::log::info("[WARD] left alone: {} (in the table, but another mod took its art and Ward Power away)", Where(eff));
 				continue;
@@ -816,7 +815,7 @@ namespace Plugin
 			} else {
 				// an ALWAYS-ON ward (a constant effect: an item's ward while it is held or worn) is ranked by its Ward Power on the
 				// vanilla wards' scale (PowerRow), never by its minimum skill - an item's effect says 0 there: Reliquary of Myth's
-				// Staff of Magnus (999 Ward Power) wore the Novice row's white (3.4, a user report)
+				// Staff of Magnus (999 Ward Power) wore the Novice row's white
 				const char* by = (t.castWard || t.hitWard || t.enchWard) ? (power ? "art + Ward Power" : "art") : "Ward Power";
 				// (its magnitude is Ward Power only when that is its value; one effect shared by a weak and a strong item takes the
 				// strong one's rank - nothing says which carrier is up)
@@ -1171,7 +1170,7 @@ namespace Plugin
 		// An apply's shield moves, no lock held. The switched entries' live effects are taken off BEFORE the switch (each ends
 		// on the base it started on), abilities given back after it; a shield whose enchantment ward came back ON, and a Legacy
 		// shield whose enchantment moved (the Crusader switch), is put through the game's own equip step on everyone wearing it
-		// (measured 2026-10-10 on an NPC wearing Spellbreaker: on again left him without his ward until the shield was equipped
+		// (measured on an NPC wearing Spellbreaker: on again left him without his ward until the shield was equipped
 		// again) - a worn Legacy shield first loses what its old enchantment gave
 		void MoveShieldWards(const ShieldMoves& a_moves)
 		{
@@ -1356,7 +1355,7 @@ namespace Plugin
 				return false;
 			}
 			// the looping copy where the row has one: put on as plain art, the cast dome waits in its idle state for a cast and
-			// shows next to nothing (the 2026-10-14 preview pictures had no dome while its light was lit)
+			// shows next to nothing (a preview had no dome while its light was lit)
 			dome = WornDomeOf(a_row, a_row < kRanks, a);
 		}
 		// the game's art call made with no lock of ours held: it may tell other mods

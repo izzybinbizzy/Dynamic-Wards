@@ -351,7 +351,7 @@ namespace Plugin
 		// the row of the ward a hand casts, or kRows: while cast (charging, ready, held) the caster's spell; while only readied
 		// (the casting art shows, nothing cast yet) the spell equipped in that hand, hands drawn
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
-		// as an ability while held): that ward's row (3.4, a user report: no light in first person). Asked after the spell
+		// as an ability while held): that ward's row. Asked after the spell
 		// above found no ward, so firing the staff keeps the light; read once per actor and round (a_alwaysOn)
 		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect)
 		{
