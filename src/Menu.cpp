@@ -452,7 +452,7 @@ namespace Plugin
 		void DrawFactions()
 		{
 			static std::array<std::optional<Color>, kLooks> held;
-			MenuStyle::Note(T("The ward look each group's casters wear; a follower always wears the Followers look."));
+			MenuStyle::Note(T("The ward look each group's casters wear; a caster in two groups follows the first one listed that has a pick, and a follower always wears the Followers look."));
 			Legend({ { T("Default:"), T("no pick for this faction: its casters wear the Enemies or Neutral look.") } });
 			for (std::size_t i = kGroups; i < kLooks; ++i) {
 				if (FactionLoaded(i)) {
