@@ -345,8 +345,7 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s",
-				T("3: Lesser, Steadfast and Greater each a step. 4 or 5: Expert and Master wards (magic overhauls) get steps of "
-				  "their own, so a Greater ward stops short of the full color."));
+				T("How many color steps the ranks get; 4 or 5 give Expert and Master wards their own."));
 			SameLine();
 			SettingToggle(T("Reverse the ladder"), LadderReversed, SetLadderReversed,
 				T("Off: Lesser wards are white and the strongest take the color. On: the other way round."));
@@ -356,10 +355,10 @@ namespace Plugin
 			if (CollapsingHeader(T("Each ward"), ImGuiTreeNodeFlags_DefaultOpen)) {
 				const bool strange = StrangeWardsInstalled();
 				Legend({ { T("Ladder:"), T("a rank ward takes its step on the ladder above.") },
-					{ T("Default:"), T("Dynamic Wards' own color for that ward - Spellbreaker gold, Shield of the Crusader and Visage of Reman white, Vampire ward red.") },
+					{ T("Default:"), T("My own color for that ward, like Spellbreaker's gold.") },
 					{ T("Own color:"), T("a color you pick, for that ward alone.") },
-					{ T("Vanilla:"), strange ? T("Dynamic Wards leaves the ward alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
-											   T("Dynamic Wards leaves the ward alone, as the game or another mod has it.") },
+					{ T("Vanilla:"), strange ? T("I leave the ward alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
+											   T("I leave the ward alone, as the game or another mod has it.") },
 					{ strange ? "Strange Wards:" : nullptr, T("a rank ward wears Strange Wards' own dome and hand art.") },
 					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look you pick in Strange Runes' own menu (reload the save to see it).") } });
 				const char* const anyChoice[] = { T("Ladder"), T("Default"), T("Own color"), T("Vanilla"), "Strange Wards", "Strange Runes" };
@@ -453,7 +452,7 @@ namespace Plugin
 		void DrawFactions()
 		{
 			static std::array<std::optional<Color>, kLooks> held;
-			MenuStyle::Note(T("Pick the ward look a group's casters wear. A caster in two groups follows the first one in this list; a follower always wears the Followers look."));
+			MenuStyle::Note(T("The ward look each group's casters wear; a follower always wears the Followers look."));
 			Legend({ { T("Default:"), T("no pick for this faction: its casters wear the Enemies or Neutral look.") } });
 			for (std::size_t i = kGroups; i < kLooks; ++i) {
 				if (FactionLoaded(i)) {
@@ -492,15 +491,14 @@ namespace Plugin
 			HeaderTip(Icon::kBulb, T("Lights"), Fill(T("Lighting: Automatic - {}"), lighting[static_cast<int>(LightingPick())]).c_str());
 			{  // every pick: ENB gets the plugin's lights too (Lighting.cpp), so its switches show
 				SettingToggle(T("Ward casting light"), WardLightOn, SetWardLightOn,
-					T("The light on the hands of anyone raising one of these wards, yours and other casters', in the ward's color. In first person your ward also lights your hand."));
+					T("A light on the hands of anyone raising a ward, in the ward's color."));
 				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around you in its own color."));
 			}
 
 			// the ward's strength as Reticle Arcs' bar: shown for a ward she raises, and with this on for an always-on one too
 			if (ArcBarRegistered()) {
 				SettingToggle(T("Ward strength bar for always-on wards"), AlwaysOnBar, SetAlwaysOnBar,
-					T("Reticle Arcs' Ward strength bar also shows for a ward that is always up and wears a dome, like Reliquary of Myth's "
-					  "Staff of Magnus while you hold it or its Spellbreaker. Off: only for wards you raise."));
+					T("Shows the Ward strength bar for always-on wards that wear a dome too."));
 			}
 
 			if (Has360Ward()) {
@@ -522,8 +520,7 @@ namespace Plugin
 						Changed();
 					}
 					SetItemTooltip("%s",
-						T("Until then your wards use the normal dome in their own color. The ward's blocking is set by Perfectly "
-						  "Valid Wards, not here."));
+						T("Until then your wards use the normal dome in their own color."));
 					if (UnlockRule() == Unlock::kPerk) {
 						static std::vector<std::pair<std::string, std::string>> perks = WardPerks();
 						const auto                                              cur = UnlockPerk();
@@ -559,8 +556,7 @@ namespace Plugin
 				// the load order, so the pick would change nothing (the outside review) - say how to get them instead
 				Header(Icon::kShield, T("Dome"));
 				TextColored(kMuted, "%s",
-					T("The 360 dome's files are not installed: Dynamic Wards installs them only when 360 Ward is in your load order. "
-					  "Install Dynamic Wards again to get them."));
+					T("The 360 dome's files are missing; install Dynamic Wards again with 360 Ward loaded."));
 			}
 
 			Header(Icon::kEye, T("Look"));
@@ -578,7 +574,7 @@ namespace Plugin
 
 			// Hand Brightness is the old Casting glow: the ini key stays CastingGlow so saved settings carry over
 			SettingSlider(T("Ward brightness"), Brightness, SetBrightness, kBrightnessMin, kBrightnessMax,
-				T("How bright the wards are: their glow and their light together. Turn it up if your lighting makes wards look dim. The ward in your hands follows Hand Brightness instead."));
+				T("How bright the wards' glow and light are; the ward in your hands follows Hand Brightness."));
 
 			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
 			SettingSlider(T("Hand Brightness"), CastingGlow, SetCastingGlow, kBrightnessMin, kBrightnessMax,
@@ -586,7 +582,7 @@ namespace Plugin
 
 			// off unless the player turns it up: in a place with normal color a boosted dome reads too strong
 			SettingSlider(T("Dome color boost"), DomeBoost, SetDomeBoost, 0, 100,
-				T("Deepens gold, yellow and green domes in places whose own color grading washes colors out, like some cellars and dungeons. A color already at full strength stays as it is. 0 = off. In a place with normal color a boosted dome looks too strong."));
+				T("Deepens gold, yellow and green domes in rooms that wash colors out. Off (0) by default."));
 		}
 
 		// a shield in this load order raises one of the shield wards, or Legacy's Crusader shields are there
@@ -617,8 +613,7 @@ namespace Plugin
 					Changed();
 				}
 				SetItemTooltip("%s",
-					T("Off: blocking with this shield raises no ward at all. Normal dome or 360 dome: the dome this shield's ward "
-					  "wears, in its own color, whatever your spell wards wear. The 360 dome needs 360 Ward and follows its unlock."));
+					T("Which dome this shield's ward wears, or Off for no ward at all."));
 				PopID();
 			}
 			if (CrusaderAvailable()) {
@@ -626,8 +621,7 @@ namespace Plugin
 					Separator();
 				}
 				SettingToggle(T("Legacy Crusader shields raise the Crusader ward"), CrusaderOn, SetCrusaderOn,
-					T("The two Divine Crusader shields raise the Shield of the Crusader ward, so they take its color. They "
-					  "also take that ward's strength instead of Spellbreaker's."));
+					T("The Divine Crusader shields raise the Crusader ward and take its color and strength."));
 			}
 		}
 	}
