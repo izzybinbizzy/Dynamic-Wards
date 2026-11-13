@@ -17,6 +17,7 @@
 // z, and the light handed to the shadow scene node.
 
 #include "Plugin.h"
+#include "SceneTakeOff.h"
 
 #include <nlohmann/json.hpp>
 
@@ -327,9 +328,7 @@ namespace Plugin
 
 		void Drop(RE::NiPointLight* a_light, RE::NiPointer<RE::BSLight>& a_bs, RE::ShadowSceneNode* a_scene)
 		{
-			if (a_scene && a_bs) {
-				a_scene->RemoveLight(a_bs);
-			}
+			SceneTakeOff::TakeOff(a_scene, a_bs);
 			if (a_light && a_light->parent) {
 				a_light->parent->DetachChild(a_light);
 			}
