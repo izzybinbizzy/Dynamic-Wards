@@ -613,7 +613,7 @@ namespace Plugin
 					Changed();
 				}
 				SetItemTooltip("%s",
-					T("Which dome this shield's ward wears, or Off for no ward at all."));
+					T("Which dome this shield's ward wears, or Off for no ward; the 360 dome needs 360 Ward and its unlock."));
 				PopID();
 			}
 			if (CrusaderAvailable()) {
