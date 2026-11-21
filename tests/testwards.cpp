@@ -5,10 +5,13 @@
 // undefined-behavior checkers. The run fails when a check fails, AND when fewer checks ran than kFloor (a test that stopped
 // part way proves nothing - Illuminated's fade tests count theirs the same way).
 
+#include "AdvancedSettingsChecks.h"
 #include "FloorLightChecks.h"
+#include "Po3TweaksChecks.h"
 #include "SettingsText.h"
 #include "WardMath.h"
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstdio>
@@ -34,7 +37,8 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 300 + 8 + 8 + 3 + FloorLightChecks::kCount;
+	constexpr int kFloor = 300 + 8 + 8 + 3 + 3 + FloorLightChecks::kCount + AdvancedSettingsChecks::kCount + AdvancedSettingsChecks::kTableCount +
+	                       AdvancedSettingsChecks::kShippedCount + Po3TweaksChecks::kCount;
 
 	using namespace Plugin;
 
@@ -655,6 +659,21 @@ namespace
 		CHECK(!passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 1, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
 		CHECK(!passes(B{}));
 	}
+
+	// the Advanced Settings file: the shared reader and writer, this mod's knobs, the file the download ships, and the values read
+	void Advanced()
+	{
+		AdvancedSettingsChecks::Run(Check);
+		AdvancedSettingsChecks::Table(Check, kAdvancedKnobs);
+		AdvancedSettingsChecks::Shipped(Check, "package/SKSE/Plugins/DynamicWards", kAdvancedTitle, kAdvancedKnobs);
+		const auto   d = TuningOf(AdvancedSettings::Defaults(kAdvancedKnobs));
+		const Tuning t{};
+		CHECK(d.domeReach == kDomeReach && d.spriteSat == kSpriteSat && d.domeStrength == 1.0f && d.handReach == 1.0f && d.handStrength == 1.0f);
+		CHECK(t.domeReach == d.domeReach && t.spriteSat == d.spriteSat);
+		const std::array<float, 5> mine{ 3.0f, 0.5f, 2.0f, 1.5f, 0.0f };
+		const auto                 m = TuningOf(mine);
+		CHECK(m.domeReach == 3.0f && m.domeStrength == 0.5f && m.handReach == 2.0f && m.handStrength == 1.5f && m.spriteSat == 0.0f);
+	}
 }
 
 int main()
@@ -668,6 +687,8 @@ int main()
 	ScreenColor();
 	HandClone();
 	Posture();
+	Advanced();
+	Po3TweaksChecks::Run(Check);  // powerofthree's Tweaks: a form key's two spellings, its ini switch, the verdict, both paths
 	FloorLightChecks::Run(Check);
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {

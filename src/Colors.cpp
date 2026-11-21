@@ -41,7 +41,6 @@ namespace Plugin
 	{
 		// (the palette recolor itself - wardgen.pal_retint's curve, the file checks - is game-free, in WardMath.h, and tested)
 		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
-		constexpr float       kSpriteSat = 0.75f;  // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward in the hand, the normal dome, and every dome on the Vanilla pick: every texel tinted fully toward the ward's
 		// color, so no white-hot core reads washed out beside the casting art (his calls; the 360 sphere keeps its white core)
 		constexpr float kCore = 1.0f;
@@ -483,7 +482,7 @@ namespace Plugin
 		Look LookOf(const Setting& a_s)
 		{
 			return { a_s.c, a_s.brightness / 100.0f, a_s.opacity / 100.0f, 1.0f - a_s.transparency / 100.0f, a_s.castingGlow / 100.0f, a_s.kept,
-				SpriteRgb(a_s.c, kSpriteSat), GoldVapour(a_s.c) && GoldVapourTexture(), a_s.lighting };
+				SpriteRgb(a_s.c, gTuning.spriteSat), GoldVapour(a_s.c) && GoldVapourTexture(), a_s.lighting };
 		}
 
 		// two palette paths on one texture object: the engine's stand-in for a missing file (a partial install), never recolored

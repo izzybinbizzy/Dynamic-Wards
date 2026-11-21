@@ -29,6 +29,7 @@
 
 #include "FloorLightFix.h"
 #include "Plugin.h"
+#include "Po3Tweaks.h"
 #include "RuntimeGuard.h"
 #include "Translation.h"
 
@@ -215,6 +216,7 @@ namespace
 	{
 		const auto started = std::chrono::steady_clock::now();
 		LoadSettings();
+		LoadAdvanced();
 		ReadLighting();
 		NoteStrangeWards();
 		MakeArt();
@@ -223,7 +225,7 @@ namespace
 		ApplyAll(kWhyDataLoaded);
 		StartDomeLights();
 		GameEvents::Register();
-		SKSE::log::info("{}", Translation::Load("Data/SKSE/Plugins/DynamicWards/Translation.json"));
+		SKSE::log::info("{}", Translation::Load("DynamicWards"));
 		RegisterMenu();
 		if (auto* ui = RE::UI::GetSingleton()) {
 			ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuWatch::Get());
@@ -236,6 +238,7 @@ namespace
 	void OnDataLoaded()
 	{
 		try {
+			Po3Tweaks::Judge(kAdvancedTitle);  // the mod's name; before a ward is named in the log or a perk read by editor ID
 			LoadEverything();
 		} catch (const std::exception& e) {
 			SKSE::log::critical("the data-load work stopped part way: {} - the steps before it keep their work, the rest is not done this session",

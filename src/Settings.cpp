@@ -24,6 +24,21 @@ namespace Plugin
 		}
 	}
 
+	// the Advanced Settings file (AdvancedSettings.h): the fine values the menu does not show, read once at data load before any light is made -
+	// the shipped file, then the player's Custom file over it (no download carries that one, so an update never replaces a player's values)
+	void LoadAdvanced()
+	{
+		bool       wrote = false;
+		const auto folder = std::filesystem::path("Data/SKSE/Plugins/DynamicWards");
+		const auto r = AdvancedSettings::Load(folder, kAdvancedTitle, kAdvancedKnobs, wrote);
+		for (const auto& warning : r.warnings) {
+			SKSE::log::warn("advanced settings: {}", warning);
+		}
+		gTuning = TuningOf(r.values);
+		SKSE::log::info("advanced settings: {} value(s) of {} read in {}{}", r.read, kAdvancedKnobs.size(), folder.string(),
+			wrote ? "; the file was missing a value and was written whole" : "");
+	}
+
 	void LoadSettings()
 	{
 		std::ifstream    in(kPath);

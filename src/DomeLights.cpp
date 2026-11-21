@@ -163,10 +163,6 @@ namespace Plugin
 			}
 		}
 
-		// a dome's light reaches this many times the house light on every pick: the house reach (178 plain, 133 under inverse
-		// square) barely passes the dome itself (~83) and stayed inside the hand lights' own pool
-		constexpr float kDomeReach = 2.25f;
-
 		// a dome's light by its model; the ENB mesh set takes the main set's light (the table names the main set only)
 		const Spec* SpecOf(const std::string& a_key)
 		{
@@ -259,13 +255,18 @@ namespace Plugin
 
 		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec, float a_dim)
 		{
-			const Light wide{ a_spec.fade, a_spec.reach * kDomeReach, a_spec.size, a_spec.plain, a_spec.plainFade, a_spec.plainRadius * kDomeReach };
-			Dress(a_light, a_color, wide, wide.plainRadius, a_dim);
+			// a dome's light reaches this many times the house light (the Advanced Settings file): the house reach stayed inside the hands' pool
+			const float reach = gTuning.domeReach;
+			const Light wide{ a_spec.fade, a_spec.reach * reach, a_spec.size, a_spec.plain, a_spec.plainFade, a_spec.plainRadius * reach };
+			Dress(a_light, a_color, wide, wide.plainRadius, a_dim * gTuning.domeStrength);
 		}
 
 		void DressHand(RE::NiPointLight* a_light, Color a_color)
 		{
-			Dress(a_light, a_color, kHand, kHand.plainRadius, HandDim());
+			Light hand = kHand;
+			hand.reach *= gTuning.handReach;
+			hand.plainRadius *= gTuning.handReach;
+			Dress(a_light, a_color, hand, hand.plainRadius, HandDim() * gTuning.handStrength);
 		}
 
 		// the node a dome's light hangs under: the wearer's third-person body (in both views), else the dome's art - under the art

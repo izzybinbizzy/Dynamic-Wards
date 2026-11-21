@@ -46,7 +46,7 @@ namespace Plugin
 		using namespace ImGuiMCP;
 		using Translation::Fill;
 		using Translation::T;
-#define TR_MARK(x) x  // a line Translation.json carries, though it is not written inside T( ) here
+#define TR_MARK(x) x  // a line the translation file carries, though it is not written inside T( ) here
 
 		using MenuStyle::Header;
 		using MenuStyle::kMuted;

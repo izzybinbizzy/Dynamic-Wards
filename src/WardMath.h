@@ -25,8 +25,47 @@
 #include <system_error>
 #include <vector>
 
+#include "AdvancedSettings.h"
+
 namespace Plugin
 {
+	// the Advanced Settings file's values (AdvancedSettings.h), read once at data load (Settings.cpp LoadAdvanced) before any light is made,
+	// and only read after: a dome light's reach (times the house light) and strength, a hand light's reach and strength, the ENB sprite's least
+	// color. The defaults are the mod as built
+	inline constexpr float kDomeReach = 2.25f;  // the house reach (178 plain, 133 inverse square) barely passes the dome itself (~83)
+	inline constexpr float kSpriteSat = 0.75f;  // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
+
+	struct Tuning
+	{
+		float domeReach{ kDomeReach };
+		float domeStrength{ 1.0f };
+		float handReach{ 1.0f };
+		float handStrength{ 1.0f };
+		float spriteSat{ kSpriteSat };
+	};
+	inline Tuning gTuning{};
+
+	// "<title> - Advanced Settings.ini" (shipped) and "... - Custom.ini" (the player's) in SKSE\Plugins\DynamicWards
+	inline constexpr std::string_view kAdvancedTitle = "Dynamic Wards";
+
+	// in Tuning's order
+	inline constexpr std::array<AdvancedSettings::Knob, 5> kAdvancedKnobs{ {
+		{ "Brightness and Reach", "DomeReach", "How far a ward dome's light reaches, in multiples of the hand light's reach.", kDomeReach, 0.5f, 5.0f, false, true },
+		{ "Brightness and Reach", "DomeLightStrength", "How bright a ward dome's light is, on top of Opacity and Ward brightness: 1 as made.", 1.0f, 0.1f, 4.0f,
+			false, false },
+		{ "Brightness and Reach", "HandLightReach", "How far the light on a hand casting a ward reaches: 1 as made.", 1.0f, 0.25f, 4.0f, false, false },
+		{ "Brightness and Reach", "HandLightStrength", "How bright the light on a hand casting a ward is, on top of Hand Brightness: 1 as made.", 1.0f, 0.1f, 4.0f,
+			false, true },
+		{ "Vanilla and ENB", "SpriteColor", "On ENB, the least color the ward's small glow keeps: 0 lets a pale ward stay pale.", kSpriteSat, 0.0f, 1.0f, false, false },
+	} };
+
+	// the file's values (one per knob, in its order) as the tuning they set
+	[[nodiscard]] inline Tuning TuningOf(std::span<const float> a_values) noexcept
+	{
+		const auto at = [&](std::size_t a_i) { return a_i < a_values.size() ? a_values[a_i] : kAdvancedKnobs[a_i].def; };
+		return { at(0), at(1), at(2), at(3), at(4) };
+	}
+
 	// a row: five ranks, three worn shield wards, the vampire ward - one set of neutral meshes each (3.0)
 	inline constexpr std::string_view kTokens[] = { "Novice", "Apprentice", "Adept", "Expert", "Master", "Spellbreaker",
 		"Crusader", "Reman", "Vampire" };

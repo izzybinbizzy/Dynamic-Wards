@@ -83,6 +83,7 @@ namespace Plugin
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
 	void    LoadSettings();
+	void    LoadAdvanced();  // the Advanced Settings file, once at data load, before any light (gTuning)
 	void    SaveSettings();
 	RowMode RowModeOf(std::size_t a_row);
 	Color   RowCustom(std::size_t a_row);
