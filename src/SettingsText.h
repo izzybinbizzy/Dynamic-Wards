@@ -401,7 +401,10 @@ namespace Plugin
 		for (std::size_t i = 0; i < kLooks; ++i) {
 			a_out << kLookTokens[i] << "=" << LookText(a_s.looks[i]) << "\n";
 		}
-		a_out << "[LeaveAlone]\n";
+		// only with a tick, so a player who never uses the list keeps the file 4.1 wrote
+		if (!a_s.leaveAlone.empty()) {
+			a_out << "[LeaveAlone]\n";
+		}
 		for (const auto& m : a_s.leaveAlone) {
 			a_out << m << "=1\n";
 		}

@@ -133,8 +133,9 @@ namespace Plugin
 	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
-	bool                         LeftAlone(std::string_view a_plugin);  // the menu's Leave alone list: that plugin's wards keep their own look
+	bool                         LeftAlone(std::string_view a_plugin);  // the menu's Other mods' wards list: that plugin's wards keep their own look
 	void                         SetLeftAlone(std::string_view a_plugin, bool a_on);
+	std::vector<std::string>     LeftAloneMods();
 	bool                         StrangeRunesLoaded();
 	void                         CheckArt(const char* a_why);       // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
 	bool                         QueueArtCheck(const char* a_why);  // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued

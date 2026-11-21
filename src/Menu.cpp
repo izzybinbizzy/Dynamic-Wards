@@ -480,7 +480,8 @@ namespace Plugin
 		void DrawLeaveAlone()
 		{
 			static std::vector<WardMod> mods;
-			if (mods.empty()) {
+			static bool                 read = false;
+			if (!std::exchange(read, true)) {
 				mods = WardMods();  // the wards are found once at data load
 			}
 			MenuStyle::Note(T("Tick a mod to keep its wards' own look, for every caster. The others take their rank's color."));

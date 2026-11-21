@@ -483,7 +483,7 @@ namespace
 		}
 
 		// the Leave alone list (his 585): a tick per plugin, any case, A to Z, never a base game file, read back the same
-		CHECK(none.leaveAlone.empty() && dflt.leaveAlone.empty());
+		CHECK(none.leaveAlone.empty() && dflt.leaveAlone.empty() && d.str().find("[LeaveAlone]") == std::string::npos);
 		const auto la = Read("[LeaveAlone]\nZed Wards.esp=1\nmy wards.ESP=1\nOff.esp=0\nSkyrim.esm=1\nMY WARDS.esp=1\nbad.esp=x\n=1\n");
 		CHECK((la.leaveAlone == std::vector<std::string>{ "MY WARDS.esp", "Zed Wards.esp" }));  // the last spelling read stands
 		CHECK(LeftAloneIn(la, "My Wards.esp") && LeftAloneIn(la, "zed wards.esp") && !LeftAloneIn(la, "Off.esp") && !LeftAloneIn(la, "Skyrim.esm"));

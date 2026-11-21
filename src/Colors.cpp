@@ -101,6 +101,8 @@ namespace Plugin
 			};
 			std::vector<Track> tracks{};
 			float              full = 0.0f;  // the brightest key of its tracks
+			// vapour layer 1's colour tracks: the loaded coordinate, or the gold copy's hue while it wears that (TintTracks)
+			std::vector<Track> vapourTracks{};
 		};
 
 		struct Master
@@ -167,6 +169,7 @@ namespace Plugin
 			Setting                               with{};
 			const ArtOf*                          art{ nullptr };
 			std::chrono::steady_clock::time_point at{};
+			std::size_t                           shared{ 0 };  // SharedTracks when noted: counted while only the copying thread holds it
 		};
 		constexpr auto    kCopyHeld = std::chrono::seconds(30);
 		std::vector<Copy> gCopies;
@@ -346,7 +349,8 @@ namespace Plugin
 		}
 
 		// a copy's colour tracks whose controller drives a block outside the copy (the model's own): the shared state the
-		// crash came from, 0 on every copy when each clones its own (devbench's colors report)
+		// crash came from, 0 on every copy when each clones its own (devbench's colors report). Walks the copy: only where
+		// nothing else holds it yet (NoteCopy from the copy hook)
 		std::size_t SharedTracks(RE::NiAVObject* a_root)
 		{
 			std::vector<const RE::NiObjectNET*> own;
@@ -406,6 +410,9 @@ namespace Plugin
 						// every key the block's own row coordinate: the controller stays and writes what the block was loaded with
 						for (std::uint32_t n = 0; n < keys->GetKeyCount(0); ++n) {
 							KeyValue(keys, n) = { blk->base.red, blk->base.green, blk->base.blue };
+						}
+						if (blk->vapourOne) {
+							blk->vapourTracks.push_back({ s, i, std::vector<float>(keys->GetKeyCount(0), 1.0f) });
 						}
 						++a_m.pinned;
 						continue;
@@ -643,7 +650,20 @@ namespace Plugin
 			}
 			for (std::size_t b = 0; b < a_m.blocks.size(); ++b) {
 				const auto& blk = a_m.blocks[b];
-				const auto  hue = blk.tracks.empty() ? std::nullopt : UnitHue(blk, a_m.hand, a_look);
+				// the kept controller writes these every frame: what Fresh gave the block, or it would undo the gold copy's hue
+				const RE::NiPoint3 vapour = a_look.goldVapour ? PlainHue(a_m.hand, a_look) : RE::NiPoint3{ blk.base.red, blk.base.green, blk.base.blue };
+				for (const auto& t : blk.vapourTracks) {
+					auto* seq = t.seq < mgr->sequenceArray.capacity() ? mgr->sequenceArray[t.seq].get() : nullptr;
+					if (!seq || t.item >= seq->arraySize) {
+						continue;
+					}
+					const auto& item = seq->interpArray[t.item];
+					auto*       keys = item.interpCtlr && item.interpCtlr->target == a_props[b] ? ColourKeys(item.interpolator.get()) : nullptr;
+					for (std::uint32_t n = 0; keys && keys->GetKeyCount(0) == t.grey.size() && n < t.grey.size(); ++n) {
+						KeyValue(keys, n) = vapour;
+					}
+				}
+				const auto hue = blk.tracks.empty() ? std::nullopt : UnitHue(blk, a_m.hand, a_look);
 				if (!hue) {
 					continue;
 				}
@@ -762,7 +782,7 @@ namespace Plugin
 				return;
 			}
 			a_root->IncRefCount();
-			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now() });
+			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now(), SharedTracks(a_root) });
 		}
 
 		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted. A row never colored
@@ -928,7 +948,7 @@ namespace Plugin
 		}
 		std::size_t shared = 0;
 		for (const auto& c : gCopies) {
-			shared += SharedTracks(c.root);
+			shared += c.shared;
 		}
 		return { { "sharedColourTracks", shared }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },

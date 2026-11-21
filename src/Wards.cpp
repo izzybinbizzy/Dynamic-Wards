@@ -108,8 +108,9 @@ namespace Plugin
 			RE::TESObjectLIGH* ownLight{ nullptr };
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
-			bool               constant = false;  // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
-			std::string        mod{};             // the plugin that last changed the effect, empty for the base game: the Leave alone list's name for it
+			bool               constant = false;   // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
+			std::string        mod{};              // the plugin that added the effect, empty for the base game: the Other mods' wards list's name for it
+			bool               leftAlone = false;  // its mod is ticked in that list: set at each apply (ApplyLocked), read by Worn
 		};
 
 		struct Changes
@@ -455,10 +456,10 @@ namespace Plugin
 			return StrangeRunesRow(a_t.row) && a_t.effect->HasKeywordString("MagicWard");
 		}
 
-		// a ward of a plugin ticked in the Leave alone list keeps its own look, for every caster (his checklist 585)
+		// a ward of a plugin ticked in the Other mods' wards list keeps its own look, for every caster (his checklist 585)
 		bool LeftAloneWard(const Target& a_t)
 		{
-			return !a_t.mod.empty() && LeftAlone(a_t.mod);
+			return a_t.leftAlone;
 		}
 
 		const Art* Worn(const Target& a_t)
@@ -792,8 +793,9 @@ namespace Plugin
 			}
 			auto&  d = eff->data;
 			Target t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {}, {} };
-			if (const auto* file = eff->GetFile(); file && !BaseGameFile(file->GetFilename())) {
+				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {}, {}, false };
+			// the plugin that added the effect: a patch that only edits the game's wards (the Unofficial Patch, a merge) is no ward's mod
+			if (const auto* file = eff->GetFile(0); file && !BaseGameFile(file->GetFilename())) {
 				t.mod = std::string(file->GetFilename());
 			}
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
@@ -1013,6 +1015,11 @@ namespace Plugin
 		{
 			Applied out;
 			gUnlocked = Unlocked();
+			// the list changes only through a setting, and every setting change ends in an apply: read once here, not per ward
+			const auto leaveAlone = LeftAloneMods();
+			for (auto& t : gTargets) {
+				t.leftAlone = !t.mod.empty() && std::ranges::any_of(leaveAlone, [&](const std::string& a_m) { return SameText(a_m, t.mod); });
+			}
 			for (std::size_t r = 0; r < kRows; ++r) {
 				gRowArt[r] = ArtFor(r);
 			}

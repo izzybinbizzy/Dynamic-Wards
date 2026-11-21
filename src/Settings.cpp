@@ -312,6 +312,10 @@ namespace Plugin
 	{
 		return Read([&](const auto& s) { return LeftAloneIn(s, a_plugin); });
 	}
+	std::vector<std::string> LeftAloneMods()
+	{
+		return Read([](const auto& s) { return s.leaveAlone; });
+	}
 	void SetLeftAlone(std::string_view a_plugin, bool a_on)
 	{
 		Change([&](auto& s) { SetLeftAloneIn(s, a_plugin, a_on); });
