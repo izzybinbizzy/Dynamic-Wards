@@ -47,11 +47,11 @@ namespace Plugin
 		gLoaded = true;
 		SKSE::log::info(
 			"settings: ladder {} ({} stages{}), opacity {}%, transparency {}%, brightness {}%, hand brightness {}%, dome color boost {}%, dome {}, ward light {}, colored lights {}, 360 unlock rule {}{}, "
-			"Crusader shields {}, shield wards Spellbreaker {} Crusader {} Reman {}, always-on ward bar {} ({} line(s) read{})",
+			"Crusader shields {}, shield wards Spellbreaker {} Crusader {} Reman {}, always-on ward bar {}, {} mod(s) whose wards keep their own look ({} line(s) read{})",
 			HexColor(gS.ladder), gS.stages, gS.reversed ? ", reversed" : "", gS.opacity, gS.transparency, gS.brightness, gS.castingGlow, gS.domeBoost, gS.dome,
 			gS.light ? "on" : "off", gS.coloredLights ? "on" : "off", static_cast<int>(gS.unlock), gS.perk.empty() ? "" : " " + gS.perk,
 			gS.crusader ? "on" : "off", ShieldDomeName(SettingsText::ShieldPick(gS, 0)),
-			ShieldDomeName(SettingsText::ShieldPick(gS, 1)), ShieldDomeName(SettingsText::ShieldPick(gS, 2)), gS.alwaysOnBar ? "on" : "off", read.lines,
+			ShieldDomeName(SettingsText::ShieldPick(gS, 1)), ShieldDomeName(SettingsText::ShieldPick(gS, 2)), gS.alwaysOnBar ? "on" : "off", gS.leaveAlone.size(), read.lines,
 			read.old ? "; a 2.x file, carried over" : "");
 	}
 
@@ -306,6 +306,15 @@ namespace Plugin
 	{
 		Change([&](auto& s) { s.alwaysOnBar = a_on; });
 		ArcBarStale();
+	}
+
+	bool LeftAlone(std::string_view a_plugin)
+	{
+		return Read([&](const auto& s) { return LeftAloneIn(s, a_plugin); });
+	}
+	void SetLeftAlone(std::string_view a_plugin, bool a_on)
+	{
+		Change([&](auto& s) { SetLeftAloneIn(s, a_plugin, a_on); });
 	}
 
 	void ApplyScheme(const Scheme& a_scheme)

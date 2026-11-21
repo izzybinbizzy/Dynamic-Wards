@@ -16,6 +16,7 @@
 #include <ostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Plugin
 {
@@ -50,6 +51,8 @@ namespace Plugin
 		// ShieldDome per kShieldRows entry (0 off, 1 normal, 2 360); -1 = not set yet - ReadSettingsText always sets it, so only a
 		// table that was never read (a test's) meets ShieldPick's -1 branch
 		std::array<int, kShieldRows.size()> shieldDome{ -1, -1, -1 };
+		// [LeaveAlone]: the plugins whose wards keep their own look (his checklist 585 answer: a list with a tick per mod)
+		std::vector<std::string> leaveAlone{};
 	};
 
 	struct SettingsRead
@@ -57,6 +60,26 @@ namespace Plugin
 		std::size_t lines = 0;    // key lines read
 		bool        old = false;  // a 2.x file, carried over
 	};
+
+	// the base game's own files: their wards are the rows' own, never another mod's, so the leave-alone list never names them
+	inline bool BaseGameFile(std::string_view a_file)
+	{
+		constexpr std::string_view kBase[] = { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
+		return std::ranges::any_of(kBase, [&](std::string_view a_b) { return SameText(a_b, a_file); });
+	}
+
+	inline bool LeftAloneIn(const SettingsValues& a_s, std::string_view a_file)
+	{
+		return std::ranges::any_of(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, a_file); });
+	}
+
+	inline void SetLeftAloneIn(SettingsValues& a_s, std::string_view a_file, bool a_on)
+	{
+		std::erase_if(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, a_file); });
+		if (a_on) {
+			a_s.leaveAlone.push_back(Trim(a_file));
+		}
+	}
 
 	namespace SettingsText
 	{
@@ -209,6 +232,12 @@ namespace Plugin
 		for (auto& d : a_s.shieldDome) {
 			d = std::clamp(d, -1, 2);
 		}
+		// one line per plugin, A to Z, never a base game file or an empty name
+		auto& mods = a_s.leaveAlone;
+		std::erase_if(mods, [](const std::string& a_m) { return a_m.empty() || BaseGameFile(a_m); });
+		std::ranges::stable_sort(mods, {}, [](const std::string& a_m) { return Lower(a_m); });
+		const auto dupes = std::ranges::unique(mods, [](const std::string& a_a, const std::string& a_b) { return SameText(a_a, a_b); });
+		mods.erase(dupes.begin(), dupes.end());
 	}
 
 	// The file's text into a_out, over the values it already holds (the defaults, for a fresh table). Sections and keys in
@@ -299,6 +328,10 @@ namespace Plugin
 						}
 					}
 				}
+			} else if (SameText(section, "LeaveAlone")) {
+				if (number && v != 0) {
+					SetLeftAloneIn(a_out, key, true);
+				}
 			} else if (SameText(section, "Others")) {
 				if (const auto look = LookOfToken(key); look < kLooks) {
 					if (const auto p = ParseLook(val, look, a_out.looks[look].color)) {
@@ -367,6 +400,10 @@ namespace Plugin
 		a_out << "[Others]\n";
 		for (std::size_t i = 0; i < kLooks; ++i) {
 			a_out << kLookTokens[i] << "=" << LookText(a_s.looks[i]) << "\n";
+		}
+		a_out << "[LeaveAlone]\n";
+		for (const auto& m : a_s.leaveAlone) {
+			a_out << m << "=1\n";
 		}
 	}
 

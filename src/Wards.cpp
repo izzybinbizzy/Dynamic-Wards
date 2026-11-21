@@ -109,6 +109,7 @@ namespace Plugin
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
 			bool               constant = false;  // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
+			std::string        mod{};             // the plugin that last changed the effect, empty for the base game: the Leave alone list's name for it
 		};
 
 		struct Changes
@@ -454,9 +455,15 @@ namespace Plugin
 			return StrangeRunesRow(a_t.row) && a_t.effect->HasKeywordString("MagicWard");
 		}
 
+		// a ward of a plugin ticked in the Leave alone list keeps its own look, for every caster (his checklist 585)
+		bool LeftAloneWard(const Target& a_t)
+		{
+			return !a_t.mod.empty() && LeftAlone(a_t.mod);
+		}
+
 		const Art* Worn(const Target& a_t)
 		{
-			if (a_t.how == How::kSilent || RunesOwn(a_t)) {
+			if (a_t.how == How::kSilent || RunesOwn(a_t) || LeftAloneWard(a_t)) {
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
@@ -783,9 +790,12 @@ namespace Plugin
 			if (!eff) {
 				continue;
 			}
-			auto&      d = eff->data;
-			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
+			auto&  d = eff->data;
+			Target t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
+				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {}, {} };
+			if (const auto* file = eff->GetFile(); file && !BaseGameFile(file->GetFilename())) {
+				t.mod = std::string(file->GetFilename());
+			}
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
 			t.constant = d.castingType == RE::MagicSystem::CastingType::kConstantEffect;
 			if (eff->GetFormID() == silentId) {
@@ -1025,7 +1035,7 @@ namespace Plugin
 					Restore(d.enchantEffectArt, t.ownEnch, c.art);
 					// a row the player set to Vanilla: its own art stays reachable, so another caster's look with its own color
 					// still dresses it (a rank left to Strange Wards or Strange Runes stays theirs)
-					if (t.row < kRows && !RowColor(t.row) && !StrangeWardsRow(t.row) && !RunesOwn(t)) {
+					if (t.row < kRows && !RowColor(t.row) && !StrangeWardsRow(t.row) && !RunesOwn(t) && !LeftAloneWard(t)) {
 						const bool looping = WearsWorn(t) || std::ranges::find(kShieldRows, t.row) != kShieldRows.end();
 						NoteGameArt(t.effect, t.ownCast, t.row, true, looping, false);
 						NoteGameArt(t.effect, t.ownHit, t.row, false, looping, use360);
@@ -1448,6 +1458,26 @@ namespace Plugin
 		return out;
 	}
 
+	std::vector<WardMod> WardMods()
+	{
+		std::scoped_lock     l{ gLock };
+		std::vector<WardMod> out;
+		for (const auto& t : gTargets) {
+			if (t.mod.empty() || t.how == How::kSilent) {
+				continue;
+			}
+			auto it = std::ranges::find_if(out, [&](const WardMod& a_m) { return SameText(a_m.plugin, t.mod); });
+			if (it == out.end()) {
+				out.push_back({ t.mod, {} });
+				it = std::prev(out.end());
+			}
+			const char* name = t.effect->GetFullName();
+			it->wards.emplace_back(name && *name ? name : Where(t.effect));
+		}
+		std::ranges::sort(out, {}, [](const WardMod& a_m) { return Lower(a_m.plugin); });
+		return out;
+	}
+
 	nlohmann::json WardsReport()
 	{
 		std::scoped_lock l{ gLock };
@@ -1462,7 +1492,8 @@ namespace Plugin
 																				 "silent" },
 				{ "why", t.why }, { "castingArt", ModelOf(d.castingArt) }, { "hitEffectArt", ModelOf(d.hitEffectArt) },
 				{ "enchantEffectArt", ModelOf(d.enchantEffectArt) }, { "ownCastingArt", ModelOf(t.ownCast) }, { "ownHitEffectArt", ModelOf(t.ownHit) },
-				{ "light", lightId(d.light) }, { "ownLight", lightId(t.ownLight) }, { "takenLight", lightId(t.takenLight) }, { "dressed", Worn(t) != nullptr } });
+				{ "light", lightId(d.light) }, { "ownLight", lightId(t.ownLight) }, { "takenLight", lightId(t.takenLight) }, { "dressed", Worn(t) != nullptr },
+				{ "mod", t.mod }, { "leftAlone", LeftAloneWard(t) } });
 		}
 		auto rows = json::object();
 		for (std::size_t i = 0; i < kRows; ++i) {

@@ -80,6 +80,12 @@ namespace Plugin
 	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
 	void                                             InstallAnimationHook();                                      // SKSE's post-load: every character's graph events - a shield's ward at once, a dome's wearer sneaking
 	std::vector<std::pair<std::string, std::string>> WardPerks();
+	struct WardMod
+	{
+		std::string              plugin;
+		std::vector<std::string> wards;  // each ward's name, as the menu's hover names them
+	};
+	std::vector<WardMod> WardMods();  // every plugin (not the base game) that last changed a ward found, A to Z
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
 	void    LoadSettings();
@@ -127,6 +133,8 @@ namespace Plugin
 	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
+	bool                         LeftAlone(std::string_view a_plugin);  // the menu's Leave alone list: that plugin's wards keep their own look
+	void                         SetLeftAlone(std::string_view a_plugin, bool a_on);
 	bool                         StrangeRunesLoaded();
 	void                         CheckArt(const char* a_why);       // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
 	bool                         QueueArtCheck(const char* a_why);  // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
@@ -232,7 +240,7 @@ namespace Plugin
 
 	void RegisterMenu();
 	void FlushHeldColor();          // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
-	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in a window of its own (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open)
+	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in its own window (DevBench.cpp's menuPage lists the pages)
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event

@@ -482,6 +482,23 @@ namespace
 			CHECK(!Read(legacy).alwaysOnBar);
 		}
 
+		// the Leave alone list (his 585): a tick per plugin, any case, A to Z, never a base game file, read back the same
+		CHECK(none.leaveAlone.empty() && dflt.leaveAlone.empty());
+		const auto la = Read("[LeaveAlone]\nZed Wards.esp=1\nmy wards.ESP=1\nOff.esp=0\nSkyrim.esm=1\nMY WARDS.esp=1\nbad.esp=x\n=1\n");
+		CHECK((la.leaveAlone == std::vector<std::string>{ "MY WARDS.esp", "Zed Wards.esp" }));  // the last spelling read stands
+		CHECK(LeftAloneIn(la, "My Wards.esp") && LeftAloneIn(la, "zed wards.esp") && !LeftAloneIn(la, "Off.esp") && !LeftAloneIn(la, "Skyrim.esm"));
+		CHECK(BaseGameFile("dawnguard.ESM") && BaseGameFile("Update.esm") && !BaseGameFile("ccmtysse001-knightsofthenine.esl"));
+		std::ostringstream laOut;
+		WriteSettingsText(la, laOut);
+		CHECK(laOut.str().find("[LeaveAlone]\nMY WARDS.esp=1\nZed Wards.esp=1\n") != std::string::npos);
+		CHECK(Read(laOut.str()).leaveAlone == la.leaveAlone);
+		auto laSet = la;
+		SetLeftAloneIn(laSet, "MY WARDS.esp", false);
+		SetLeftAloneIn(laSet, " New.esp ", true);
+		Normalize(laSet);
+		CHECK((laSet.leaveAlone == std::vector<std::string>{ "New.esp", "Zed Wards.esp" }));
+		CHECK(Read("[Settings]\nZed.esp=1\n").leaveAlone.empty());  // a key under another section is no tick
+
 		// what a row wears
 		SettingsValues s;
 		CHECK(RowColorOf(s, 0) == kWhite);                     // Lesser: the white end of the ladder
