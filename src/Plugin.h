@@ -137,10 +137,11 @@ namespace Plugin
 	void                         SetLeftAlone(std::string_view a_plugin, bool a_on);
 	std::vector<std::string>     LeftAloneMods();
 	bool                         StrangeRunesLoaded();
-	void                         CheckArt(const char* a_why);       // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
-	bool                         QueueArtCheck(const char* a_why);  // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
-	std::optional<Color>         RowColor(std::size_t a_row);       // what the row wears now; nothing = Vanilla
-	std::optional<Color>         SlotColor(std::size_t a_slot);     // a row's (RowColor) or a look's own color; nothing = no art of ours
+	std::size_t                  RunesLitRow(const RE::EffectSetting* a_effect);  // a ward left to Strange Runes or Vanilla whose Strange Runes light we replace: its rank, else kRows
+	void                         CheckArt(const char* a_why);                     // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
+	bool                         QueueArtCheck(const char* a_why);                // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
+	std::optional<Color>         RowColor(std::size_t a_row);                     // what the row wears now; nothing = Vanilla
+	std::optional<Color>         SlotColor(std::size_t a_slot);                   // a row's (RowColor) or a look's own color; nothing = no art of ours
 	LookPick                     LookOf(std::size_t a_look);
 	std::array<LookPick, kLooks> Looks();
 	void                         SetLook(std::size_t a_look, LookPick a_pick);

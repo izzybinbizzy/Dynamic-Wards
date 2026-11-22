@@ -958,7 +958,7 @@ namespace Plugin
 			shared += c.shared;
 		}
 		return { { "sharedColourTracks", shared }, { "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
-			{ "sharedColourTracksMostOnACopy", gSharedMost },{ "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
+			{ "sharedColourTracksMostOnACopy", gSharedMost }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}

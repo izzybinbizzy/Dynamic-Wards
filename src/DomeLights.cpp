@@ -68,6 +68,11 @@ namespace Plugin
 			RE::NiPointer<RE::NiNode>       node;
 			RE::NiPointer<RE::NiPointLight> light;
 			RE::NiPointer<RE::BSLight>      bs;
+			// what the last round chose for this hand (devbench's lights report): the ward's rank row, the slot it wears, where the color came from
+			std::size_t row{ kRows };
+			std::size_t use{ kSlots };
+			const char* from{ "none" };
+			Color       color{ 0 };
 		};
 
 		std::mutex                            gLock;
@@ -376,6 +381,11 @@ namespace Plugin
 						a_effect = e->baseEffect;
 						return row;
 					}
+					// a ward left to Strange Runes' look or Vanilla: the apply took Strange Runes' light off, our hand light takes its color
+					if (const auto row = RunesLitRow(e ? e->baseEffect : nullptr); row < kRows) {
+						a_effect = e->baseEffect;
+						return row;
+					}
 					// another caster's ward of a Vanilla rank wears the game's art: its rank, so his look's color reaches his hand light
 					if (!a_actor->IsPlayerRef()) {
 						if (const auto row = GameRankRow(e ? e->baseEffect : nullptr, art); row < kRows) {
@@ -419,14 +429,20 @@ namespace Plugin
 				auto&                    h = a_hands.h[slot];
 				const RE::EffectSetting* effect = nullptr;
 				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect) : kRows;
-				const auto               use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
-				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light
-				auto color = use < kSlots ? SlotColor(use) : std::nullopt;
+				const bool               runes = row < kRows && RunesLitRow(effect) < kRows;
+				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light. A ward left to
+				// Strange Runes on the player's look wears the color of the light Strange Runes set (its rank's row color is not shown)
+				const auto  their = row < kRows ? TheirSlot(a_actor, row) : kSlots;
+				const auto  use = runes && their == row ? kSlots : their;
+				auto        color = use < kSlots ? SlotColor(use) : std::nullopt;
+				const char* from = color ? "slot" : "none";
 				if (!color && row < kRows) {
 					color = GameLightColor(effect);
+					from = !color ? "none" : runes ? "strange runes" :
+					                                 "record";
 				}
-				auto*                    node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
-				auto*                    parent = node ? node->AsNode() : nullptr;
+				auto* node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
+				auto* parent = node ? node->AsNode() : nullptr;
 				if (!parent || (h.light && h.node.get() != parent)) {
 					DropHand(h, a_scene);
 				}
@@ -442,6 +458,10 @@ namespace Plugin
 						++gHandsMade;
 					}
 				}
+				h.row = row;
+				h.use = use;
+				h.from = from;
+				h.color = *color;
 			}
 		}
 
@@ -778,11 +798,19 @@ namespace Plugin
 		const auto       it = player ? gHands.find(player->GetFormID()) : gHands.end();
 		const bool       leftLit = it != gHands.end() && it->second.h[0].light, rightLit = it != gHands.end() && it->second.h[1].light;
 		std::size_t      lights = 0;
+		auto             hands = nlohmann::json::array();
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
+			for (std::size_t s = 0; s < 2; ++s) {
+				if (const auto& h = a.h[s]; h.light) {
+					hands.push_back({ { "actor", std::format("{:08X}", id) }, { "hand", s == 0 ? "left" : "right" },
+						{ "row", h.row < kRows ? std::string(kTokens[h.row]) : std::string("none") },
+						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) } });
+				}
+			}
 		}
 		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
 			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
-			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "handLightsEach", std::move(hands) }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
 	}
 }

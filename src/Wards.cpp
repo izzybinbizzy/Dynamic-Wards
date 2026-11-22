@@ -397,6 +397,33 @@ namespace Plugin
 			}
 		}
 
+		// one dark copy per light (the shared StrangeRunes.h way): the ward still finds a light to make and it lights nothing. Strange Runes'
+		// menu sets a light only on a ward effect that has one, so its next pick still lands, and the art check notes it (gLock)
+		std::unordered_map<const RE::TESObjectLIGH*, RE::TESObjectLIGH*> gDark;
+
+		bool IsDark(const RE::TESObjectLIGH* a_light)
+		{
+			return a_light && std::ranges::any_of(gDark, [&](const auto& a_p) { return a_p.second == a_light; });
+		}
+
+		// radius 1, never 0, so no attenuation divides by zero; made at data load for the lights known then (FindWards)
+		RE::TESObjectLIGH* DarkOf(RE::TESObjectLIGH* a_light)
+		{
+			if (!a_light || IsDark(a_light)) {
+				return a_light;
+			}
+			auto& dark = gDark[a_light];
+			if (!dark) {
+				dark = NewForm<RE::TESObjectLIGH>();
+				if (dark) {
+					dark->data = a_light->data;
+					dark->data.radius = 1;
+					dark->fade = 0.0f;
+				}
+			}
+			return dark;
+		}
+
 		// off: take the light and remember it. on: give back what was taken, else the light it loaded with.
 		void ApplyLight(Target& a_t, bool a_on, bool a_restoreOwn, std::size_t& a_changed)
 		{
@@ -409,9 +436,10 @@ namespace Plugin
 				}
 				return;
 			}
-			if (!light) {
-				auto* back = a_t.takenLight ? a_t.takenLight : (a_restoreOwn ? a_t.ownLight : nullptr);
-				if (back) {
+			// a dark copy of ours (a ward that was left to Strange Runes) counts as no light
+			if (!light || IsDark(light)) {
+				auto* back = a_t.takenLight ? a_t.takenLight : (a_restoreOwn || light ? a_t.ownLight : nullptr);
+				if (back != light) {
 					light = back;
 					++a_changed;
 				}
@@ -468,6 +496,23 @@ namespace Plugin
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
+		}
+
+		// Strange Runes' scripts set a light on every MagicWard effect: on a ward we leave to its look (or Vanilla) that light is put out and
+		// DomeLights.cpp hangs our hand light in its color, so one light shows (his order 2026-11-22)
+		bool RunesLight(const Target& a_t)
+		{
+			return a_t.how != How::kSilent && !LeftAloneWard(a_t) && a_t.row < kRows && StrangeRunesLoaded() && a_t.effect->HasKeywordString("MagicWard");
+		}
+
+		// the wards whose record light the apply takes off: our casting art (DomeLights.cpp lights the hand), or Strange Runes' light above
+		bool TakesLight(const Target& a_t)
+		{
+			if (a_t.how == How::kSilent) {
+				return false;
+			}
+			const Art* a = Worn(a_t);
+			return a ? (a_t.how == How::kTable || a_t.castWard) : RunesLight(a_t);
 		}
 
 		// the table entry of a ward we found, or nullptr (gLock held)
@@ -913,6 +958,14 @@ namespace Plugin
 			}
 		}
 		std::scoped_lock l{ gLock };
+		// the dark copies made at data load, off any later thread: every ward's own light and Strange Runes' Amber light
+		if (StrangeRunesLoaded()) {
+			for (const auto& t : found) {
+				DarkOf(t.ownLight);
+			}
+			DarkOf(RE::TESForm::LookupByEditorID<RE::TESObjectLIGH>("MagicLightFireInHand"));
+			SKSE::log::info("wards: {} dark copies of Strange Runes' ward lights made", gDark.size());
+		}
 		gShieldEntries = std::move(entries);
 		gSharedEnchant = shared;
 		gTargets = std::move(found);
@@ -930,6 +983,13 @@ namespace Plugin
 		SKSE::log::info("wards: {} found ({} from the 1.0 table), {} left alone, {} always on with ward art ({} in a row without worn copies); Legacy Crusader shields {}",
 			gTargets.size(), std::ranges::count_if(gTargets, [](const Target& a) { return a.how == How::kTable; }), gSkipped, always, noCopy,
 			gShields.empty() ? "not in this load order" : std::format("{} found", gShields.size()));
+	}
+
+	std::size_t RunesLitRow(const RE::EffectSetting* a_effect)
+	{
+		std::scoped_lock l{ gLock };
+		const auto*      t = a_effect ? TargetOf(a_effect) : nullptr;
+		return t && !Worn(*t) && RunesLight(*t) ? t->row : kRows;
 	}
 
 	bool StrangeRunesLoaded()
@@ -953,19 +1013,24 @@ namespace Plugin
 		{
 			std::scoped_lock l{ gLock };
 			for (const auto& t : gTargets) {
+				const auto& e = t.effect->data;
+				// a light the apply took off (or darkened) and a script put back (Strange Runes' menu) would be a second light on the hand
+				if (e.light && TakesLight(t) && (Worn(t) || !IsDark(e.light))) {
+					++swapped;
+					continue;
+				}
 				const Art* a = Worn(t);
 				if (!a) {
 					continue;
 				}
-				const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
-				const auto& e = t.effect->data;
+				const auto w = DressOf(t, a);  // every slot ApplyAll dresses
 				if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
 					++swapped;
 				}
 			}
 		}
 		if (swapped) {
-			SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s) (seen {}); dressing them again", swapped, a_why);
+			SKSE::log::info("[WARD] another mod swapped the art or light of {} ward(s) (seen {}); dressing them again", swapped, a_why);
 			ApplyAll(kWhyArtSwapped);
 		} else {
 			CheckUnlock(kWhyUnlock);
@@ -1083,19 +1148,20 @@ namespace Plugin
 				if (t.how == How::kSilent) {
 					ApplyLight(t, false, false, quiet);
 				} else {
-					// only a ward whose casting art is ours has its light decided here; one wearing its own hand art keeps its own light
-					const bool ourHand = Worn(t) && (t.how == How::kTable || t.castWard);
-					if (ourHand) {
-						if (slot) {
+					// a ward whose casting art is ours, or one Strange Runes lights, has its light decided here; one wearing another mod's
+					// hand art keeps its own light
+					if (TakesLight(t)) {
+						if (slot && !IsDark(slot)) {
 							t.takenLight = slot;  // back when the row turns Vanilla
 						}
-						// another caster on the Vanilla look gets a hand light in this light's color (DomeLights.cpp)
-						NoteTheirLight(t.effect, t.takenLight ? t.takenLight : t.ownLight);
+						// another caster on the Vanilla look, and a ward left to Strange Runes, gets a hand light in this light's color (DomeLights.cpp)
+						auto* const theirs = t.takenLight ? t.takenLight : t.ownLight;
+						NoteTheirLight(t.effect, theirs);
 						// the game's casting light never reaches the land, so DomeLights.cpp hangs the hand light itself on every caster and the
-						// effect carries none: two lights on one hand would double the caster
-						slot = nullptr;
+						// effect carries none (a ward left to Strange Runes carries its light's dark copy): two lights on one hand would double it
+						slot = Worn(t) ? nullptr : DarkOf(theirs);
 					} else {
-						// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
+						// a Vanilla row (Strange Runes not loaded), or a ward wearing another mod's hand art, keeps (or gets back) its own light
 						ApplyLight(t, true, Worn(t) != nullptr, quiet);
 					}
 				}
