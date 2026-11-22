@@ -376,6 +376,13 @@ namespace Plugin
 						a_effect = e->baseEffect;
 						return row;
 					}
+					// another caster's ward of a Vanilla rank wears the game's art: its rank, so his look's color reaches his hand light
+					if (!a_actor->IsPlayerRef()) {
+						if (const auto row = GameRankRow(e ? e->baseEffect : nullptr, art); row < kRows) {
+							a_effect = e->baseEffect;
+							return row;
+						}
+					}
 				}
 			}
 			if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
@@ -413,8 +420,11 @@ namespace Plugin
 				const RE::EffectSetting* effect = nullptr;
 				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect) : kRows;
 				const auto               use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
-				const auto               color = use < kSlots ? SlotColor(use) : row < kRows ? GameLightColor(effect) :
-				                                                                               std::nullopt;
+				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light
+				auto color = use < kSlots ? SlotColor(use) : std::nullopt;
+				if (!color && row < kRows) {
+					color = GameLightColor(effect);
+				}
 				auto*                    node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
 				auto*                    parent = node ? node->AsNode() : nullptr;
 				if (!parent || (h.light && h.node.get() != parent)) {

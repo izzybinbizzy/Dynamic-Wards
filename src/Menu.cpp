@@ -506,7 +506,8 @@ namespace Plugin
 				if (m.wards.size() > 8) {
 					names += Fill(T(" and {} more"), std::to_string(m.wards.size() - 8));
 				}
-				SetItemTooltip("%s", Fill(T("Its wards: {}."), names).c_str());
+				const auto tip = Fill(T("Its wards: {}."), names);
+				SetItemTooltip("%s", safe ? tip.c_str() : (tip + " " + T("Its file name cannot be kept in the settings file, so it cannot be ticked.")).c_str());
 			}
 		}
 

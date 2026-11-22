@@ -224,8 +224,10 @@ namespace Plugin
 	void                 PublishTheirs();
 	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
 	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) right before it copies one
-	void           LookHandArt(RE::ActorMagicCaster* a_caster);
+	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) right before it copies one.
+	// True when the art is a ward's: ours, or a Vanilla rank's game art
+	bool           LookHandArt(RE::ActorMagicCaster* a_caster);
+	std::size_t    GameRankRow(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art);  // a Vanilla rank's game art: its row, else kRows
 	void           NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
 	void           ResolveFactions();                                 // data load, after MakeArt

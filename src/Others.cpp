@@ -308,13 +308,16 @@ namespace Plugin
 			{
 				auto* art = a_art;
 				Guarded("a ward about to load in a hand", [a_task, &art]() {
-					if (!art || !OurArt(art)) {
+					// our art, or (with a rank on Vanilla) the game's own: LookHandArt sorts out which
+					const bool our = art && OurArt(art);
+					if (!art || (!our && !gAnyGame)) {
 						return;
 					}
-					auto* caster = reinterpret_cast<RE::ActorMagicCaster*>(static_cast<std::byte*>(a_task) - kCloneTaskAt);
-					LookHandArt(caster);
+					auto*      caster = reinterpret_cast<RE::ActorMagicCaster*>(static_cast<std::byte*>(a_task) - kCloneTaskAt);
+					const bool ward = LookHandArt(caster);
 					art = caster->castingArt;
-					if (caster->actor) {
+					// any other spell's art copy wakes nothing
+					if (caster->actor && (our || ward)) {
 						NoteHands(caster->actor->GetFormID());
 					}
 				});
@@ -373,15 +376,15 @@ namespace Plugin
 	// Another caster's ward IN THE HAND wears his look from the start. His magic caster attaches its casting art itself (never an art effect, so
 	// InitHook never sees it), from a copy it starts once per art (HandCloneHook): right before that, the caster is handed the art his look wears.
 	// No allocation; the tables are read-only after data load, GameArt takes gLock
-	void LookHandArt(RE::ActorMagicCaster* a_caster)
+	bool LookHandArt(RE::ActorMagicCaster* a_caster)
 	{
 		auto* art = a_caster ? a_caster->castingArt : nullptr;
 		if (!art || a_caster->castingArtData.attachedArt) {
-			return;
+			return false;
 		}
 		auto* actor = a_caster->actor;
 		if (!actor || actor->IsPlayerRef()) {
-			return;
+			return false;
 		}
 		// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
 		const auto effectOfArt = [&]() -> const RE::EffectSetting* {
@@ -407,23 +410,23 @@ namespace Plugin
 			ours = gameEffect ? GameOurs(gameEffect, art) : std::nullopt;
 		}
 		if (!ours) {
-			return;
+			return false;
 		}
 		// the player's look keeps the art he holds; a look of its own wears its art when installed; Vanilla the game's
 		const auto        slot = TheirSlot(actor, ours->row);
 		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->kind) : nullptr;
 		if (slot < kSlots && !look) {
-			return;
+			return true;
 		}
 		RE::BGSArtObject* swap = look;
 		if (!look) {
 			if (gameEffect) {
-				return;  // already the game's own art
+				return true;  // already the game's own art
 			}
 			const RE::EffectSetting* effect = effectOfArt();
 			auto*                    game = effect ? GameArt(effect, art) : nullptr;
 			if (!game || game == art) {
-				return;
+				return true;
 			}
 			const char* model = game->GetModel();
 			swap = model && *model ? game : nullptr;  // the effect had no art of its own: none, as the game draws it
@@ -432,6 +435,7 @@ namespace Plugin
 		if (gHandSwapped.fetch_add(1) < 20) {
 			SKSE::log::info("other casters: {:08X}'s ward in the hand wears {}", actor->GetFormID(), look ? "his look's art" : "the game's own casting art");
 		}
+		return true;
 	}
 
 	void InstallOthers()
@@ -529,6 +533,12 @@ namespace Plugin
 			                              Kind::kDome;
 			gNext.game[a_effect].emplace_back(a_theirs, Ours{ a_row, kind });
 		}
+	}
+
+	std::size_t GameRankRow(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art)
+	{
+		const auto ours = gAnyGame && a_effect && a_art ? GameOurs(a_effect, a_art) : std::nullopt;
+		return ours ? ours->row : kRows;
 	}
 
 	void NoteTheirLight(const RE::EffectSetting* a_effect, const RE::TESObjectLIGH* a_light)
