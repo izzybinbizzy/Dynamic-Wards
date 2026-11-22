@@ -379,32 +379,49 @@ namespace Plugin
 		if (!art || a_caster->castingArtData.attachedArt) {
 			return;
 		}
-		const auto ours = gOurs.find(art);
-		auto*      actor = a_caster->actor;
-		if (ours == gOurs.end() || !actor || actor->IsPlayerRef()) {
+		auto* actor = a_caster->actor;
+		if (!actor || actor->IsPlayerRef()) {
+			return;
+		}
+		// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
+		const auto effectOfArt = [&]() -> const RE::EffectSetting* {
+			const auto  source = static_cast<std::size_t>(a_caster->castingSource);
+			const auto* spell = source < RE::Actor::SlotTypes::kTotal ? actor->GetActorRuntimeData().selectedSpells[source] : nullptr;
+			if (!spell) {
+				return nullptr;
+			}
+			for (const auto* e : spell->effects) {
+				if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
+					return e->baseEffect;
+				}
+			}
+			return nullptr;
+		};
+		// our art, or the game's own art of a Vanilla rank (as the art hook finds it): his look's hand then matches his dome
+		const RE::EffectSetting* gameEffect = nullptr;
+		std::optional<Ours>      ours;
+		if (const auto it = gOurs.find(art); it != gOurs.end()) {
+			ours = it->second;
+		} else if (gAnyGame) {
+			gameEffect = effectOfArt();
+			ours = gameEffect ? GameOurs(gameEffect, art) : std::nullopt;
+		}
+		if (!ours) {
 			return;
 		}
 		// the player's look keeps the art he holds; a look of its own wears its art when installed; Vanilla the game's
-		const auto        slot = TheirSlot(actor, ours->second.row);
-		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->second.kind) : nullptr;
+		const auto        slot = TheirSlot(actor, ours->row);
+		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->kind) : nullptr;
 		if (slot < kSlots && !look) {
 			return;
 		}
 		RE::BGSArtObject* swap = look;
 		if (!look) {
-			// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
-			const auto               source = static_cast<std::size_t>(a_caster->castingSource);
-			const auto*              spell = source < RE::Actor::SlotTypes::kTotal ? actor->GetActorRuntimeData().selectedSpells[source] : nullptr;
-			const RE::EffectSetting* effect = nullptr;
-			if (spell) {
-				for (const auto* e : spell->effects) {
-					if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
-						effect = e->baseEffect;
-						break;
-					}
-				}
+			if (gameEffect) {
+				return;  // already the game's own art
 			}
-			auto* game = effect ? GameArt(effect, art) : nullptr;
+			const RE::EffectSetting* effect = effectOfArt();
+			auto*                    game = effect ? GameArt(effect, art) : nullptr;
 			if (!game || game == art) {
 				return;
 			}

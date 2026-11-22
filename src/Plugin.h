@@ -85,7 +85,7 @@ namespace Plugin
 		std::string              plugin;
 		std::vector<std::string> wards;  // each ward's name, as the menu's hover names them
 	};
-	std::vector<WardMod> WardMods();  // every plugin (not the base game) that last changed a ward found, A to Z
+	std::vector<WardMod> WardMods();  // every plugin (not the base game) that added a ward effect found, A to Z
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
 	void    LoadSettings();

@@ -490,11 +490,15 @@ namespace Plugin
 				return;
 			}
 			for (const auto& m : mods) {
-				bool on = LeftAlone(m.plugin);
+				bool       on = LeftAlone(m.plugin);
+				const bool safe = LeaveAloneKeySafe(m.plugin);
+				// a name the settings file cannot keep (a leading ';' or '#', an '='): a tick would be lost at the next start
+				BeginDisabled(!safe);
 				if (Checkbox(m.plugin.c_str(), &on)) {
 					SetLeftAlone(m.plugin, on);
 					Changed();
 				}
+				EndDisabled();
 				std::string names;
 				for (std::size_t i = 0; i < m.wards.size() && i < 8; ++i) {
 					names += (i ? ", " : "") + m.wards[i];

@@ -174,6 +174,8 @@ namespace Plugin
 		constexpr auto    kCopyHeld = std::chrono::seconds(30);
 		std::vector<Copy> gCopies;
 		std::size_t       gCopiesLogged = 0;  // gNewCopies at the last apply's log line
+		// every copy noted since the load, and the shared tracks they carried: the live sum drops to 0 once the copies age out
+		std::size_t gCopiesNoted = 0, gSharedSeen = 0, gSharedMost = 0;
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
 		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
 		constexpr const char*              kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
@@ -782,7 +784,11 @@ namespace Plugin
 				return;
 			}
 			a_root->IncRefCount();
-			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now(), SharedTracks(a_root) });
+			const auto shared = SharedTracks(a_root);
+			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now(), shared });
+			++gCopiesNoted;
+			gSharedSeen += shared;
+			gSharedMost = std::max(gSharedMost, shared);
 		}
 
 		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted. A row never colored
@@ -950,7 +956,8 @@ namespace Plugin
 		for (const auto& c : gCopies) {
 			shared += c.shared;
 		}
-		return { { "sharedColourTracks", shared }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
+		return { { "sharedColourTracks", shared }, { "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
+			{ "sharedColourTracksMostOnACopy", gSharedMost },{ "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}

@@ -73,10 +73,17 @@ namespace Plugin
 		return std::ranges::any_of(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, a_file); });
 	}
 
+	// a plugin name the file can carry as a key: a leading ';' or '#' reads back as a comment, an '=' splits it, a control character adds a line
+	inline bool LeaveAloneKeySafe(std::string_view a_file)
+	{
+		return !a_file.empty() && a_file.front() != ';' && a_file.front() != '#' && !a_file.contains('=') &&
+		       std::ranges::none_of(a_file, [](char a_c) { return static_cast<unsigned char>(a_c) < 0x20; });
+	}
+
 	inline void SetLeftAloneIn(SettingsValues& a_s, std::string_view a_file, bool a_on)
 	{
 		std::erase_if(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, a_file); });
-		if (a_on) {
+		if (a_on && LeaveAloneKeySafe(Trim(a_file))) {
 			a_s.leaveAlone.push_back(Trim(a_file));
 		}
 	}
