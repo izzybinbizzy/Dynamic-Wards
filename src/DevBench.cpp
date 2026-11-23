@@ -31,10 +31,10 @@ namespace Plugin
 			R"json({"description":"Dynamic Wards - every ward effect found, what each row wears now (its color), how the colors were applied (palettes swapped on the graphics card, glow blocks set), the lights, the settings, the others test switch with how many art effects it swapped (others, others.swapped), Reticle Arcs' ward bar (arcBar: registered, shown, percent), and what each of its passes costs (cost: microseconds, the average of about the last 20 runs and the worst since the load). Read only.","inputSchema":{"type":"object","properties":{}},"readOnly":true})json";
 
 		constexpr const char* kTool =
-			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default, vanilla, strangewards or strangerunes - those two a rank only), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), domeboost (0-100, the menu's Dome color boost; 0 off), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, alwaysonbar (0/1; alwaysonbar: Reticle Arcs' Ward strength bar for an always-on ward too), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), perk:<0xID~Plugin>, and the test switches never saved: domeLights (0 auto, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default), domeShadow (0/1: the dome lights cast shadows - a trial), others (0/1: every caster who is not the player wears the game's own ward art, his hand light in the game's own light color), menuPage (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open: that menu page in a window of its own, for a picture); and look:<Look> (color = mine, vanilla, default - a faction only - or RRGGBB; Looks: Followers, Enemies, Neutral and the faction tokens of the inspect report's others.looks keys), saved. Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default, vanilla, strangewards or strangerunes"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
+			R"json({"description":"Dynamic Wards (every ward gets its own color and dome): change its settings and drive its preview. action=set changes one menu setting the way the menu does (saved, then applied) and replies with the wards' state after it; action=apply dresses every ward again; action=preview plays the dome a row wears now on the player for value seconds (a rank row's normal dome plays as its looping worn copy where the row has one: the cast dome put on as plain art shows only its idle centre; the 360 dome loops already). Settings: ladder (color RRGGBB), stages (3-5), reversed (0/1), row:<Row> (color RRGGBB, default, vanilla, strangewards or strangerunes - those two a rank only), opacity (25-100), transparency (0-90), brightness (25-175), castingglow (25-175, the menu's Hand Brightness), domeboost (0-100, the menu's Dome color boost; 0 off), dome (0 = 360, 1 = normal), unlock (0-4), wardLight, lights, crusader, alwaysonbar (0/1; alwaysonbar: Reticle Arcs' Ward strength bar for an always-on ward too), shield:<Row> (Spellbreaker, Crusader or Reman: 0 off - that shield raises no ward, 1 normal dome, 2 360 dome), perk:<0xID~Plugin>, and the test switches never saved: domeLights (0 auto, 2 off), lighting (0 Community Shaders, 1 ENB, 2 Vanilla), domeKept (the share of a color's saturation the screen keeps on a dome, percent, that the domes are corrected for; 0 none, -1 the default), domeShadow (0/1: the dome lights cast shadows - a trial), others (0/1: every caster who is not the player wears the game's own ward art, his hand light in the game's own light color), menuPage (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open, 4 Colors at its end with Other mods' wards open: that menu page in a window of its own, for a picture); look:<Look> (color = mine, vanilla, default - a faction only - or RRGGBB; Looks: Followers, Enemies, Neutral and the faction tokens of the inspect report's others.looks keys), saved; and leavealone:<Plugin> (value 1: that plugin's wards keep their own look, 0: they take their rank's color; the plugin as the inspect report's wards[].mod names it), saved. Rows are the inspect report's rows keys. Read state with inspect kind=dynamicwards.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["set","apply","preview"]},"setting":{"type":"string","description":"set: the setting name, e.g. opacity, ladder, row:Adept"},"value":{"type":"number","description":"set: the number; preview: seconds"},"color":{"type":"string","description":"set: RRGGBB for ladder and row:<Row>; row:<Row> also takes default, vanilla, strangewards or strangerunes"},"row":{"type":"string","description":"preview: the row, e.g. Adept"}},"required":["action"]}})json";
 
 		constexpr const char* kSetDescriptor =
-			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default, vanilla, strangewards or strangerunes) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | domeboost (0-100, the menu's Dome color boost; 0 off) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | alwaysonbar (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | perk:<0xID~Plugin> | domeLights (0 auto, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | domeKept (percent the domes are corrected for, 0 none, -1 the default; a test, not saved) | domeShadow (0/1, the dome lights cast shadows; a test, not saved) | others (0/1, every caster who is not the player wears the game's own ward art, his hand light in the game's own light color; a test, not saved) | menuPage (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open: that page in a window of its own; a test, not saved) | look:<Look> (color = mine, vanilla, default - a faction only - or RRGGBB; other casters' looks: Followers, Enemies, Neutral and the faction tokens) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
+			R"json({"description":"Dynamic Wards - change one menu setting the way the menu does (saved, then applied on the main thread). The same as the dynamicwards.control tool's action=set. args: set = ladder (color = RRGGBB) | stages (3-5) | reversed (0/1) | row:<Row> (color = RRGGBB, default, vanilla, strangewards or strangerunes) | opacity (25-100) | transparency (0-90, the domes' facing fill) | brightness (25-175, the wards' glow and lights; 100 = as built) | castingglow (25-175, the menu's Hand Brightness: the casting art and its light alone) | domeboost (0-100, the menu's Dome color boost; 0 off) | dome (0 360, 1 normal) | unlock (0-4) | wardLight | lights | crusader | alwaysonbar (0/1) | shield:<Row> (Spellbreaker / Crusader / Reman: 0 off = that shield raises no ward, 1 normal dome, 2 360 dome) | perk:<0xID~Plugin> | domeLights (0 auto, 2 off; not saved) | lighting (0 Community Shaders, 1 ENB, 2 Vanilla; a test, not saved) | domeKept (percent the domes are corrected for, 0 none, -1 the default; a test, not saved) | domeShadow (0/1, the dome lights cast shadows; a test, not saved) | others (0/1, every caster who is not the player wears the game's own ward art, his hand light in the game's own light color; a test, not saved) | menuPage (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open, 4 Colors at its end with Other mods' wards open: that page in a window of its own; a test, not saved) | look:<Look> (color = mine, vanilla, default - a faction only - or RRGGBB; other casters' looks: Followers, Enemies, Neutral and the faction tokens) | leavealone:<Plugin> (value 1: that plugin's wards keep their own look, 0: they take their rank's color) | preview:<Row> (value = seconds; plays the dome that row wears now on the player - a rank row's normal dome as its looping worn copy where it has one), value = number.","inputSchema":{"type":"object","properties":{"set":{"type":"string"},"value":{"type":"number"},"color":{"type":"string"}}}})json";
 
 		// the color grading the frame is drawn with: the place's own (base) and the blend with any modifiers on top (now) -
 		// a dome's color read off a picture means something only beside these
@@ -84,7 +84,7 @@ namespace Plugin
 			try {
 				// the ward table (its effects' keywords) and the image space are game data, read on the main thread; not read when it
 				// does not answer within 0.5 s (a loading screen, a pause, a slow frame)
-				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() } }; },
+				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() }, { "casters", HandCastersNow() } }; },
 					std::chrono::milliseconds(500));
 				const bool refused = game && DevBenchGlue::Refused(*game);
 				const bool read = game && !refused;
@@ -92,6 +92,16 @@ namespace Plugin
 				                    refused ? json{ { "wards", "not read: the main thread refused the task" }, { "refusal", *game } } :
 				                              json{ { "wards", "not read: the main thread did not answer within 0.5 s (a loading screen, a pause or a slow frame)" } };
 				report["domeLights"] = DomeLightsReport();
+				// each lit hand's caster light read on the main thread, merged into its handLightsEach row (left out when not read)
+				if (read && (*game).contains("casters")) {
+					const auto& casters = (*game)["casters"];
+					for (auto& row : report["domeLights"]["handLightsEach"]) {
+						const auto key = row.value("actor", std::string()) + "/" + row.value("hand", std::string());
+						if (casters.contains(key)) {
+							row.update(casters[key]);
+						}
+					}
+				}
 				report["lighting"] = LightingReport();
 				report["colors"] = ColorsReport();
 				report["imageSpace"] = read ? (*game)["image"] : json(nullptr);
@@ -130,12 +140,12 @@ namespace Plugin
 			PlainSetting{ "domeKept", false, SetDomeKeptTest },
 			PlainSetting{ "domeShadow", false, [](int a_v) { SetDomeShadowTest(a_v != 0); } },
 			PlainSetting{ "others", false, [](int a_v) { SetOthersTest(std::clamp(a_v, 0, 1)); } },
-			PlainSetting{ "menuPage", false, [](int a_v) { ShowTestPage(std::clamp(a_v, -1, 3)); } },
+			PlainSetting{ "menuPage", false, [](int a_v) { ShowTestPage(std::clamp(a_v, -1, 4)); } },
 		};
 
 		json SettingNames()
 		{
-			json names = json::array({ "ladder", "row:<Row>", "shield:<Row>", "perk:<0xID~Plugin>", "look:<Look>" });
+			json names = json::array({ "ladder", "row:<Row>", "shield:<Row>", "perk:<0xID~Plugin>", "look:<Look>", "leavealone:<Plugin>" });
 			for (const auto& s : kPlain) {
 				names.push_back(std::string(s.name));
 			}
@@ -221,6 +231,12 @@ namespace Plugin
 					return std::nullopt;
 				}
 				SetLook(look, *pick);
+			} else if (a_key.starts_with("leavealone:")) {
+				const auto plugin = std::string_view(a_key).substr(11);
+				if (!IniSafe(plugin) || BaseGameFile(plugin)) {
+					return std::nullopt;
+				}
+				SetLeftAlone(plugin, value != 0);  // 1: that plugin's wards keep their own look
 			} else if (a_key.starts_with("row:")) {
 				const auto row = RowIndex(std::string_view(a_key).substr(4));
 				const auto want = Lower(a_color);

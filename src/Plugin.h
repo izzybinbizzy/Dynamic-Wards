@@ -80,9 +80,16 @@ namespace Plugin
 	bool                                             AlwaysOnDome(const RE::EffectSetting* a_effect);             // an always-on ward of ours that wears a dome (the Ward strength bar's switch)
 	void                                             InstallAnimationHook();                                      // SKSE's post-load: every character's graph events - a shield's ward at once, a dome's wearer sneaking
 	std::vector<std::pair<std::string, std::string>> WardPerks();
+	struct WardMod
+	{
+		std::string              plugin;
+		std::vector<std::string> wards;  // each ward's name, as the menu's hover names them
+	};
+	std::vector<WardMod> WardMods();  // every plugin (not the base game) that added a ward effect found, A to Z
 
 	// Settings.cpp: DynamicWards.ini, written by the menu
 	void    LoadSettings();
+	void    LoadAdvanced();  // the Advanced Settings file, once at data load, before any light (gTuning)
 	void    SaveSettings();
 	RowMode RowModeOf(std::size_t a_row);
 	Color   RowCustom(std::size_t a_row);
@@ -126,11 +133,15 @@ namespace Plugin
 	void                         SetShieldDome(std::size_t a_row, ShieldDome a_dome);
 	bool                         AlwaysOnBar();  // Reticle Arcs' Ward strength bar also for an always-on ward that wears a dome
 	void                         SetAlwaysOnBar(bool a_on);
+	bool                         LeftAlone(std::string_view a_plugin);  // the menu's Other mods' wards list: that plugin's wards keep their own look
+	void                         SetLeftAlone(std::string_view a_plugin, bool a_on);
+	std::vector<std::string>     LeftAloneMods();
 	bool                         StrangeRunesLoaded();
-	void                         CheckArt(const char* a_why);       // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
-	bool                         QueueArtCheck(const char* a_why);  // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
-	std::optional<Color>         RowColor(std::size_t a_row);       // what the row wears now; nothing = Vanilla
-	std::optional<Color>         SlotColor(std::size_t a_slot);     // a row's (RowColor) or a look's own color; nothing = no art of ours
+	std::size_t                  RunesLitRow(const RE::EffectSetting* a_effect);  // a ward left to Strange Runes or Vanilla whose Strange Runes light we replace: its rank, else kRows
+	void                         CheckArt(const char* a_why);                     // main thread: a ward whose art another mod swapped is dressed again, else the 360 unlock is re-read
+	bool                         QueueArtCheck(const char* a_why);                // CheckArt on the main thread, one queued at a time (a menu closing, her draw or cast); false when nothing could be queued
+	std::optional<Color>         RowColor(std::size_t a_row);                     // what the row wears now; nothing = Vanilla
+	std::optional<Color>         SlotColor(std::size_t a_slot);                   // a row's (RowColor) or a look's own color; nothing = no art of ours
 	LookPick                     LookOf(std::size_t a_look);
 	std::array<LookPick, kLooks> Looks();
 	void                         SetLook(std::size_t a_look, LookPick a_pick);
@@ -204,6 +215,7 @@ namespace Plugin
 	void           SetDomeMode(DomeMode a_mode);
 	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	nlohmann::json DomeLightsReport();
+	nlohmann::json HandCastersNow();  // main thread only: each lit hand's caster light now, keyed "<actor>/<hand>" (devbench)
 
 	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
 	void InstallOthers();  // SKSE's post-load: the hook on the art effect's Init
@@ -214,8 +226,10 @@ namespace Plugin
 	void                 PublishTheirs();
 	std::optional<Color> GameLightColor(const RE::EffectSetting* a_effect);          // the light the effect's own record carried
 	std::size_t          TheirSlot(RE::TESObjectREFR* a_caster, std::size_t a_row);  // the slot a caster's ward of a_row wears; kSlots = the game's art
-	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) right before it copies one
-	void           LookHandArt(RE::ActorMagicCaster* a_caster);
+	// another caster's ward in the hand: his magic caster is handed his look's art (the game's for Vanilla) right before it copies one.
+	// True when the art is a ward's: ours, or a Vanilla rank's game art
+	bool           LookHandArt(RE::ActorMagicCaster* a_caster);
+	std::size_t    GameRankRow(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art);  // a Vanilla rank's game art: its row, else kRows
 	void           NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
 		RE::BGSArtObject* a_wornHand, RE::BGSArtObject* a_wornDome);  // MakeArt: a row's or a look's art objects
 	void           ResolveFactions();                                 // data load, after MakeArt
@@ -231,7 +245,7 @@ namespace Plugin
 
 	void RegisterMenu();
 	void FlushHeldColor();          // Menu.cpp: a menu closed - a color still held (changed live) is saved and applied
-	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in a window of its own (-1 closed, 0 Colors, 1 Colors at its end, 2 Settings, 3 Colors at its end with Factions open)
+	void ShowTestPage(int a_page);  // devbench only, never saved: a menu page in its own window (DevBench.cpp's menuPage lists the pages)
 	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm);
 	void OfferToDevBench();
 	void WardsApplied(const char* a_why, std::size_t a_found, std::size_t a_dressed);  // DevBench.cpp: the dynamicwards.applied event

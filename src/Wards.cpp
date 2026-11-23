@@ -108,7 +108,9 @@ namespace Plugin
 			RE::TESObjectLIGH* ownLight{ nullptr };
 			RE::TESObjectLIGH* takenLight = nullptr;  // what was there when the switch took it off (another mod's light survives)
 			std::string        why;
-			bool               constant = false;  // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
+			bool               constant = false;   // a constant effect (an item's ward while held or worn): never cast, so it wears the worn copies
+			std::string        mod{};              // the plugin that added the effect, empty for the base game: the Other mods' wards list's name for it
+			bool               leftAlone = false;  // its mod is ticked in that list: set at each apply (ApplyLocked), read by Worn
 		};
 
 		struct Changes
@@ -395,6 +397,42 @@ namespace Plugin
 			}
 		}
 
+		// one dark copy per light (the shared StrangeRunes.h way): the ward still finds a light to make and it lights nothing. Strange Runes'
+		// menu sets a light only on a ward effect that has one, so its next pick still lands, and the art check notes it (gLock)
+		std::unordered_map<const RE::TESObjectLIGH*, RE::TESObjectLIGH*> gDark;
+
+		// the Other mods' wards list, made once on the main thread when the wards are found (the menu draws on the render thread; gLock)
+		std::vector<WardMod> gWardMods;
+		std::vector<WardMod> ReadWardMods();
+
+		bool IsDark(const RE::TESObjectLIGH* a_light)
+		{
+			return a_light && std::ranges::any_of(gDark, [&](const auto& a_p) { return a_p.second == a_light; });
+		}
+
+		// radius 1, never 0, so no attenuation divides by zero; made at data load for the lights known then (FindWards)
+		RE::TESObjectLIGH* DarkOf(RE::TESObjectLIGH* a_light)
+		{
+			if (!a_light || IsDark(a_light)) {
+				return a_light;
+			}
+			if (const auto it = gDark.find(a_light); it != gDark.end()) {
+				return it->second;
+			}
+			// stored only once made: a failed creation returns null (the slot then carries no light, as a dark copy would) and is tried again
+			auto* dark = NewForm<RE::TESObjectLIGH>();
+			if (!dark) {
+				return nullptr;
+			}
+			dark->data = a_light->data;
+			dark->data.radius = 1;
+			dark->fade = 0.0f;
+			// a light that lights nothing never takes one of the few shadow slots
+			dark->data.flags.reset(RE::TES_LIGHT_FLAGS::kSpotShadow, RE::TES_LIGHT_FLAGS::kHemiShadow, RE::TES_LIGHT_FLAGS::kOmniShadow);
+			gDark.emplace(a_light, dark);
+			return dark;
+		}
+
 		// off: take the light and remember it. on: give back what was taken, else the light it loaded with.
 		void ApplyLight(Target& a_t, bool a_on, bool a_restoreOwn, std::size_t& a_changed)
 		{
@@ -407,9 +445,10 @@ namespace Plugin
 				}
 				return;
 			}
-			if (!light) {
-				auto* back = a_t.takenLight ? a_t.takenLight : (a_restoreOwn ? a_t.ownLight : nullptr);
-				if (back) {
+			// a dark copy of ours (a ward that was left to Strange Runes) counts as no light
+			if (!light || IsDark(light)) {
+				auto* back = a_t.takenLight ? a_t.takenLight : (a_restoreOwn || light ? a_t.ownLight : nullptr);
+				if (back != light) {
 					light = back;
 					++a_changed;
 				}
@@ -454,12 +493,35 @@ namespace Plugin
 			return StrangeRunesRow(a_t.row) && a_t.effect->HasKeywordString("MagicWard");
 		}
 
+		// a ward of a plugin ticked in the Other mods' wards list keeps its own look, for every caster (his checklist 585)
+		bool LeftAloneWard(const Target& a_t)
+		{
+			return a_t.leftAlone;
+		}
+
 		const Art* Worn(const Target& a_t)
 		{
-			if (a_t.how == How::kSilent || RunesOwn(a_t)) {
+			if (a_t.how == How::kSilent || RunesOwn(a_t) || LeftAloneWard(a_t)) {
 				return nullptr;
 			}
 			return gRowArt[a_t.row];
+		}
+
+		// Strange Runes' scripts set a light on every MagicWard effect: on a ward we leave to its look (or Vanilla) that light is put out and
+		// DomeLights.cpp hangs our hand light in its color, so one light shows
+		bool RunesLight(const Target& a_t)
+		{
+			return a_t.how != How::kSilent && !LeftAloneWard(a_t) && a_t.row < kRows && StrangeRunesLoaded() && a_t.effect->HasKeywordString("MagicWard");
+		}
+
+		// the wards whose record light the apply takes off: our casting art (DomeLights.cpp lights the hand), or Strange Runes' light above
+		bool TakesLight(const Target& a_t)
+		{
+			if (a_t.how == How::kSilent) {
+				return false;
+			}
+			const Art* a = Worn(a_t);
+			return a ? (a_t.how == How::kTable || a_t.castWard) : RunesLight(a_t);
 		}
 
 		// the table entry of a ward we found, or nullptr (gLock held)
@@ -751,9 +813,13 @@ namespace Plugin
 			return;
 		}
 		std::unordered_map<RE::FormID, std::size_t> table;
+		std::unordered_set<RE::FormID>              gameRankWards;  // the game's own rank wards in the table: their rank follows the record
 		for (const auto& r : kTable) {
 			if (const auto id = dh->LookupFormID(r.id, r.file)) {
 				table[id] = RowOfToken(r.token);
+				if (std::string_view(r.file) == "Skyrim.esm" && table[id] < kRanks) {
+					gameRankWards.insert(id);
+				}
 			}
 		}
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
@@ -783,9 +849,13 @@ namespace Plugin
 			if (!eff) {
 				continue;
 			}
-			auto&      d = eff->data;
-			Target     t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
-				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {} };
+			auto&  d = eff->data;
+			Target t{ eff, kRows, How::kFound, Contains(ModelOf(d.castingArt), kWardHand), Contains(ModelOf(d.hitEffectArt), kWardBody),
+				Contains(ModelOf(d.enchantEffectArt), kWardBody), d.castingArt, d.hitEffectArt, d.enchantEffectArt, d.light, nullptr, {}, {}, {}, false };
+			// the plugin that added the effect: a patch that only edits the game's wards (the Unofficial Patch, a merge) is no ward's mod
+			if (const auto* file = eff->GetFile(0); file && !BaseGameFile(file->GetFilename())) {
+				t.mod = std::string(file->GetFilename());
+			}
 			const bool power = d.primaryAV == RE::ActorValue::kWardPower;
 			t.constant = d.castingType == RE::MagicSystem::CastingType::kConstantEffect;
 			if (eff->GetFormID() == silentId) {
@@ -800,8 +870,9 @@ namespace Plugin
 				continue;
 			} else if (it != table.end()) {
 				t.how = How::kTable;
-				t.row = it->second;
-				t.why = std::format("1.0 table: {}", kTokens[t.row]);
+				t.row = TableRank(it->second, gameRankWards.contains(eff->GetFormID()), d.minimumSkill);
+				t.why = t.row == it->second ? std::format("1.0 table: {}", kTokens[t.row]) :
+				                              std::format("1.0 table {}, moved to {} by its minimum skill {}", kTokens[it->second], kTokens[t.row], d.minimumSkill);
 			} else if (!t.castWard && !t.hitWard && !t.enchWard && !power) {
 				continue;
 			} else if (!power && d.archetype == RE::EffectSetting::Archetype::kScript) {
@@ -901,6 +972,16 @@ namespace Plugin
 			}
 		}
 		std::scoped_lock l{ gLock };
+		// the dark copies made at data load, off any later thread: every ward's own light and Strange Runes' Amber light
+		if (StrangeRunesLoaded()) {
+			for (const auto& t : found) {
+				if (t.effect && t.effect->HasKeywordString("MagicWard")) {
+					DarkOf(t.ownLight);
+				}
+			}
+			DarkOf(RE::TESForm::LookupByEditorID<RE::TESObjectLIGH>("MagicLightFireInHand"));
+			SKSE::log::info("wards: {} dark copies of Strange Runes' ward lights made", gDark.size());
+		}
 		gShieldEntries = std::move(entries);
 		gSharedEnchant = shared;
 		gTargets = std::move(found);
@@ -909,6 +990,7 @@ namespace Plugin
 			gTargetOf.emplace(gTargets[i].effect, i);
 		}
 		gSkipped = skipped;
+		gWardMods = ReadWardMods();
 		gShields = std::move(shields);
 		gCrusaderEnch = ench;
 		// (counted before ApplyAll decides who is dressed: a ward whose mod is unticked or whose row is Vanilla wears its own art;
@@ -918,6 +1000,13 @@ namespace Plugin
 		SKSE::log::info("wards: {} found ({} from the 1.0 table), {} left alone, {} always on with ward art ({} in a row without worn copies); Legacy Crusader shields {}",
 			gTargets.size(), std::ranges::count_if(gTargets, [](const Target& a) { return a.how == How::kTable; }), gSkipped, always, noCopy,
 			gShields.empty() ? "not in this load order" : std::format("{} found", gShields.size()));
+	}
+
+	std::size_t RunesLitRow(const RE::EffectSetting* a_effect)
+	{
+		std::scoped_lock l{ gLock };
+		const auto*      t = a_effect ? TargetOf(a_effect) : nullptr;
+		return t && !Worn(*t) && RunesLight(*t) ? t->row : kRows;
 	}
 
 	bool StrangeRunesLoaded()
@@ -941,19 +1030,24 @@ namespace Plugin
 		{
 			std::scoped_lock l{ gLock };
 			for (const auto& t : gTargets) {
+				const auto& e = t.effect->data;
+				// a light the apply took off (or darkened) and a script put back (Strange Runes' menu) would be a second light on the hand
+				if (e.light && TakesLight(t) && (Worn(t) || !IsDark(e.light))) {
+					++swapped;
+					continue;
+				}
 				const Art* a = Worn(t);
 				if (!a) {
 					continue;
 				}
-				const auto  w = DressOf(t, a);  // every slot ApplyAll dresses
-				const auto& e = t.effect->data;
+				const auto w = DressOf(t, a);  // every slot ApplyAll dresses
 				if ((w.cast && e.castingArt != w.cast) || (w.hit && e.hitEffectArt != w.hit) || (w.ench && e.enchantEffectArt != w.ench)) {
 					++swapped;
 				}
 			}
 		}
 		if (swapped) {
-			SKSE::log::info("[WARD] another mod swapped the art of {} dressed ward(s) (seen {}); dressing them again", swapped, a_why);
+			SKSE::log::info("[WARD] another mod swapped the art or light of {} ward(s) (seen {}); dressing them again", swapped, a_why);
 			ApplyAll(kWhyArtSwapped);
 		} else {
 			CheckUnlock(kWhyUnlock);
@@ -1003,6 +1097,11 @@ namespace Plugin
 		{
 			Applied out;
 			gUnlocked = Unlocked();
+			// the list changes only through a setting, and every setting change ends in an apply: read once here, not per ward
+			const auto leaveAlone = LeftAloneMods();
+			for (auto& t : gTargets) {
+				t.leftAlone = !t.mod.empty() && std::ranges::any_of(leaveAlone, [&](const std::string& a_m) { return SameText(a_m, t.mod); });
+			}
 			for (std::size_t r = 0; r < kRows; ++r) {
 				gRowArt[r] = ArtFor(r);
 			}
@@ -1025,7 +1124,7 @@ namespace Plugin
 					Restore(d.enchantEffectArt, t.ownEnch, c.art);
 					// a row the player set to Vanilla: its own art stays reachable, so another caster's look with its own color
 					// still dresses it (a rank left to Strange Wards or Strange Runes stays theirs)
-					if (t.row < kRows && !RowColor(t.row) && !StrangeWardsRow(t.row) && !RunesOwn(t)) {
+					if (t.row < kRows && !RowColor(t.row) && !StrangeWardsRow(t.row) && !RunesOwn(t) && !LeftAloneWard(t)) {
 						const bool looping = WearsWorn(t) || std::ranges::find(kShieldRows, t.row) != kShieldRows.end();
 						NoteGameArt(t.effect, t.ownCast, t.row, true, looping, false);
 						NoteGameArt(t.effect, t.ownHit, t.row, false, looping, use360);
@@ -1066,19 +1165,20 @@ namespace Plugin
 				if (t.how == How::kSilent) {
 					ApplyLight(t, false, false, quiet);
 				} else {
-					// only a ward whose casting art is ours has its light decided here; one wearing its own hand art keeps its own light
-					const bool ourHand = Worn(t) && (t.how == How::kTable || t.castWard);
-					if (ourHand) {
-						if (slot) {
+					// a ward whose casting art is ours, or one Strange Runes lights, has its light decided here; one wearing another mod's
+					// hand art keeps its own light
+					if (TakesLight(t)) {
+						if (slot && !IsDark(slot)) {
 							t.takenLight = slot;  // back when the row turns Vanilla
 						}
-						// another caster on the Vanilla look gets a hand light in this light's color (DomeLights.cpp)
-						NoteTheirLight(t.effect, t.takenLight ? t.takenLight : t.ownLight);
+						// another caster on the Vanilla look, and a ward left to Strange Runes, gets a hand light in this light's color (DomeLights.cpp)
+						auto* const theirs = t.takenLight ? t.takenLight : t.ownLight;
+						NoteTheirLight(t.effect, theirs);
 						// the game's casting light never reaches the land, so DomeLights.cpp hangs the hand light itself on every caster and the
-						// effect carries none: two lights on one hand would double the caster
-						slot = nullptr;
+						// effect carries none (a ward left to Strange Runes carries its light's dark copy): two lights on one hand would double it
+						slot = Worn(t) ? nullptr : DarkOf(theirs);
 					} else {
-						// a Vanilla row, or a ward wearing another mod's hand art, keeps (or gets back) its own light
+						// a Vanilla row (Strange Runes not loaded), or a ward wearing another mod's hand art, keeps (or gets back) its own light
 						ApplyLight(t, true, Worn(t) != nullptr, quiet);
 					}
 				}
@@ -1448,6 +1548,34 @@ namespace Plugin
 		return out;
 	}
 
+	namespace
+	{
+		std::vector<WardMod> ReadWardMods()
+		{
+			std::vector<WardMod> out;
+			for (const auto& t : gTargets) {
+				if (t.mod.empty() || t.how == How::kSilent) {
+					continue;
+				}
+				auto it = std::ranges::find_if(out, [&](const WardMod& a_m) { return SameText(a_m.plugin, t.mod); });
+				if (it == out.end()) {
+					out.push_back({ t.mod, {} });
+					it = std::prev(out.end());
+				}
+				const char* name = t.effect->GetFullName();
+				it->wards.emplace_back(name && *name ? name : Where(t.effect));
+			}
+			std::ranges::sort(out, {}, [](const WardMod& a_m) { return Lower(a_m.plugin); });
+			return out;
+		}
+	}
+
+	std::vector<WardMod> WardMods()
+	{
+		std::scoped_lock l{ gLock };
+		return gWardMods;
+	}
+
 	nlohmann::json WardsReport()
 	{
 		std::scoped_lock l{ gLock };
@@ -1462,7 +1590,8 @@ namespace Plugin
 																				 "silent" },
 				{ "why", t.why }, { "castingArt", ModelOf(d.castingArt) }, { "hitEffectArt", ModelOf(d.hitEffectArt) },
 				{ "enchantEffectArt", ModelOf(d.enchantEffectArt) }, { "ownCastingArt", ModelOf(t.ownCast) }, { "ownHitEffectArt", ModelOf(t.ownHit) },
-				{ "light", lightId(d.light) }, { "ownLight", lightId(t.ownLight) }, { "takenLight", lightId(t.takenLight) }, { "dressed", Worn(t) != nullptr } });
+				{ "light", lightId(d.light) }, { "ownLight", lightId(t.ownLight) }, { "takenLight", lightId(t.takenLight) }, { "dressed", Worn(t) != nullptr },
+				{ "mod", t.mod }, { "leftAlone", LeftAloneWard(t) } });
 		}
 		auto rows = json::object();
 		for (std::size_t i = 0; i < kRows; ++i) {

@@ -23,15 +23,18 @@
 //      cloud layer, 90% facing you) - loses that much of its facing opacity; the rim and the glow stay (his ask 2026-10-03,
 //      tested on ENB, Vanilla and Community Shaders).
 // A colour controller writes its block's emissive from the keys of the model's sequences every frame (clearing kActive
-// does not stop the sequence that drives it). On a palette block that emissive is a row coordinate, so its controllers come
-// off the cached model once (a clone made after has none). On a plain block the keys ARE the fade in and the fade out - the
-// 360 dome's three outer layers fade only by their color - so its controllers stay and each key is written as the row's hue
-// at that key's own brightness.
+// does not stop the sequence that drives it). A controller a sequence names never comes off the cached model: a copy's
+// sequence then keeps the model's own controller and blend interpolator (NiControllerSequence::ProcessClone keeps a pointer
+// it could not map), so every copy shares one, and two graph threads growing it at once crash the game. On a palette block
+// that emissive is a row coordinate, so its keys are all written as the block's own coordinate once; a controller no
+// sequence names comes off. On a plain block the keys ARE the fade in and the fade out - the 360 dome's three outer layers
+// fade only by their color - so each key is written as the row's hue at that key's own brightness.
 
 #include "Plugin.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <tuple>
 
@@ -41,7 +44,6 @@ namespace Plugin
 	{
 		// (the palette recolor itself - wardgen.pal_retint's curve, the file checks - is game-free, in WardMath.h, and tested)
 		constexpr const char* kPaletteDir = "Data/SKSE/Plugins/Dynamic Wards/Palettes/";
-		constexpr float       kSpriteSat = 0.75f;  // the ENB light: the ward's hue at least this saturated (a pale light washes it out)
 		// the ward in the hand, the normal dome, and every dome on the Vanilla pick: every texel tinted fully toward the ward's
 		// color, so no white-hot core reads washed out beside the casting art (his calls; the 360 sphere keeps its white core)
 		constexpr float kCore = 1.0f;
@@ -100,6 +102,8 @@ namespace Plugin
 			};
 			std::vector<Track> tracks{};
 			float              full = 0.0f;  // the brightest key of its tracks
+			// vapour layer 1's colour tracks: the loaded coordinate, or the gold copy's hue while it wears that (TintTracks)
+			std::vector<Track> vapourTracks{};
 		};
 
 		struct Master
@@ -109,6 +113,8 @@ namespace Plugin
 			std::vector<Block>        blocks;
 			std::size_t               controllersOff = 0;
 			std::size_t               tracks = 0;
+			std::size_t               pinned = 0;    // a palette block's colour tracks written as its own coordinate
+			std::size_t               untinted = 0;  // a named colour track whose keys could not be read: left as the mesh has it
 			bool                      hand = false;  // the casting art (wardinhandfx): the casting glow slider, never opacity or ward brightness
 		};
 
@@ -164,10 +170,13 @@ namespace Plugin
 			Setting                               with{};
 			const ArtOf*                          art{ nullptr };
 			std::chrono::steady_clock::time_point at{};
+			std::size_t                           shared{ 0 };  // SharedTracks when noted: counted while only the copying thread holds it
 		};
 		constexpr auto    kCopyHeld = std::chrono::seconds(30);
 		std::vector<Copy> gCopies;
 		std::size_t       gCopiesLogged = 0;  // gNewCopies at the last apply's log line
+		// every copy noted since the load, and the shared tracks they carried: the live sum drops to 0 once the copies age out
+		std::size_t gCopiesNoted = 0, gSharedSeen = 0, gSharedMost = 0;
 		// vapour layer 1's palette lookup baked into a plain texture (value in rgb, the palette's alpha in alpha), shipped with
 		// every install; worn only on Community Shaders and only by a gold or orange ward (GoldVapour)
 		constexpr const char*              kGoldVapour = "textures\\effects\\VaporTDWrdG.dds";
@@ -310,7 +319,7 @@ namespace Plugin
 				}
 			}
 			for (auto* c : colour) {
-				c->IncRefCount();  // a sequence may still name it
+				c->IncRefCount();  // a manager below the root, which NamedColour does not read, may still name it
 				a_prop->RemoveController(c);
 			}
 			return colour.size();
@@ -326,17 +335,39 @@ namespace Plugin
 			return nullptr;
 		}
 
-		// the colour controllers a plain block's recorded tracks drive - the ones TintTracks keeps in the row's hue
-		std::vector<RE::NiTimeController*> Tinted(const Master& a_m, const Block& a_b)
+		// every colour controller a sequence of the model names: these stay on their blocks, so each copy clones its own
+		std::vector<RE::NiTimeController*> NamedColour(RE::NiAVObject* a_root)
 		{
 			std::vector<RE::NiTimeController*> out;
-			auto*                              mgr = ManagerOf(a_m.root.get());
-			for (const auto& t : a_b.tracks) {
-				if (auto* seq = mgr ? mgr->sequenceArray[t.seq].get() : nullptr; seq && t.item < seq->arraySize) {
-					out.push_back(seq->interpArray[t.item].interpCtlr.get());
+			auto*                              mgr = ManagerOf(a_root);
+			for (std::uint16_t s = 0; mgr && s < mgr->sequenceArray.capacity(); ++s) {
+				auto* seq = mgr->sequenceArray[s].get();
+				for (std::uint32_t i = 0; seq && i < seq->arraySize; ++i) {
+					if (auto* c = seq->interpArray[i].interpCtlr.get(); c && IsColour(c) && std::ranges::find(out, c) == out.end()) {
+						out.push_back(c);
+					}
 				}
 			}
 			return out;
+		}
+
+		// a copy's colour tracks whose controller drives a block outside the copy (the model's own): the shared state the
+		// crash came from, 0 on every copy when each clones its own (devbench's colors report). Walks the copy: only where
+		// nothing else holds it yet (NoteCopy from the copy hook)
+		std::size_t SharedTracks(RE::NiAVObject* a_root)
+		{
+			std::vector<const RE::NiObjectNET*> own;
+			EachEffectBlock(a_root, [&](RE::BSGeometry*, RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial*) { own.push_back(a_prop); });
+			std::size_t n = 0;
+			auto*       mgr = ManagerOf(a_root);
+			for (std::uint16_t s = 0; mgr && s < mgr->sequenceArray.capacity(); ++s) {
+				auto* seq = mgr->sequenceArray[s].get();
+				for (std::uint32_t i = 0; seq && i < seq->arraySize; ++i) {
+					const auto* c = seq->interpArray[i].interpCtlr.get();
+					n += c && IsColour(c) && std::ranges::find(own, c->target) == own.end() ? 1 : 0;
+				}
+			}
+			return n;
 		}
 
 		RE::NiKeyBasedInterpolator* ColourKeys(RE::NiInterpolator* a_interp)
@@ -371,7 +402,22 @@ namespace Plugin
 					}
 					const auto blk = std::ranges::find_if(a_m.blocks, [&](const Block& a_b) { return a_b.prop.get() == item.interpCtlr->target; });
 					auto*      keys = ColourKeys(item.interpolator.get());
-					if (blk == a_m.blocks.end() || blk->palette || !keys) {
+					if (blk == a_m.blocks.end()) {
+						continue;
+					}
+					if (!keys) {
+						++a_m.untinted;
+						continue;
+					}
+					if (blk->palette) {
+						// every key the block's own row coordinate: the controller stays and writes what the block was loaded with
+						for (std::uint32_t n = 0; n < keys->GetKeyCount(0); ++n) {
+							KeyValue(keys, n) = { blk->base.red, blk->base.green, blk->base.blue };
+						}
+						if (blk->vapourOne) {
+							blk->vapourTracks.push_back({ s, i, std::vector<float>(keys->GetKeyCount(0), 1.0f) });
+						}
+						++a_m.pinned;
 						continue;
 					}
 					Block::Track t{ s, i, {} };
@@ -400,6 +446,7 @@ namespace Plugin
 					++gMissing;
 					continue;  // a model this install does not carry (the 360 dome without 360 Ward's meshes, say)
 				}
+				const auto sequenced = NamedColour(m.root.get());
 				EachEffectBlock(m.root.get(), [&](RE::BSGeometry* a_geometry, RE::BSEffectShaderProperty* a_prop, RE::BSEffectShaderMaterial* a_mat) {
 					// a palette block both says so AND names a palette: the ENB build's hand wisps keep the flag with no palette
 					// (Particle Patch's fix, so ENB does not make each wisp a light) and their color is still their emissive
@@ -439,18 +486,17 @@ namespace Plugin
 							normalDomePaths.insert(a_mat->greyscaleTexturePath.c_str());
 						}
 					}
-					if (b.palette) {
-						m.controllersOff += RemoveColour(a_prop);
-					}
+					m.controllersOff += RemoveColour(a_prop, sequenced);
 					m.blocks.push_back(std::move(b));
 				});
 				FindTracks(m);
 				for (auto& blk : m.blocks) {
-					if (!blk.palette && (blk.tracks.empty() || blk.full <= 0.0f)) {
-						blk.tracks.clear();
-						m.controllersOff += RemoveColour(blk.prop.get());  // keys we could not read: the static color wins
-					} else if (!blk.palette) {
-						m.controllersOff += RemoveColour(blk.prop.get(), Tinted(m, blk));  // an unread one would write its neutral keys over ours
+					if (!blk.palette && !blk.tracks.empty() && blk.full <= 0.0f) {
+						// keys that are all dark: every key at the block's own glow, the static color the copy is painted with
+						for (auto& t : blk.tracks) {
+							std::ranges::fill(t.grey, 1.0f);
+						}
+						blk.full = 1.0f;
 					}
 					m.tracks += blk.tracks.size();
 				}
@@ -483,7 +529,7 @@ namespace Plugin
 		Look LookOf(const Setting& a_s)
 		{
 			return { a_s.c, a_s.brightness / 100.0f, a_s.opacity / 100.0f, 1.0f - a_s.transparency / 100.0f, a_s.castingGlow / 100.0f, a_s.kept,
-				SpriteRgb(a_s.c, kSpriteSat), GoldVapour(a_s.c) && GoldVapourTexture(), a_s.lighting };
+				SpriteRgb(a_s.c, gTuning.spriteSat), GoldVapour(a_s.c) && GoldVapourTexture(), a_s.lighting };
 		}
 
 		// two palette paths on one texture object: the engine's stand-in for a missing file (a partial install), never recolored
@@ -607,7 +653,20 @@ namespace Plugin
 			}
 			for (std::size_t b = 0; b < a_m.blocks.size(); ++b) {
 				const auto& blk = a_m.blocks[b];
-				const auto  hue = blk.tracks.empty() ? std::nullopt : UnitHue(blk, a_m.hand, a_look);
+				// the kept controller writes these every frame: what Fresh gave the block, or it would undo the gold copy's hue
+				const RE::NiPoint3 vapour = a_look.goldVapour ? PlainHue(a_m.hand, a_look) : RE::NiPoint3{ blk.base.red, blk.base.green, blk.base.blue };
+				for (const auto& t : blk.vapourTracks) {
+					auto* seq = t.seq < mgr->sequenceArray.capacity() ? mgr->sequenceArray[t.seq].get() : nullptr;
+					if (!seq || t.item >= seq->arraySize) {
+						continue;
+					}
+					const auto& item = seq->interpArray[t.item];
+					auto*       keys = item.interpCtlr && item.interpCtlr->target == a_props[b] ? ColourKeys(item.interpolator.get()) : nullptr;
+					for (std::uint32_t n = 0; keys && keys->GetKeyCount(0) == t.grey.size() && n < t.grey.size(); ++n) {
+						KeyValue(keys, n) = vapour;
+					}
+				}
+				const auto hue = blk.tracks.empty() ? std::nullopt : UnitHue(blk, a_m.hand, a_look);
 				if (!hue) {
 					continue;
 				}
@@ -726,7 +785,11 @@ namespace Plugin
 				return;
 			}
 			a_root->IncRefCount();
-			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now() });
+			const auto shared = SharedTracks(a_root);
+			gCopies.push_back({ a_root, a_with, &a_art, std::chrono::steady_clock::now(), shared });
+			++gCopiesNoted;
+			gSharedSeen += shared;
+			gSharedMost = std::max(gSharedMost, shared);
 		}
 
 		// a copy of ours that wears another look than its row's: painted and noted (gLock held). True when painted. A row never colored
@@ -872,11 +935,13 @@ namespace Plugin
 		auto             rows = nlohmann::json::object();
 		for (std::size_t i = 0; i < kSlots; ++i) {
 			const auto& r = gRows[i];
-			std::size_t blocks = 0, off = 0, fills = 0, tracks = 0;
+			std::size_t blocks = 0, off = 0, fills = 0, tracks = 0, pinned = 0, untinted = 0;
 			for (const auto& m : r.masters) {
 				blocks += m.blocks.size();
 				off += m.controllersOff;
 				tracks += m.tracks;
+				pinned += m.pinned;
+				untinted += m.untinted;
 				fills += static_cast<std::size_t>(std::ranges::count_if(m.blocks, [](const Block& a_b) { return a_b.fill; }));
 			}
 			auto pals = nlohmann::json::array();
@@ -885,10 +950,15 @@ namespace Plugin
 					{ "applied", p.applied == 0xFFFFFFFF ? std::string() : HexColor(p.applied) } });
 			}
 			rows[std::string(SlotToken(i))] = { { "models", r.models.size() }, { "masters", r.masters.size() }, { "blocks", blocks }, { "fills", fills },
-				{ "colourControllersOff", off }, { "colourTracks", tracks }, { "applied", r.applied.c == 0xFFFFFFFF ? std::string() : HexColor(r.applied.c) },
+				{ "colourControllersOff", off }, { "colourTracks", tracks }, { "paletteTracksPinned", pinned }, { "colourTracksUntinted", untinted }, { "applied", r.applied.c == 0xFFFFFFFF ? std::string() : HexColor(r.applied.c) },
 				{ "palettes", std::move(pals) } };
 		}
-		return { { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
+		std::size_t shared = 0;
+		for (const auto& c : gCopies) {
+			shared += c.shared;
+		}
+		return { { "sharedColourTracks", shared }, { "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
+			{ "sharedColourTracksMostOnACopy", gSharedMost }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };
 	}

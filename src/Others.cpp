@@ -253,12 +253,16 @@ namespace Plugin
 
 		// A caster's cast ends, or his spell is selected or let go: no SKSE action says so (a ward released or interrupted with the hands still out, the AI
 		// changing spells), and his hand lights follow what he holds. Every end passes FinishCastImpl (7); the game uses nothing these slots return
+		// each caster slot's calls since start, for devbench: which route made a caster's casting light
+		std::array<std::atomic<std::uint32_t>, 0x20> gSlotCalls{};
+
 		template <std::size_t Slot>
 		struct CasterHook
 		{
 			static void thunk(RE::ActorMagicCaster* a_self)
 			{
 				func(a_self);
+				gSlotCalls[Slot & 0x1F].fetch_add(1, std::memory_order_relaxed);
 				if (a_self->actor) {
 					const FrameCost::Scope cost{ 3, "a caster's cast ends or his spell changes (each)" };
 					NoteHands(a_self->actor->GetFormID());
@@ -308,13 +312,16 @@ namespace Plugin
 			{
 				auto* art = a_art;
 				Guarded("a ward about to load in a hand", [a_task, &art]() {
-					if (!art || !OurArt(art)) {
+					// our art, or (with a rank on Vanilla) the game's own: LookHandArt sorts out which
+					const bool our = art && OurArt(art);
+					if (!art || (!our && !gAnyGame)) {
 						return;
 					}
-					auto* caster = reinterpret_cast<RE::ActorMagicCaster*>(static_cast<std::byte*>(a_task) - kCloneTaskAt);
-					LookHandArt(caster);
+					auto*      caster = reinterpret_cast<RE::ActorMagicCaster*>(static_cast<std::byte*>(a_task) - kCloneTaskAt);
+					const bool ward = LookHandArt(caster);
 					art = caster->castingArt;
-					if (caster->actor) {
+					// any other spell's art copy wakes nothing
+					if (caster->actor && (our || ward)) {
 						NoteHands(caster->actor->GetFormID());
 					}
 				});
@@ -339,6 +346,43 @@ namespace Plugin
 				}
 				func = SKSE::GetTrampoline().write_call<5>(fn + *at, thunk);
 				SKSE::log::info("other casters: the hand art hook is in (+0x{:X})", *at);
+			}
+		};
+
+		// The third way to the function that makes a caster's casting light (38784 -> 34151, the Signatures rows): the queued task a spell
+		// select sends with the hands out calls it directly at 36991 +0x17A5. A note after it, as the caster slots do; 1.6.1170 only,
+		// the call's bytes read first, so another version or another mod's hook there leaves it out (logged); not on VR
+		std::atomic<std::uint32_t> gLightTaskCalls{ 0 };
+		struct CasterLightTask
+		{
+			static std::uint64_t thunk(RE::Actor* a_actor, std::int32_t a_source, bool a_first, bool a_second)
+			{
+				const auto result = func(a_actor, a_source, a_first, a_second);
+				gLightTaskCalls.fetch_add(1, std::memory_order_relaxed);
+				if (a_actor) {
+					NoteHands(a_actor->GetFormID());
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+
+			static void Install()
+			{
+				if (REL::Module::IsVR() || REL::Module::get().version() != REL::Version{ 1, 6, 1170, 0 }) {
+					SKSE::log::info("other casters: the light task note is for Skyrim 1.6.1170 only - left out here");
+					return;
+				}
+				const auto   site = REL::Relocation<std::uintptr_t>{ REL::ID(36991) }.address() + 0x17A5;
+				const auto   target = REL::Relocation<std::uintptr_t>{ REL::ID(38784) }.address();
+				const auto*  code = reinterpret_cast<const std::uint8_t*>(site);
+				std::int32_t rel = 0;
+				std::memcpy(&rel, code + 1, sizeof(rel));
+				if (code[0] != 0xE8 || site + 5 + static_cast<std::intptr_t>(rel) != target) {
+					SKSE::log::warn("other casters: the light task call is not as read (another hook there?) - left out");
+					return;
+				}
+				func = SKSE::GetTrampoline().write_call<5>(site, thunk);
+				SKSE::log::info("other casters: the light task note is in");
 			}
 		};
 	}
@@ -373,40 +417,57 @@ namespace Plugin
 	// Another caster's ward IN THE HAND wears his look from the start. His magic caster attaches its casting art itself (never an art effect, so
 	// InitHook never sees it), from a copy it starts once per art (HandCloneHook): right before that, the caster is handed the art his look wears.
 	// No allocation; the tables are read-only after data load, GameArt takes gLock
-	void LookHandArt(RE::ActorMagicCaster* a_caster)
+	bool LookHandArt(RE::ActorMagicCaster* a_caster)
 	{
 		auto* art = a_caster ? a_caster->castingArt : nullptr;
 		if (!art || a_caster->castingArtData.attachedArt) {
-			return;
+			return false;
 		}
-		const auto ours = gOurs.find(art);
-		auto*      actor = a_caster->actor;
-		if (ours == gOurs.end() || !actor || actor->IsPlayerRef()) {
-			return;
+		auto* actor = a_caster->actor;
+		if (!actor || actor->IsPlayerRef()) {
+			return false;
+		}
+		// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
+		const auto effectOfArt = [&]() -> const RE::EffectSetting* {
+			const auto  source = static_cast<std::size_t>(a_caster->castingSource);
+			const auto* spell = source < RE::Actor::SlotTypes::kTotal ? actor->GetActorRuntimeData().selectedSpells[source] : nullptr;
+			if (!spell) {
+				return nullptr;
+			}
+			for (const auto* e : spell->effects) {
+				if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
+					return e->baseEffect;
+				}
+			}
+			return nullptr;
+		};
+		// our art, or the game's own art of a Vanilla rank (as the art hook finds it): his look's hand then matches his dome
+		const RE::EffectSetting* gameEffect = nullptr;
+		std::optional<Ours>      ours;
+		if (const auto it = gOurs.find(art); it != gOurs.end()) {
+			ours = it->second;
+		} else if (gAnyGame) {
+			gameEffect = effectOfArt();
+			ours = gameEffect ? GameOurs(gameEffect, art) : std::nullopt;
+		}
+		if (!ours) {
+			return false;
 		}
 		// the player's look keeps the art he holds; a look of its own wears its art when installed; Vanilla the game's
-		const auto        slot = TheirSlot(actor, ours->second.row);
-		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->second.kind) : nullptr;
+		const auto        slot = TheirSlot(actor, ours->row);
+		RE::BGSArtObject* look = slot >= kRows && slot < kSlots ? LookArt(slot - kRows, ours->kind) : nullptr;
 		if (slot < kSlots && !look) {
-			return;
+			return true;
 		}
 		RE::BGSArtObject* swap = look;
 		if (!look) {
-			// his cast has not started, so currentSpell is empty here: the game's own copy reads the spell he selected
-			const auto               source = static_cast<std::size_t>(a_caster->castingSource);
-			const auto*              spell = source < RE::Actor::SlotTypes::kTotal ? actor->GetActorRuntimeData().selectedSpells[source] : nullptr;
-			const RE::EffectSetting* effect = nullptr;
-			if (spell) {
-				for (const auto* e : spell->effects) {
-					if (e && e->baseEffect && e->baseEffect->data.castingArt == art) {
-						effect = e->baseEffect;
-						break;
-					}
-				}
+			if (gameEffect) {
+				return true;  // already the game's own art
 			}
-			auto* game = effect ? GameArt(effect, art) : nullptr;
+			const RE::EffectSetting* effect = effectOfArt();
+			auto*                    game = effect ? GameArt(effect, art) : nullptr;
 			if (!game || game == art) {
-				return;
+				return true;
 			}
 			const char* model = game->GetModel();
 			swap = model && *model ? game : nullptr;  // the effect had no art of its own: none, as the game draws it
@@ -415,6 +476,7 @@ namespace Plugin
 		if (gHandSwapped.fetch_add(1) < 20) {
 			SKSE::log::info("other casters: {:08X}'s ward in the hand wears {}", actor->GetFormID(), look ? "his look's art" : "the game's own casting art");
 		}
+		return true;
 	}
 
 	void InstallOthers()
@@ -427,11 +489,14 @@ namespace Plugin
 		CasterHook<0x7>::Install();
 		CasterHook<0x11>::Install();
 		CasterHook<0x12>::Install();
+		// slot 0x1A reaches 0x1406c4cb0 too (34165), which makes the caster's casting light: a round after it culls that light
+		CasterHook<0x1A>::Install();
 		if (!REL::Module::IsVR()) {
 			HerDraw::Install();
 		}
 		SKSE::log::info("other casters: the art effect hooks are in");
 		HandCloneHook::Install();
+		CasterLightTask::Install();
 	}
 
 	void NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
@@ -514,6 +579,12 @@ namespace Plugin
 		}
 	}
 
+	std::size_t GameRankRow(const RE::EffectSetting* a_effect, const RE::BGSArtObject* a_art)
+	{
+		const auto ours = gAnyGame && a_effect && a_art ? GameOurs(a_effect, a_art) : std::nullopt;
+		return ours ? ours->row : kRows;
+	}
+
 	void NoteTheirLight(const RE::EffectSetting* a_effect, const RE::TESObjectLIGH* a_light)
 	{
 		if (a_effect && a_light) {
@@ -553,7 +624,11 @@ namespace Plugin
 			                                                                                           "mine";
 			out[std::string(kLookTokens[i])] = { { "mode", mode }, { "color", HexColor(p.color) }, { "installed", LookInstalled(i) }, { "loaded", FactionLoaded(i) } };
 		}
-		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() },
+		auto slots = nlohmann::json::object();
+		for (const auto s : { 0x7, 0x11, 0x12, 0x1A }) {
+			slots[std::format("0x{:X}", s)] = gSlotCalls[s].load(std::memory_order_relaxed);
+		}
+		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() }, { "casterSlotCalls", std::move(slots) }, { "lightTaskCalls", gLightTaskCalls.load() },
 			{ "looks", std::move(out) } };
 	}
 }

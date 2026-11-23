@@ -68,7 +68,23 @@ namespace Plugin
 			RE::NiPointer<RE::NiNode>       node;
 			RE::NiPointer<RE::NiPointLight> light;
 			RE::NiPointer<RE::BSLight>      bs;
+			// what the last round chose for this hand (devbench's lights report): the ward's rank row, the slot it wears, where the color came from
+			std::size_t row{ kRows };
+			std::size_t use{ kSlots };
+			const char* from{ "none" };
+			Color       color{ 0 };
+			// the game's own casting light on that hand (0 none, 1 another light, 2 this light of ours) and its color, for devbench
+			int   casterLight{ 0 };
+			Color casterColor{ 0 };
+			// the caster's own casting light while ours lights this hand: culled, given back when ours goes (two lights on one hand otherwise)
+			RE::NiPointer<RE::NiAVObject> culled{};
 		};
+
+		Color HexOf(const RE::NiColor& a_c)
+		{
+			const auto byte = [](float a_v) { return static_cast<Color>(std::clamp(a_v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+			return (byte(a_c.red) << 16) | (byte(a_c.green) << 8) | byte(a_c.blue);
+		}
 
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
@@ -163,10 +179,6 @@ namespace Plugin
 			}
 		}
 
-		// a dome's light reaches this many times the house light on every pick: the house reach (178 plain, 133 under inverse
-		// square) barely passes the dome itself (~83) and stayed inside the hand lights' own pool
-		constexpr float kDomeReach = 2.25f;
-
 		// a dome's light by its model; the ENB mesh set takes the main set's light (the table names the main set only)
 		const Spec* SpecOf(const std::string& a_key)
 		{
@@ -259,13 +271,18 @@ namespace Plugin
 
 		void DressDome(RE::NiPointLight* a_light, Color a_color, const Spec& a_spec, float a_dim)
 		{
-			const Light wide{ a_spec.fade, a_spec.reach * kDomeReach, a_spec.size, a_spec.plain, a_spec.plainFade, a_spec.plainRadius * kDomeReach };
-			Dress(a_light, a_color, wide, wide.plainRadius, a_dim);
+			// a dome's light reaches this many times the house light (the Advanced Settings file): the house reach stayed inside the hands' pool
+			const float reach = gTuning.domeReach;
+			const Light wide{ a_spec.fade, a_spec.reach * reach, a_spec.size, a_spec.plain, a_spec.plainFade, a_spec.plainRadius * reach };
+			Dress(a_light, a_color, wide, wide.plainRadius, a_dim * gTuning.domeStrength);
 		}
 
 		void DressHand(RE::NiPointLight* a_light, Color a_color)
 		{
-			Dress(a_light, a_color, kHand, kHand.plainRadius, HandDim());
+			Light hand = kHand;
+			hand.reach *= gTuning.handReach;
+			hand.plainRadius *= gTuning.handReach;
+			Dress(a_light, a_color, hand, hand.plainRadius, HandDim() * gTuning.handStrength);
 		}
 
 		// the node a dome's light hangs under: the wearer's third-person body (in both views), else the dome's art - under the art
@@ -352,7 +369,8 @@ namespace Plugin
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
 		// as an ability while held): that ward's row. Asked after the spell
 		// above found no ward, so firing the staff keeps the light; read once per actor and round (a_alwaysOn)
-		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect)
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect,
+			bool& a_runes)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
 			const RE::MagicItem* spell = nullptr;
@@ -375,6 +393,19 @@ namespace Plugin
 						a_effect = e->baseEffect;
 						return row;
 					}
+					// a ward left to Strange Runes' look or Vanilla: the apply took Strange Runes' light off, our hand light takes its color
+					if (const auto row = RunesLitRow(e ? e->baseEffect : nullptr); row < kRows) {
+						a_effect = e->baseEffect;
+						a_runes = true;
+						return row;
+					}
+					// another caster's ward of a Vanilla rank wears the game's art: its rank, so his look's color reaches his hand light
+					if (!a_actor->IsPlayerRef()) {
+						if (const auto row = GameRankRow(e ? e->baseEffect : nullptr, art); row < kRows) {
+							a_effect = e->baseEffect;
+							return row;
+						}
+					}
 				}
 			}
 			if (const auto* weap = held ? held->As<RE::TESObjectWEAP>() : nullptr; weap && weap->IsStaff()) {
@@ -393,8 +424,17 @@ namespace Plugin
 			return names[a_slot];
 		}
 
+		void GiveBackCasterLight(Hand1st& a_h)
+		{
+			if (a_h.culled) {
+				a_h.culled->SetAppCulled(false);
+				a_h.culled.reset();
+			}
+		}
+
 		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
+			GiveBackCasterLight(a_h);
 			Drop(a_h.light.get(), a_h.bs, a_scene);
 			a_h = {};
 		}
@@ -410,12 +450,25 @@ namespace Plugin
 			for (std::size_t slot = 0; slot < 2; ++slot) {
 				auto&                    h = a_hands.h[slot];
 				const RE::EffectSetting* effect = nullptr;
-				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect) : kRows;
-				const auto               use = row < kRows ? TheirSlot(a_actor, row) : kSlots;
-				const auto               color = use < kSlots ? SlotColor(use) : row < kRows ? GameLightColor(effect) :
-				                                                                               std::nullopt;
-				auto*                    node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
-				auto*                    parent = node ? node->AsNode() : nullptr;
+				bool                     runes = false;
+				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect, runes) : kRows;
+				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light. A ward left to
+				// Strange Runes on the player's look wears the color of the light Strange Runes set (its rank's row color is not shown)
+				const auto their = row < kRows ? TheirSlot(a_actor, row) : kSlots;
+				// a rank left to Strange Runes keeps Strange Runes' art on every caster, so its light keeps that light's color too
+				const auto  use = runes && (their == row || StrangeRunesRow(row)) ? kSlots : their;
+				auto        color = use < kSlots ? SlotColor(use) : std::nullopt;
+				const char* from = color ? "slot" : "none";
+				if (!color && row < kRows) {
+					color = GameLightColor(effect);
+					from = !color ? "none" : runes ? "strange runes" :
+					                                 "record";
+				}
+				// beside the magic node, never under it: the game makes a caster's casting light with GenDynamic on that node, which takes the
+				// first light anywhere beneath it and writes the effect's light record over it (17610 +0x20A, 17627) - it would take ours
+				auto*              magic = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
+				auto*              parent = magic ? magic->parent : nullptr;
+				const RE::NiPoint3 at = magic ? magic->local.translate : RE::NiPoint3{};
 				if (!parent || (h.light && h.node.get() != parent)) {
 					DropHand(h, a_scene);
 				}
@@ -424,12 +477,29 @@ namespace Plugin
 				}
 				if (h.light) {
 					DressHand(h.light.get(), *color);
+					h.light->local.translate = at;
 				} else {
 					RE::NiPointer<RE::BSLight> bs;
-					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+					if (auto* light = Make(parent, kHandName, at, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
 						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
 						++gHandsMade;
 					}
+				}
+				h.row = row;
+				h.use = use;
+				h.from = from;
+				h.color = *color;
+				auto* caster = a_actor->GetActorRuntimeData().magicCasters[slot];
+				auto* gameBs = caster ? caster->light.get() : nullptr;
+				auto* game = gameBs ? gameBs->light.get() : nullptr;
+				h.casterLight = !gameBs ? 0 : gameBs == h.bs.get() || game == h.light.get() ? 2 :
+				                                                                              1;
+				h.casterColor = game ? HexOf(game->GetLightRuntimeData().diffuse) : 0;
+				// our light replaces the caster's: the light it made from the effect's record (34151) is culled while ours lights the hand
+				if (h.light && game && game != h.light.get() && h.culled.get() != game) {
+					GiveBackCasterLight(h);
+					game->SetAppCulled(true);
+					h.culled = RE::NiPointer<RE::NiAVObject>(game);
 				}
 			}
 		}
@@ -767,11 +837,48 @@ namespace Plugin
 		const auto       it = player ? gHands.find(player->GetFormID()) : gHands.end();
 		const bool       leftLit = it != gHands.end() && it->second.h[0].light, rightLit = it != gHands.end() && it->second.h[1].light;
 		std::size_t      lights = 0;
+		auto             hands = nlohmann::json::array();
 		for (const auto& [id, a] : gHands) {
 			lights += (a.h[0].light ? 1 : 0) + (a.h[1].light ? 1 : 0);
+			for (std::size_t s = 0; s < 2; ++s) {
+				if (const auto& h = a.h[s]; h.light) {
+					hands.push_back({ { "actor", std::format("{:08X}", id) }, { "hand", s == 0 ? "left" : "right" },
+						{ "row", h.row < kRows ? std::string(kTokens[h.row]) : std::string("none") },
+						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) },
+						{ "diffuseNow", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
+						{ "casterColor", h.casterLight ? HexColor(h.casterColor) : std::string("none") } });
+					// diffuseNow: our light as it reads now (linear on an inverse-square setup, while "color" is the sRGB pick; a snapshot
+					// off the main thread). The caster's light read again now is HandCastersNow's, on the main thread
+				}
+			}
 		}
 		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
 			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
-			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "handLightsEach", std::move(hands) }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+	}
+
+	// each lit hand's caster light read now, on the main thread (devbench's report asks through DevBenchGlue::OnMainThread): the game
+	// may attach, swap or free that light after the round that dressed ours, so only the main thread reads it
+	nlohmann::json HandCastersNow()
+	{
+		std::scoped_lock l{ gLock };
+		auto             out = nlohmann::json::object();
+		for (const auto& [id, a] : gHands) {
+			const auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+			for (std::size_t s = 0; s < 2; ++s) {
+				const auto& h = a.h[s];
+				if (!h.light) {
+					continue;
+				}
+				const auto* caster = actor ? actor->GetActorRuntimeData().magicCasters[s] : nullptr;
+				const auto* gameBs = caster ? caster->light.get() : nullptr;
+				const auto* game = gameBs ? gameBs->light.get() : nullptr;
+				const int   holds = !gameBs ? 0 : gameBs == h.bs.get() || game == h.light.get() ? 2 :
+				                                                                                  1;
+				out[std::format("{:08X}/{}", id, s == 0 ? "left" : "right")] = { { "casterLightNow", holds },
+					{ "casterColorNow", game ? HexColor(HexOf(game->GetLightRuntimeData().diffuse)) : std::string("none") } };
+			}
+		}
+		return out;
 	}
 }

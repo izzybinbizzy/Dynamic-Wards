@@ -5,6 +5,7 @@
 // The helpers that need the game: a form's name for the log and reports, a form by its "0xID~Plugin" text. The game-free text helpers are in WardMath.h (tested off the game).
 
 #include "Plugin.h"
+#include "Po3Tweaks.h"
 
 #include <nlohmann/json.hpp>
 
@@ -35,30 +36,15 @@ namespace Plugin
 		if (!a_form) {
 			return "(none)";
 		}
-		const char* id = a_form->GetFormEditorID();
+		// a ward effect's or a spell's editor ID only with powerofthree's Tweaks keeping them (the game throws those away)
+		const auto  id = Po3Tweaks::EditorID(a_form);
 		const auto* file = a_form->GetFile(0);
-		return std::format("{} | {:08X} | {}", id && *id ? Readable(id) : "(no editor ID)", a_form->GetFormID(),
+		return std::format("{} | {:08X} | {}", !id.empty() ? Readable(id) : "(no editor ID)", a_form->GetFormID(),
 			file ? Readable(file->GetFilename()) : "(created)");
 	}
 
-	RE::TESForm* ResolveForm(std::string_view a_text)
-	{
-		const auto tilde = a_text.find('~');
-		if (tilde == std::string_view::npos || tilde == 0) {
-			return nullptr;
-		}
-		std::uint32_t local = 0;
-		auto          hex = a_text.substr(0, tilde);
-		if (hex.starts_with("0x") || hex.starts_with("0X")) {
-			hex.remove_prefix(2);
-		}
-		const auto* end = hex.data() + hex.size();
-		if (const auto [stop, ec] = std::from_chars(hex.data(), end, local, 16); ec != std::errc{} || stop != end) {
-			return nullptr;  // all of it a number: "0x1G~X.esp" is no form
-		}
-		auto* dh = RE::TESDataHandler::GetSingleton();
-		return dh ? dh->LookupForm(local, a_text.substr(tilde + 1)) : nullptr;
-	}
+	// "0xID~Plugin" (all of it a number: "0x1G~X.esp" is no form), or an editor ID - most kinds of record only with powerofthree's Tweaks
+	RE::TESForm* ResolveForm(std::string_view a_text) { return Po3Tweaks::FormOf(a_text); }
 
 	std::string FormText(const RE::TESForm* a_form)
 	{

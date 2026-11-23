@@ -46,7 +46,7 @@ namespace Plugin
 		using namespace ImGuiMCP;
 		using Translation::Fill;
 		using Translation::T;
-#define TR_MARK(x) x  // a line Translation.json carries, though it is not written inside T( ) here
+#define TR_MARK(x) x  // a line the translation file carries, though it is not written inside T( ) here
 
 		using MenuStyle::Header;
 		using MenuStyle::kMuted;
@@ -134,7 +134,7 @@ namespace Plugin
 		std::atomic<bool> gHeldEdit{ false };  // a color is held (changed live, not saved yet) - FlushHeldColor saves it
 
 		// devbench only, never saved: a page drawn in a window of its own for a test's picture (DevBench.cpp's menuPage):
-		// -1 closed, 0 Colors, 1 Colors scrolled to its end, 2 Settings, 3 Colors at its end with Factions open
+		// -1 closed, 0 Colors, 1 Colors scrolled to its end, 2 Settings, 3 / 4 Colors at its end with Factions / Other mods' wards open
 		std::atomic_int gTestPage{ -1 };
 
 		template <class Set>
@@ -304,6 +304,7 @@ namespace Plugin
 		bool HasShields();
 		void DrawShields();
 		void DrawFactions();
+		void DrawLeaveAlone();
 
 		// The Colors page (his ask 2026-10-05: its own page above Settings): the presets first, then the ladder and every ward
 		void DrawColors()
@@ -402,6 +403,12 @@ namespace Plugin
 			if (CollapsingHeader(T("Factions"))) {  // closed until opened: the longest list
 				DrawFactions();
 			}
+			if (gTestPage.load() == 4) {
+				SetNextItemOpen(true, ImGuiCond_Always);
+			}
+			if (CollapsingHeader(T("Other mods' wards"))) {
+				DrawLeaveAlone();
+			}
 		}
 
 		// one look's pick: the player's look, its own color, the game's art (a faction also Default: its casters go on to the
@@ -467,6 +474,41 @@ namespace Plugin
 				Changed();
 			}
 			SetItemTooltip("%s", T("Every group back to Default."));
+		}
+
+		// a tick per mod whose wards were found: a ticked mod's wards keep their own look (his checklist 585 answer)
+		void DrawLeaveAlone()
+		{
+			static std::vector<WardMod> mods;
+			static bool                 read = false;
+			if (!std::exchange(read, true)) {
+				mods = WardMods();  // the wards are found once at data load
+			}
+			MenuStyle::Note(T("Tick a mod to keep its wards' own look, for every caster. The others take their rank's color."));
+			if (mods.empty()) {
+				TextColored(kMuted, "%s", T("No other mod's wards were found."));
+				return;
+			}
+			for (const auto& m : mods) {
+				bool       on = LeftAlone(m.plugin);
+				const bool safe = LeaveAloneKeySafe(m.plugin);
+				// a name the settings file cannot keep (a leading ';' or '#', an '='): a tick would be lost at the next start
+				BeginDisabled(!safe);
+				if (Checkbox(m.plugin.c_str(), &on)) {
+					SetLeftAlone(m.plugin, on);
+					Changed();
+				}
+				EndDisabled();
+				std::string names;
+				for (std::size_t i = 0; i < m.wards.size() && i < 8; ++i) {
+					names += (i ? ", " : "") + m.wards[i];
+				}
+				if (m.wards.size() > 8) {
+					names += Fill(T(" and {} more"), std::to_string(m.wards.size() - 8));
+				}
+				const auto tip = Fill(T("Its wards: {}."), names);
+				SetItemTooltip("%s", safe ? tip.c_str() : (tip + " " + T("Its file name cannot be kept in the settings file, so it cannot be ticked.")).c_str());
+			}
 		}
 
 		// MenuStyle::Header with a hover tip on its title
@@ -645,9 +687,9 @@ namespace Plugin
 			const int page = gTestPage.load();
 			SetNextWindowPos(ImVec2(40.0f, 20.0f), ImGuiCond_Always);
 			SetNextWindowSize(ImVec2(820.0f, 1040.0f), ImGuiCond_Always);
-			if (Begin("Dynamic Wards (test)", nullptr, ImGuiWindowFlags_NoCollapse) && page >= 0 && page <= 3) {
+			if (Begin("Dynamic Wards (test)", nullptr, ImGuiWindowFlags_NoCollapse) && page >= 0 && page <= 4) {
 				Guarded("menu: test window", page == 2 ? DrawSettings : DrawColors);
-				if (page == 1 || page == 3) {
+				if (page == 1 || page >= 3) {
 					SetScrollY(GetScrollMaxY());
 				}
 			}

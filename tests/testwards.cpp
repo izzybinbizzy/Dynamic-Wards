@@ -5,10 +5,13 @@
 // undefined-behavior checkers. The run fails when a check fails, AND when fewer checks ran than kFloor (a test that stopped
 // part way proves nothing - Illuminated's fade tests count theirs the same way).
 
+#include "AdvancedSettingsChecks.h"
 #include "FloorLightChecks.h"
+#include "Po3TweaksChecks.h"
 #include "SettingsText.h"
 #include "WardMath.h"
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstdio>
@@ -34,7 +37,8 @@ namespace
 #define CHECK(x) Check((x), #x, __LINE__)
 
 	// the fewest checks a whole run makes (raise it when checks are added; lower it only when checks are removed on purpose)
-	constexpr int kFloor = 300 + 8 + 8 + 3 + FloorLightChecks::kCount;
+	constexpr int kFloor = 300 + 8 + 8 + 3 + 3 + FloorLightChecks::kCount + AdvancedSettingsChecks::kCount + AdvancedSettingsChecks::kTableCount +
+	                       AdvancedSettingsChecks::kShippedCount + Po3TweaksChecks::kCount;
 
 	using namespace Plugin;
 
@@ -200,6 +204,11 @@ namespace
 		CHECK(RankRow(75) == 3);
 		CHECK(RankRow(100) == 4);
 		CHECK(RankRow(-5) == 0);
+		CHECK(TableRank(0, true, 0) == 0);    // the game's Lesser Ward as the game has it
+		CHECK(TableRank(0, true, 25) == 1);   // Requiem's Apprentice ward on it
+		CHECK(TableRank(2, true, 75) == 3);   // Requiem's Expert ward on the game's Greater Ward
+		CHECK(TableRank(2, false, 75) == 2);  // another mod's table row keeps its rank
+		CHECK(TableRank(5, true, 100) == 5);  // a fixed row (Spellbreaker) never moves
 		CHECK(PowerRow(0.0f) == 0);
 		CHECK(PowerRow(40.0f) == 0);   // Lesser Ward
 		CHECK(PowerRow(60.0f) == 1);   // Steadfast Ward
@@ -478,6 +487,23 @@ namespace
 			CHECK(!Read(legacy).alwaysOnBar);
 		}
 
+		// the Leave alone list (his 585): a tick per plugin, any case, A to Z, never a base game file, read back the same
+		CHECK(none.leaveAlone.empty() && dflt.leaveAlone.empty() && d.str().find("[LeaveAlone]") == std::string::npos);
+		const auto la = Read("[LeaveAlone]\nZed Wards.esp=1\nmy wards.ESP=1\nOff.esp=0\nSkyrim.esm=1\nMY WARDS.esp=1\nbad.esp=x\n=1\n");
+		CHECK((la.leaveAlone == std::vector<std::string>{ "MY WARDS.esp", "Zed Wards.esp" }));  // the last spelling read stands
+		CHECK(LeftAloneIn(la, "My Wards.esp") && LeftAloneIn(la, "zed wards.esp") && !LeftAloneIn(la, "Off.esp") && !LeftAloneIn(la, "Skyrim.esm"));
+		CHECK(BaseGameFile("dawnguard.ESM") && BaseGameFile("Update.esm") && !BaseGameFile("ccmtysse001-knightsofthenine.esl"));
+		std::ostringstream laOut;
+		WriteSettingsText(la, laOut);
+		CHECK(laOut.str().find("[LeaveAlone]\nMY WARDS.esp=1\nZed Wards.esp=1\n") != std::string::npos);
+		CHECK(Read(laOut.str()).leaveAlone == la.leaveAlone);
+		auto laSet = la;
+		SetLeftAloneIn(laSet, "MY WARDS.esp", false);
+		SetLeftAloneIn(laSet, " New.esp ", true);
+		Normalize(laSet);
+		CHECK((laSet.leaveAlone == std::vector<std::string>{ "New.esp", "Zed Wards.esp" }));
+		CHECK(Read("[Settings]\nZed.esp=1\n").leaveAlone.empty());  // a key under another section is no tick
+
 		// what a row wears
 		SettingsValues s;
 		CHECK(RowColorOf(s, 0) == kWhite);                     // Lesser: the white end of the ladder
@@ -655,6 +681,21 @@ namespace
 		CHECK(!passes({ 0x48, 0x8B, 0x97, 0xE0, 0, 0, 1, 0x48, 0x8D, 0x8F, 0xB0, 0, 0, 0 }));
 		CHECK(!passes(B{}));
 	}
+
+	// the Advanced Settings file: the shared reader and writer, this mod's knobs, the file the download ships, and the values read
+	void Advanced()
+	{
+		AdvancedSettingsChecks::Run(Check);
+		AdvancedSettingsChecks::Table(Check, kAdvancedKnobs);
+		AdvancedSettingsChecks::Shipped(Check, "package/SKSE/Plugins/DynamicWards", kAdvancedTitle, kAdvancedKnobs);
+		const auto   d = TuningOf(AdvancedSettings::Defaults(kAdvancedKnobs));
+		const Tuning t{};
+		CHECK(d.domeReach == kDomeReach && d.spriteSat == kSpriteSat && d.domeStrength == 1.0f && d.handReach == 1.0f && d.handStrength == 1.0f);
+		CHECK(t.domeReach == d.domeReach && t.spriteSat == d.spriteSat);
+		const std::array<float, 5> mine{ 3.0f, 0.5f, 2.0f, 1.5f, 0.0f };
+		const auto                 m = TuningOf(mine);
+		CHECK(m.domeReach == 3.0f && m.domeStrength == 0.5f && m.handReach == 2.0f && m.handStrength == 1.5f && m.spriteSat == 0.0f);
+	}
 }
 
 int main()
@@ -668,6 +709,8 @@ int main()
 	ScreenColor();
 	HandClone();
 	Posture();
+	Advanced();
+	Po3TweaksChecks::Run(Check);  // powerofthree's Tweaks: a form key's two spellings, its ini switch, the verdict, both paths
 	FloorLightChecks::Run(Check);
 	std::printf("%d passed, %d failed\n", gPassed, gFailed);
 	if (gPassed < kFloor) {
