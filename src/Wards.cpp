@@ -419,6 +419,8 @@ namespace Plugin
 					dark->data = a_light->data;
 					dark->data.radius = 1;
 					dark->fade = 0.0f;
+					// a light that lights nothing never takes one of the few shadow slots
+					dark->data.flags.reset(RE::TES_LIGHT_FLAGS::kSpotShadow, RE::TES_LIGHT_FLAGS::kHemiShadow, RE::TES_LIGHT_FLAGS::kOmniShadow);
 				}
 			}
 			return dark;
@@ -499,7 +501,7 @@ namespace Plugin
 		}
 
 		// Strange Runes' scripts set a light on every MagicWard effect: on a ward we leave to its look (or Vanilla) that light is put out and
-		// DomeLights.cpp hangs our hand light in its color, so one light shows (his order 2026-11-22)
+		// DomeLights.cpp hangs our hand light in its color, so one light shows
 		bool RunesLight(const Target& a_t)
 		{
 			return a_t.how != How::kSilent && !LeftAloneWard(a_t) && a_t.row < kRows && StrangeRunesLoaded() && a_t.effect->HasKeywordString("MagicWard");
@@ -961,7 +963,9 @@ namespace Plugin
 		// the dark copies made at data load, off any later thread: every ward's own light and Strange Runes' Amber light
 		if (StrangeRunesLoaded()) {
 			for (const auto& t : found) {
-				DarkOf(t.ownLight);
+				if (t.effect && t.effect->HasKeywordString("MagicWard")) {
+					DarkOf(t.ownLight);
+				}
 			}
 			DarkOf(RE::TESForm::LookupByEditorID<RE::TESObjectLIGH>("MagicLightFireInHand"));
 			SKSE::log::info("wards: {} dark copies of Strange Runes' ward lights made", gDark.size());

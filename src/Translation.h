@@ -37,7 +37,7 @@ namespace Translation
 		{
 			std::mutex                                                          lock;
 			std::string                                                         name;
-			std::unordered_map<std::string, std::string, Hash, std::equal_to<>> lines;  // English -> what the menu shows
+			std::unordered_map<std::string, std::string, Hash, std::equal_to<>> lines;   // English -> what the menu shows
 			std::thread::id                                                     main{};  // Load's thread: the game's main thread
 			std::unordered_set<std::string>                                     asked;   // lines asked for off it (copied: a caller's text may not outlive the call)
 			bool                                                                queued{ false };

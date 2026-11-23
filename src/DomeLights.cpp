@@ -358,7 +358,8 @@ namespace Plugin
 		// a STAFF drawn in that hand while an always-on ward of ours is up (Reliquary of Myth's Staff of Magnus raises its ward
 		// as an ability while held): that ward's row. Asked after the spell
 		// above found no ward, so firing the staff keeps the light; read once per actor and round (a_alwaysOn)
-		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect)
+		std::size_t CastingRow(RE::Actor* a_actor, std::size_t a_slot, std::optional<std::size_t>& a_alwaysOn, const RE::EffectSetting*& a_effect,
+			bool& a_runes)
 		{
 			auto*                caster = a_actor->GetActorRuntimeData().magicCasters[a_slot];
 			const RE::MagicItem* spell = nullptr;
@@ -384,6 +385,7 @@ namespace Plugin
 					// a ward left to Strange Runes' look or Vanilla: the apply took Strange Runes' light off, our hand light takes its color
 					if (const auto row = RunesLitRow(e ? e->baseEffect : nullptr); row < kRows) {
 						a_effect = e->baseEffect;
+						a_runes = true;
 						return row;
 					}
 					// another caster's ward of a Vanilla rank wears the game's art: its rank, so his look's color reaches his hand light
@@ -428,8 +430,8 @@ namespace Plugin
 			for (std::size_t slot = 0; slot < 2; ++slot) {
 				auto&                    h = a_hands.h[slot];
 				const RE::EffectSetting* effect = nullptr;
-				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect) : kRows;
-				const bool               runes = row < kRows && RunesLitRow(effect) < kRows;
+				bool                     runes = false;
+				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect, runes) : kRows;
 				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light. A ward left to
 				// Strange Runes on the player's look wears the color of the light Strange Runes set (its rank's row color is not shown)
 				const auto  their = row < kRows ? TheirSlot(a_actor, row) : kSlots;
