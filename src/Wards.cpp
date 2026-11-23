@@ -401,6 +401,10 @@ namespace Plugin
 		// menu sets a light only on a ward effect that has one, so its next pick still lands, and the art check notes it (gLock)
 		std::unordered_map<const RE::TESObjectLIGH*, RE::TESObjectLIGH*> gDark;
 
+		// the Other mods' wards list, made once on the main thread when the wards are found (the menu draws on the render thread; gLock)
+		std::vector<WardMod> gWardMods;
+		std::vector<WardMod> ReadWardMods();
+
 		bool IsDark(const RE::TESObjectLIGH* a_light)
 		{
 			return a_light && std::ranges::any_of(gDark, [&](const auto& a_p) { return a_p.second == a_light; });
@@ -978,6 +982,7 @@ namespace Plugin
 			gTargetOf.emplace(gTargets[i].effect, i);
 		}
 		gSkipped = skipped;
+		gWardMods = ReadWardMods();
 		gShields = std::move(shields);
 		gCrusaderEnch = ench;
 		// (counted before ApplyAll decides who is dressed: a ward whose mod is unticked or whose row is Vanilla wears its own art;
@@ -1535,24 +1540,32 @@ namespace Plugin
 		return out;
 	}
 
+	namespace
+	{
+		std::vector<WardMod> ReadWardMods()
+		{
+			std::vector<WardMod> out;
+			for (const auto& t : gTargets) {
+				if (t.mod.empty() || t.how == How::kSilent) {
+					continue;
+				}
+				auto it = std::ranges::find_if(out, [&](const WardMod& a_m) { return SameText(a_m.plugin, t.mod); });
+				if (it == out.end()) {
+					out.push_back({ t.mod, {} });
+					it = std::prev(out.end());
+				}
+				const char* name = t.effect->GetFullName();
+				it->wards.emplace_back(name && *name ? name : Where(t.effect));
+			}
+			std::ranges::sort(out, {}, [](const WardMod& a_m) { return Lower(a_m.plugin); });
+			return out;
+		}
+	}
+
 	std::vector<WardMod> WardMods()
 	{
-		std::scoped_lock     l{ gLock };
-		std::vector<WardMod> out;
-		for (const auto& t : gTargets) {
-			if (t.mod.empty() || t.how == How::kSilent) {
-				continue;
-			}
-			auto it = std::ranges::find_if(out, [&](const WardMod& a_m) { return SameText(a_m.plugin, t.mod); });
-			if (it == out.end()) {
-				out.push_back({ t.mod, {} });
-				it = std::prev(out.end());
-			}
-			const char* name = t.effect->GetFullName();
-			it->wards.emplace_back(name && *name ? name : Where(t.effect));
-		}
-		std::ranges::sort(out, {}, [](const WardMod& a_m) { return Lower(a_m.plugin); });
-		return out;
+		std::scoped_lock l{ gLock };
+		return gWardMods;
 	}
 
 	nlohmann::json WardsReport()

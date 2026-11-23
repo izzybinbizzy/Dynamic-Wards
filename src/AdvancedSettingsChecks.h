@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -123,13 +124,22 @@ namespace AdvancedSettingsChecks
 		ADVANCED_CHECK(text.find("\n[Lights]\n") != std::string::npos && text.find("\n[Fade]\n") != std::string::npos);
 		// both files: the shipped one missing is written whole at the defaults; a whole one is read and left alone (a player's edit stays);
 		// one that lacks a value is written again with its values kept; the Custom file's lines win and it is never written
-		const auto      dir = std::filesystem::temp_directory_path() / ("advanced settings check " + std::to_string(std::rand()));
+		// a folder this run made itself, so two runs at once never share or remove each other's files
+		std::filesystem::path dir;
+		std::random_device    seed;
+		for (int i = 0; i < 100 && dir.empty(); ++i) {
+			const auto      tryDir = std::filesystem::temp_directory_path() / ("advanced settings check " + std::to_string(seed()));
+			std::error_code made;
+			if (std::filesystem::create_directory(tryDir, made)) {
+				dir = tryDir;
+			}
+		}
+		ADVANCED_CHECK(!dir.empty());
 		const auto      main = AdvancedSettings::MainPath(dir, "A Mod");
 		const auto      custom = AdvancedSettings::CustomPath(dir, "A Mod");
 		std::error_code ec;
-		std::filesystem::remove_all(dir, ec);
-		bool       wrote = false;
-		const auto first = AdvancedSettings::Load(dir, "A Mod", kSample, wrote);
+		bool            wrote = false;
+		const auto      first = AdvancedSettings::Load(dir, "A Mod", kSample, wrote);
 		ADVANCED_CHECK(wrote && first.values == defaults && Detail::FileText(main) == AdvancedSettings::Text("A Mod", kSample, defaults));
 		const auto edited = AdvancedSettings::Text("A Mod", kSample, values) + "; my own note\n";
 		Detail::Put(main, edited);

@@ -434,8 +434,9 @@ namespace Plugin
 				const auto               row = ours ? CastingRow(a_actor, slot, alwaysOn, effect, runes) : kRows;
 				// a Vanilla rank (its look the player's, or the game's art) has no color of ours: the record's own light. A ward left to
 				// Strange Runes on the player's look wears the color of the light Strange Runes set (its rank's row color is not shown)
-				const auto  their = row < kRows ? TheirSlot(a_actor, row) : kSlots;
-				const auto  use = runes && their == row ? kSlots : their;
+				const auto their = row < kRows ? TheirSlot(a_actor, row) : kSlots;
+				// a rank left to Strange Runes keeps Strange Runes' art on every caster, so its light keeps that light's color too
+				const auto  use = runes && (their == row || StrangeRunesRow(row)) ? kSlots : their;
 				auto        color = use < kSlots ? SlotColor(use) : std::nullopt;
 				const char* from = color ? "slot" : "none";
 				if (!color && row < kRows) {

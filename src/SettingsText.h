@@ -82,9 +82,10 @@ namespace Plugin
 
 	inline void SetLeftAloneIn(SettingsValues& a_s, std::string_view a_file, bool a_on)
 	{
-		std::erase_if(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, a_file); });
-		if (a_on && LeaveAloneKeySafe(Trim(a_file))) {
-			a_s.leaveAlone.push_back(Trim(a_file));
+		const auto name = Trim(a_file);
+		std::erase_if(a_s.leaveAlone, [&](const std::string& a_m) { return SameText(a_m, name); });
+		if (a_on && LeaveAloneKeySafe(name)) {
+			a_s.leaveAlone.push_back(std::string(name));
 		}
 	}
 
