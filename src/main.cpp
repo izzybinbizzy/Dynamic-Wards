@@ -287,9 +287,9 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::InitInfo info{};
-	// the trampoline holds the hand art hook (Others.cpp) and the Floor Light Fix's two
+	// the trampoline holds the hand art hook and the light task note (Others.cpp) and the Floor Light Fix's two
 	info.trampoline = true;
-	info.trampolineSize = 14 + FloorLightFix::kTrampolineBytes;
+	info.trampolineSize = 28 + FloorLightFix::kTrampolineBytes;
 	SKSE::Init(a_skse, info);
 	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
 		return true;

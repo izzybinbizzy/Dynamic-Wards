@@ -253,12 +253,16 @@ namespace Plugin
 
 		// A caster's cast ends, or his spell is selected or let go: no SKSE action says so (a ward released or interrupted with the hands still out, the AI
 		// changing spells), and his hand lights follow what he holds. Every end passes FinishCastImpl (7); the game uses nothing these slots return
+		// each caster slot's calls since start, for devbench: which route made a caster's casting light
+		std::array<std::atomic<std::uint32_t>, 0x20> gSlotCalls{};
+
 		template <std::size_t Slot>
 		struct CasterHook
 		{
 			static void thunk(RE::ActorMagicCaster* a_self)
 			{
 				func(a_self);
+				gSlotCalls[Slot & 0x1F].fetch_add(1, std::memory_order_relaxed);
 				if (a_self->actor) {
 					const FrameCost::Scope cost{ 3, "a caster's cast ends or his spell changes (each)" };
 					NoteHands(a_self->actor->GetFormID());
@@ -342,6 +346,43 @@ namespace Plugin
 				}
 				func = SKSE::GetTrampoline().write_call<5>(fn + *at, thunk);
 				SKSE::log::info("other casters: the hand art hook is in (+0x{:X})", *at);
+			}
+		};
+
+		// The third way to the function that makes a caster's casting light (38784 -> 34151, the Signatures rows): the queued task a spell
+		// select sends with the hands out calls it directly at 36991 +0x17A5. A note after it, as the caster slots do; 1.6.1170 only,
+		// the call's bytes read first, so another version or another mod's hook there leaves it out (logged); not on VR
+		std::atomic<std::uint32_t> gLightTaskCalls{ 0 };
+		struct CasterLightTask
+		{
+			static std::uint64_t thunk(RE::Actor* a_actor, std::int32_t a_source, bool a_first, bool a_second)
+			{
+				const auto result = func(a_actor, a_source, a_first, a_second);
+				gLightTaskCalls.fetch_add(1, std::memory_order_relaxed);
+				if (a_actor) {
+					NoteHands(a_actor->GetFormID());
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+
+			static void Install()
+			{
+				if (REL::Module::IsVR() || REL::Module::get().version() != REL::Version{ 1, 6, 1170, 0 }) {
+					SKSE::log::info("other casters: the light task note is for Skyrim 1.6.1170 only - left out here");
+					return;
+				}
+				const auto   site = REL::Relocation<std::uintptr_t>{ REL::ID(36991) }.address() + 0x17A5;
+				const auto   target = REL::Relocation<std::uintptr_t>{ REL::ID(38784) }.address();
+				const auto*  code = reinterpret_cast<const std::uint8_t*>(site);
+				std::int32_t rel = 0;
+				std::memcpy(&rel, code + 1, sizeof(rel));
+				if (code[0] != 0xE8 || site + 5 + static_cast<std::intptr_t>(rel) != target) {
+					SKSE::log::warn("other casters: the light task call is not as read (another hook there?) - left out");
+					return;
+				}
+				func = SKSE::GetTrampoline().write_call<5>(site, thunk);
+				SKSE::log::info("other casters: the light task note is in");
 			}
 		};
 	}
@@ -448,11 +489,14 @@ namespace Plugin
 		CasterHook<0x7>::Install();
 		CasterHook<0x11>::Install();
 		CasterHook<0x12>::Install();
+		// slot 0x1A reaches 0x1406c4cb0 too (34165), which makes the caster's casting light: a round after it culls that light
+		CasterHook<0x1A>::Install();
 		if (!REL::Module::IsVR()) {
 			HerDraw::Install();
 		}
 		SKSE::log::info("other casters: the art effect hooks are in");
 		HandCloneHook::Install();
+		CasterLightTask::Install();
 	}
 
 	void NoteSlotArt(std::size_t a_slot, RE::BGSArtObject* a_hand, RE::BGSArtObject* a_dome, RE::BGSArtObject* a_dome360,
@@ -580,7 +624,11 @@ namespace Plugin
 			                                                                                           "mine";
 			out[std::string(kLookTokens[i])] = { { "mode", mode }, { "color", HexColor(p.color) }, { "installed", LookInstalled(i) }, { "loaded", FactionLoaded(i) } };
 		}
-		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() },
+		auto slots = nlohmann::json::object();
+		for (const auto s : { 0x7, 0x11, 0x12, 0x1A }) {
+			slots[std::format("0x{:X}", s)] = gSlotCalls[s].load(std::memory_order_relaxed);
+		}
+		return { { "test", gTest.load() }, { "swapped", gSwapped.load() }, { "handSwapped", gHandSwapped.load() }, { "casterSlotCalls", std::move(slots) }, { "lightTaskCalls", gLightTaskCalls.load() },
 			{ "looks", std::move(out) } };
 	}
 }

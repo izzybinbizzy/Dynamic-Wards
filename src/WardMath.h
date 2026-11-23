@@ -325,6 +325,13 @@ namespace Plugin
 		                                            0;
 	}
 
+	// a 1.0 table row of one of the game's own rank wards follows the effect's minimum skill when a mod moved it (Requiem makes the
+	// game's three ward effects its 25 / 50 / 75 wards); the game's own values give the table's rank, so the game alone changes nothing
+	inline std::size_t TableRank(std::size_t a_table, bool a_gameRankWard, std::int32_t a_skill)
+	{
+		return a_gameRankWard && a_table < 5 ? RankRow(a_skill) : a_table;
+	}
+
 	// an always-on ward's rank by its Ward Power, on the vanilla wards' own scale: Lesser Ward 40 (Novice), Steadfast Ward 60
 	// (Apprentice), Greater Ward 80 (Adept); past them Expert, and 100 and up Master (Reliquary of Myth's Magnus ward, 999).
 	// No magnitude known (0): Novice, as its minimum skill 0 would give

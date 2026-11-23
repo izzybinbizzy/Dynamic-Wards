@@ -76,6 +76,8 @@ namespace Plugin
 			// the game's own casting light on that hand (0 none, 1 another light, 2 this light of ours) and its color, for devbench
 			int   casterLight{ 0 };
 			Color casterColor{ 0 };
+			// the caster's own casting light while ours lights this hand: culled, given back when ours goes (two lights on one hand otherwise)
+			RE::NiPointer<RE::NiAVObject> culled{};
 		};
 
 		Color HexOf(const RE::NiColor& a_c)
@@ -422,8 +424,17 @@ namespace Plugin
 			return names[a_slot];
 		}
 
+		void GiveBackCasterLight(Hand1st& a_h)
+		{
+			if (a_h.culled) {
+				a_h.culled->SetAppCulled(false);
+				a_h.culled.reset();
+			}
+		}
+
 		void DropHand(Hand1st& a_h, RE::ShadowSceneNode* a_scene)
 		{
+			GiveBackCasterLight(a_h);
 			Drop(a_h.light.get(), a_h.bs, a_scene);
 			a_h = {};
 		}
@@ -453,8 +464,11 @@ namespace Plugin
 					from = !color ? "none" : runes ? "strange runes" :
 					                                 "record";
 				}
-				auto* node = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
-				auto* parent = node ? node->AsNode() : nullptr;
+				// beside the magic node, never under it: the game makes a caster's casting light with GenDynamic on that node, which takes the
+				// first light anywhere beneath it and writes the effect's light record over it (17610 +0x20A, 17627) - it would take ours
+				auto*              magic = color ? a_body->GetObjectByName(MagicNode(slot)) : nullptr;
+				auto*              parent = magic ? magic->parent : nullptr;
+				const RE::NiPoint3 at = magic ? magic->local.translate : RE::NiPoint3{};
 				if (!parent || (h.light && h.node.get() != parent)) {
 					DropHand(h, a_scene);
 				}
@@ -463,9 +477,10 @@ namespace Plugin
 				}
 				if (h.light) {
 					DressHand(h.light.get(), *color);
+					h.light->local.translate = at;
 				} else {
 					RE::NiPointer<RE::BSLight> bs;
-					if (auto* light = Make(parent, kHandName, {}, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
+					if (auto* light = Make(parent, kHandName, at, a_scene, bs, false, [&](RE::NiPointLight* a_light) { DressHand(a_light, *color); })) {
 						h = { RE::NiPointer<RE::NiNode>(parent), RE::NiPointer<RE::NiPointLight>(light), std::move(bs) };
 						++gHandsMade;
 					}
@@ -474,12 +489,18 @@ namespace Plugin
 				h.use = use;
 				h.from = from;
 				h.color = *color;
-				const auto* caster = a_actor->GetActorRuntimeData().magicCasters[slot];
-				const auto* gameBs = caster ? caster->light.get() : nullptr;
-				const auto* game = gameBs ? gameBs->light.get() : nullptr;
+				auto* caster = a_actor->GetActorRuntimeData().magicCasters[slot];
+				auto* gameBs = caster ? caster->light.get() : nullptr;
+				auto* game = gameBs ? gameBs->light.get() : nullptr;
 				h.casterLight = !gameBs ? 0 : gameBs == h.bs.get() || game == h.light.get() ? 2 :
 				                                                                              1;
 				h.casterColor = game ? HexOf(game->GetLightRuntimeData().diffuse) : 0;
+				// our light replaces the caster's: the light it made from the effect's record (34151) is culled while ours lights the hand
+				if (game && game != h.light.get() && h.culled.get() != game) {
+					GiveBackCasterLight(h);
+					game->SetAppCulled(true);
+					h.culled = RE::NiPointer<RE::NiAVObject>(game);
+				}
 			}
 		}
 

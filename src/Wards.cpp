@@ -810,9 +810,13 @@ namespace Plugin
 			return;
 		}
 		std::unordered_map<RE::FormID, std::size_t> table;
+		std::unordered_set<RE::FormID>              gameRankWards;  // the game's own rank wards in the table: their rank follows the record
 		for (const auto& r : kTable) {
 			if (const auto id = dh->LookupFormID(r.id, r.file)) {
 				table[id] = RowOfToken(r.token);
+				if (std::string_view(r.file) == "Skyrim.esm" && table[id] < kRanks) {
+					gameRankWards.insert(id);
+				}
 			}
 		}
 		const auto          silentId = dh->LookupFormID(kSilent.id, kSilent.file);
@@ -863,8 +867,9 @@ namespace Plugin
 				continue;
 			} else if (it != table.end()) {
 				t.how = How::kTable;
-				t.row = it->second;
-				t.why = std::format("1.0 table: {}", kTokens[t.row]);
+				t.row = TableRank(it->second, gameRankWards.contains(eff->GetFormID()), d.minimumSkill);
+				t.why = t.row == it->second ? std::format("1.0 table: {}", kTokens[t.row]) :
+				                              std::format("1.0 table {}, moved to {} by its minimum skill {}", kTokens[it->second], kTokens[t.row], d.minimumSkill);
 			} else if (!t.castWard && !t.hitWard && !t.enchWard && !power) {
 				continue;
 			} else if (!power && d.archetype == RE::EffectSetting::Archetype::kScript) {

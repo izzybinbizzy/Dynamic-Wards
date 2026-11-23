@@ -204,6 +204,11 @@ namespace
 		CHECK(RankRow(75) == 3);
 		CHECK(RankRow(100) == 4);
 		CHECK(RankRow(-5) == 0);
+		CHECK(TableRank(0, true, 0) == 0);    // the game's Lesser Ward as the game has it
+		CHECK(TableRank(0, true, 25) == 1);   // Requiem's Apprentice ward on it
+		CHECK(TableRank(2, true, 75) == 3);   // Requiem's Expert ward on the game's Greater Ward
+		CHECK(TableRank(2, false, 75) == 2);  // another mod's table row keeps its rank
+		CHECK(TableRank(5, true, 100) == 5);  // a fixed row (Spellbreaker) never moves
 		CHECK(PowerRow(0.0f) == 0);
 		CHECK(PowerRow(40.0f) == 0);   // Lesser Ward
 		CHECK(PowerRow(60.0f) == 1);   // Steadfast Ward
