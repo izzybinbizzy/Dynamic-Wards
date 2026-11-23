@@ -11,10 +11,13 @@ The plugin of Dynamic Wards; it ships with the mod and is required by it.
 - The ward lights, made by the plugin on Community Shaders, ENB or Vanilla.
 - A pick for each shield that raises a ward (Spellbreaker, the Shield of the Crusader, the Shield of Reman Cyrodiil):
   off (no ward), the normal dome or the 360 dome.
+- Other casters' wards: followers, enemies, neutral casters and 18 faction groups can each wear a look of their own.
+- A list of the mods whose wards were found; a ticked mod's wards keep their own look.
+- An Advanced Settings file for the fine light values the menu does not show.
 
 ## Requires
-SKSE and Address Library for SKSE Plugins; SKSE Menu Framework for the menu. The 360 dome needs 360 Ward and
-360 Ward Universal Patch SKSE.
+SKSE and Address Library for SKSE Plugins; SKSE Menu Framework for the menu; powerofthree's Tweaks (editor IDs).
+The 360 dome needs 360 Ward and 360 Ward Universal Patch SKSE.
 
 ## Settings
 SKSE Menu Framework > Dynamic Wards, saved to `DynamicWards.ini` at once.
