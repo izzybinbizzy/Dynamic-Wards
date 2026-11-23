@@ -1,2 +1,4 @@
 # shell scripts run under bash (CI, WSL): LF on every checkout
 *.sh text eol=lf
+# the shipped Advanced Settings ini is compared byte for byte by the tests: LF on every checkout
+*.ini text eol=lf
