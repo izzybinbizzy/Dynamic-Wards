@@ -475,9 +475,10 @@ namespace Plugin
 				h.from = from;
 				h.color = *color;
 				const auto* caster = a_actor->GetActorRuntimeData().magicCasters[slot];
-				const auto* game = caster && caster->light ? caster->light->light.get() : nullptr;
-				h.casterLight = !game ? 0 : game == h.light.get() ? 2 :
-				                                                    1;
+				const auto* gameBs = caster ? caster->light.get() : nullptr;
+				const auto* game = gameBs ? gameBs->light.get() : nullptr;
+				h.casterLight = !gameBs ? 0 : gameBs == h.bs.get() || game == h.light.get() ? 2 :
+				                                                                              1;
 				h.casterColor = game ? HexOf(game->GetLightRuntimeData().diffuse) : 0;
 			}
 		}
@@ -824,16 +825,15 @@ namespace Plugin
 						{ "row", h.row < kRows ? std::string(kTokens[h.row]) : std::string("none") },
 						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) },
 						{ "diffuseNow", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
-						{ "casterColor", HexColor(h.casterColor) } });
-					// as the light reads now (linear on an inverse-square setup, while "color" is the sRGB pick; a snapshot off the main
-					// thread) and the caster's own light read again now: the game may attach or swap it after the round that dressed ours
+						{ "casterColor", h.casterLight ? HexColor(h.casterColor) : std::string("none") } });
+					// diffuseNow: our light as it reads now (linear on an inverse-square setup, while "color" is the sRGB pick; a snapshot
+					// off the main thread). casterLightNow: the caster's light read again now, by pointer only - off the main thread the
+					// game may free that light, so nothing it owns is read here (its color is the round's casterColor)
 					const auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
 					const auto* caster = actor ? actor->GetActorRuntimeData().magicCasters[s] : nullptr;
-					const auto* game = caster && caster->light ? caster->light->light.get() : nullptr;
-					auto&       row = hands.back();
-					row["casterLightNow"] = !game ? 0 : game == h.light.get() ? 2 :
-					                                                            1;
-					row["casterColorNow"] = game ? HexColor(HexOf(game->GetLightRuntimeData().diffuse)) : std::string("none");
+					const auto* game = caster ? caster->light.get() : nullptr;
+					hands.back()["casterLightNow"] = !game ? 0 : game == h.bs.get() ? 2 :
+					                                                                  1;
 				}
 			}
 		}
