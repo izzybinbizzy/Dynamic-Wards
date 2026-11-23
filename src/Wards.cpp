@@ -416,17 +416,20 @@ namespace Plugin
 			if (!a_light || IsDark(a_light)) {
 				return a_light;
 			}
-			auto& dark = gDark[a_light];
-			if (!dark) {
-				dark = NewForm<RE::TESObjectLIGH>();
-				if (dark) {
-					dark->data = a_light->data;
-					dark->data.radius = 1;
-					dark->fade = 0.0f;
-					// a light that lights nothing never takes one of the few shadow slots
-					dark->data.flags.reset(RE::TES_LIGHT_FLAGS::kSpotShadow, RE::TES_LIGHT_FLAGS::kHemiShadow, RE::TES_LIGHT_FLAGS::kOmniShadow);
-				}
+			if (const auto it = gDark.find(a_light); it != gDark.end()) {
+				return it->second;
 			}
+			// stored only once made: a failed creation returns null (the slot then carries no light, as a dark copy would) and is tried again
+			auto* dark = NewForm<RE::TESObjectLIGH>();
+			if (!dark) {
+				return nullptr;
+			}
+			dark->data = a_light->data;
+			dark->data.radius = 1;
+			dark->fade = 0.0f;
+			// a light that lights nothing never takes one of the few shadow slots
+			dark->data.flags.reset(RE::TES_LIGHT_FLAGS::kSpotShadow, RE::TES_LIGHT_FLAGS::kHemiShadow, RE::TES_LIGHT_FLAGS::kOmniShadow);
+			gDark.emplace(a_light, dark);
 			return dark;
 		}
 

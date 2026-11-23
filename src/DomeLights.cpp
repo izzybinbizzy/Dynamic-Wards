@@ -496,7 +496,7 @@ namespace Plugin
 				                                                                              1;
 				h.casterColor = game ? HexOf(game->GetLightRuntimeData().diffuse) : 0;
 				// our light replaces the caster's: the light it made from the effect's record (34151) is culled while ours lights the hand
-				if (game && game != h.light.get() && h.culled.get() != game) {
+				if (h.light && game && game != h.light.get() && h.culled.get() != game) {
 					GiveBackCasterLight(h);
 					game->SetAppCulled(true);
 					h.culled = RE::NiPointer<RE::NiAVObject>(game);
