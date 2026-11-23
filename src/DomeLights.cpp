@@ -823,8 +823,17 @@ namespace Plugin
 					hands.push_back({ { "actor", std::format("{:08X}", id) }, { "hand", s == 0 ? "left" : "right" },
 						{ "row", h.row < kRows ? std::string(kTokens[h.row]) : std::string("none") },
 						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) },
-						{ "diffuse", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
+						{ "diffuseNow", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
 						{ "casterColor", HexColor(h.casterColor) } });
+					// as the light reads now (linear on an inverse-square setup, while "color" is the sRGB pick; a snapshot off the main
+					// thread) and the caster's own light read again now: the game may attach or swap it after the round that dressed ours
+					const auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+					const auto* caster = actor ? actor->GetActorRuntimeData().magicCasters[s] : nullptr;
+					const auto* game = caster && caster->light ? caster->light->light.get() : nullptr;
+					auto&       row = hands.back();
+					row["casterLightNow"] = !game ? 0 : game == h.light.get() ? 2 :
+					                                                            1;
+					row["casterColorNow"] = game ? HexColor(HexOf(game->GetLightRuntimeData().diffuse)) : std::string("none");
 				}
 			}
 		}
