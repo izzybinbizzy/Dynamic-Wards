@@ -215,6 +215,7 @@ namespace Plugin
 	void           SetDomeMode(DomeMode a_mode);
 	void           SetDomeShadowTest(bool a_on);  // devbench only, never saved: the dome lights hung as shadow lights (a trial)
 	nlohmann::json DomeLightsReport();
+	nlohmann::json HandCastersNow();  // main thread only: each lit hand's caster light now, keyed "<actor>/<hand>" (devbench)
 
 	// Others.cpp: other casters' own wards - an art of ours another caster wears is swapped as its art effect is made
 	void InstallOthers();  // SKSE's post-load: the hook on the art effect's Init

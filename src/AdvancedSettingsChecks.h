@@ -26,7 +26,7 @@ namespace AdvancedSettingsChecks
 	using Check = void (*)(bool a_ok, const char* a_what, int a_line);
 
 	// the checks each call makes (raise them when checks are added)
-	inline constexpr int kCount = 26;
+	inline constexpr int kCount = 27;
 	inline constexpr int kTableCount = 5;
 	inline constexpr int kShippedCount = 2;
 

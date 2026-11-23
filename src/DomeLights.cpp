@@ -827,18 +827,37 @@ namespace Plugin
 						{ "diffuseNow", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
 						{ "casterColor", h.casterLight ? HexColor(h.casterColor) : std::string("none") } });
 					// diffuseNow: our light as it reads now (linear on an inverse-square setup, while "color" is the sRGB pick; a snapshot
-					// off the main thread). casterLightNow: the caster's light read again now, by pointer only - off the main thread the
-					// game may free that light, so nothing it owns is read here (its color is the round's casterColor)
-					const auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
-					const auto* caster = actor ? actor->GetActorRuntimeData().magicCasters[s] : nullptr;
-					const auto* game = caster ? caster->light.get() : nullptr;
-					hands.back()["casterLightNow"] = !game ? 0 : game == h.bs.get() ? 2 :
-					                                                                  1;
+					// off the main thread). The caster's light read again now is HandCastersNow's, on the main thread
 				}
 			}
 		}
 		return { { "models", gSpecs.size() }, { "mode", static_cast<int>(gMode.load()) }, { "active", Wanted() }, { "lit", gLit.size() },
 			{ "hand1st", nlohmann::json::array({ leftLit, rightLit }) }, { "handLights", lights }, { "hand1stMade", gHandsMade }, { "shadow", gShadowTest.load() },
 			{ "asleep", !gRoundQueued.load() }, { "ticks", gTicks.load() }, { "handLightsEach", std::move(hands) }, { "ambient", nlohmann::json::array({ gLastAmbient.red, gLastAmbient.green, gLastAmbient.blue }) } };
+	}
+
+	// each lit hand's caster light read now, on the main thread (devbench's report asks through DevBenchGlue::OnMainThread): the game
+	// may attach, swap or free that light after the round that dressed ours, so only the main thread reads it
+	nlohmann::json HandCastersNow()
+	{
+		std::scoped_lock l{ gLock };
+		auto             out = nlohmann::json::object();
+		for (const auto& [id, a] : gHands) {
+			const auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+			for (std::size_t s = 0; s < 2; ++s) {
+				const auto& h = a.h[s];
+				if (!h.light) {
+					continue;
+				}
+				const auto* caster = actor ? actor->GetActorRuntimeData().magicCasters[s] : nullptr;
+				const auto* gameBs = caster ? caster->light.get() : nullptr;
+				const auto* game = gameBs ? gameBs->light.get() : nullptr;
+				const int   holds = !gameBs ? 0 : gameBs == h.bs.get() || game == h.light.get() ? 2 :
+				                                                                                  1;
+				out[std::format("{:08X}/{}", id, s == 0 ? "left" : "right")] = { { "casterLightNow", holds },
+					{ "casterColorNow", game ? HexColor(HexOf(game->GetLightRuntimeData().diffuse)) : std::string("none") } };
+			}
+		}
+		return out;
 	}
 }

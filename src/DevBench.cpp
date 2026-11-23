@@ -84,7 +84,7 @@ namespace Plugin
 			try {
 				// the ward table (its effects' keywords) and the image space are game data, read on the main thread; not read when it
 				// does not answer within 0.5 s (a loading screen, a pause, a slow frame)
-				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() } }; },
+				const auto game = DevBenchGlue::OnMainThread([]() { return json{ { "wards", WardsReport() }, { "image", ImageSpaceReport() }, { "casters", HandCastersNow() } }; },
 					std::chrono::milliseconds(500));
 				const bool refused = game && DevBenchGlue::Refused(*game);
 				const bool read = game && !refused;
@@ -92,6 +92,16 @@ namespace Plugin
 				                    refused ? json{ { "wards", "not read: the main thread refused the task" }, { "refusal", *game } } :
 				                              json{ { "wards", "not read: the main thread did not answer within 0.5 s (a loading screen, a pause or a slow frame)" } };
 				report["domeLights"] = DomeLightsReport();
+				// each lit hand's caster light read on the main thread, merged into its handLightsEach row (left out when not read)
+				if (read && (*game).contains("casters")) {
+					const auto& casters = (*game)["casters"];
+					for (auto& row : report["domeLights"]["handLightsEach"]) {
+						const auto key = row.value("actor", std::string()) + "/" + row.value("hand", std::string());
+						if (casters.contains(key)) {
+							row.update(casters[key]);
+						}
+					}
+				}
 				report["lighting"] = LightingReport();
 				report["colors"] = ColorsReport();
 				report["imageSpace"] = read ? (*game)["image"] : json(nullptr);
