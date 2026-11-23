@@ -73,7 +73,16 @@ namespace Plugin
 			std::size_t use{ kSlots };
 			const char* from{ "none" };
 			Color       color{ 0 };
+			// the game's own casting light on that hand (0 none, 1 another light, 2 this light of ours) and its color, for devbench
+			int   casterLight{ 0 };
+			Color casterColor{ 0 };
 		};
+
+		Color HexOf(const RE::NiColor& a_c)
+		{
+			const auto byte = [](float a_v) { return static_cast<Color>(std::clamp(a_v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+			return (byte(a_c.red) << 16) | (byte(a_c.green) << 8) | byte(a_c.blue);
+		}
 
 		std::mutex                            gLock;
 		std::unordered_map<std::string, Spec> gSpecs;  // dome model (lower case, under meshes\) -> its light
@@ -465,6 +474,11 @@ namespace Plugin
 				h.use = use;
 				h.from = from;
 				h.color = *color;
+				const auto* caster = a_actor->GetActorRuntimeData().magicCasters[slot];
+				const auto* game = caster && caster->light ? caster->light->light.get() : nullptr;
+				h.casterLight = !game ? 0 : game == h.light.get() ? 2 :
+				                                                    1;
+				h.casterColor = game ? HexOf(game->GetLightRuntimeData().diffuse) : 0;
 			}
 		}
 
@@ -808,7 +822,9 @@ namespace Plugin
 				if (const auto& h = a.h[s]; h.light) {
 					hands.push_back({ { "actor", std::format("{:08X}", id) }, { "hand", s == 0 ? "left" : "right" },
 						{ "row", h.row < kRows ? std::string(kTokens[h.row]) : std::string("none") },
-						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) } });
+						{ "slot", h.use < kSlots ? std::string(SlotToken(h.use)) : std::string("game") }, { "from", h.from }, { "color", HexColor(h.color) },
+						{ "diffuse", HexColor(HexOf(h.light->GetLightRuntimeData().diffuse)) }, { "casterLight", h.casterLight },
+						{ "casterColor", HexColor(h.casterColor) } });
 				}
 			}
 		}

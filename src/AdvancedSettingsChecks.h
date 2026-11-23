@@ -135,6 +135,9 @@ namespace AdvancedSettingsChecks
 			}
 		}
 		ADVANCED_CHECK(!dir.empty());
+		if (dir.empty()) {
+			return;  // no folder of its own: nothing is written into the working directory
+		}
 		const auto      main = AdvancedSettings::MainPath(dir, "A Mod");
 		const auto      custom = AdvancedSettings::CustomPath(dir, "A Mod");
 		std::error_code ec;
