@@ -37,6 +37,7 @@ namespace Plugin
 		gTuning = TuningOf(r.values);
 		SKSE::log::info("advanced settings: {} value(s) of {} read in {}{}", r.read, kAdvancedKnobs.size(), folder.string(),
 			wrote ? "; the file was missing a value and was written whole" : "");
+		SKSE::log::info("advanced settings: {}", AdvancedSettings::Changed(kAdvancedKnobs, r.values));
 	}
 
 	void LoadSettings()

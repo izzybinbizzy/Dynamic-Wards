@@ -356,10 +356,10 @@ namespace Plugin
 			if (CollapsingHeader(T("Each ward"), ImGuiTreeNodeFlags_DefaultOpen)) {
 				const bool strange = StrangeWardsInstalled();
 				Legend({ { T("Ladder:"), T("a rank ward takes its step on the ladder above.") },
-					{ T("Default:"), T("My own color for that ward, like Spellbreaker's gold.") },
+					{ T("Default:"), T("this mod's own color for that ward, like Spellbreaker's gold.") },
 					{ T("Own color:"), T("a color you pick, for that ward alone.") },
-					{ T("Vanilla:"), strange ? T("I leave the ward alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
-											   T("I leave the ward alone, as the game or another mod has it.") },
+					{ T("Vanilla:"), strange ? T("the ward is left alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
+											   T("the ward is left alone, as the game or another mod has it.") },
 					{ strange ? "Strange Wards:" : nullptr, T("a rank ward wears Strange Wards' own dome and hand art.") },
 					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look you pick in Strange Runes' own menu (reload the save to see it).") } });
 				const char* const anyChoice[] = { T("Ladder"), T("Default"), T("Own color"), T("Vanilla"), "Strange Wards", "Strange Runes" };

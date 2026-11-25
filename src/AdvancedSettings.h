@@ -229,6 +229,21 @@ namespace AdvancedSettings
 		return Read(a_in, a_knobs, Defaults(a_knobs));
 	}
 
+	// for the log, so a bug report shows a player's own values: each value that differs from its default, or that none does
+	[[nodiscard]] inline std::string Changed(std::span<const Knob> a_knobs, std::span<const float> a_values)
+	{
+		std::string out;
+		for (std::size_t i = 0; i < a_knobs.size() && i < a_values.size(); ++i) {
+			const auto& k = a_knobs[i];
+			if (a_values[i] == k.def) {
+				continue;
+			}
+			out += std::format("{}[{}] {}={} (default {})", out.empty() ? "" : ", ", k.section, k.key, Detail::Shown(a_values[i], k.whole),
+				Detail::Shown(k.def, k.whole));
+		}
+		return out.empty() ? std::string("every value at its default") : "changed from the default: " + out;
+	}
+
 	// the layout's version (AdvancedLayout's title line); the reader needs none: a file that lacks a value is written again whole
 	inline constexpr int kLayoutVersion = 1;
 

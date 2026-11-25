@@ -287,9 +287,13 @@ namespace
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
 	SKSE::InitInfo info{};
-	// the trampoline holds the hand art hook and the light task note (Others.cpp) and the Floor Light Fix's two
+	// the trampoline holds the hand art hook (Others.cpp) on every game; the light task note (Others.cpp) and the Floor Light Fix's two
+	// write only on Skyrim 1.6.1170, so any other game asks for the hand art hook's room alone
+	constexpr std::size_t kHandArtBytes = 14;
+	constexpr std::size_t kLightTaskBytes = 14;
+	const bool            ae1170 = !REL::Module::IsVR() && REL::Module::get().version() == REL::Version{ 1, 6, 1170, 0 };
 	info.trampoline = true;
-	info.trampolineSize = 28 + FloorLightFix::kTrampolineBytes;
+	info.trampolineSize = ae1170 ? kHandArtBytes + kLightTaskBytes + FloorLightFix::kTrampolineBytes : kHandArtBytes;
 	SKSE::Init(a_skse, info);
 	if (!RuntimeGuard::RightGame("Dynamic Wards", "Dynamic Wards", "Dynamic Wards - VR")) {
 		return true;

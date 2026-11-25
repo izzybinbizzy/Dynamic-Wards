@@ -26,7 +26,7 @@ namespace AdvancedSettingsChecks
 	using Check = void (*)(bool a_ok, const char* a_what, int a_line);
 
 	// the checks each call makes (raise them when checks are added)
-	inline constexpr int kCount = 27;
+	inline constexpr int kCount = 29;
 	inline constexpr int kTableCount = 5;
 	inline constexpr int kShippedCount = 2;
 
@@ -122,6 +122,10 @@ namespace AdvancedSettingsChecks
 		ADVANCED_CHECK(text.find("A Mod - Advanced Settings (file version 1)") != std::string::npos &&
 					   text.find("A Mod - Advanced Settings - Custom.ini") != std::string::npos && text.find("MOST PEOPLE ONLY CHANGE THESE") != std::string::npos);
 		ADVANCED_CHECK(text.find("\n[Lights]\n") != std::string::npos && text.find("\n[Fade]\n") != std::string::npos);
+		// the log's line: each value a player changed with its default, or that none was
+		ADVANCED_CHECK(AdvancedSettings::Changed(kSample, defaults) == "every value at its default");
+		ADVANCED_CHECK(AdvancedSettings::Changed(kSample, values) ==
+					   "changed from the default: [Lights] Count=9 (default 16), [Lights] Swing=0.25 (default 1), [Fade] Seconds=12.5 (default 4)");
 		// both files: the shipped one missing is written whole at the defaults; a whole one is read and left alone (a player's edit stays);
 		// one that lacks a value is written again with its values kept; the Custom file's lines win and it is never written
 		// a folder this run made itself, so two runs at once never share or remove each other's files
