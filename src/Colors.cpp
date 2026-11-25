@@ -841,8 +841,16 @@ namespace Plugin
 								gNewCopies += PaintStale(copy, art->second) ? 1 : 0;
 								stale = gPaletteRetryTest.load(std::memory_order_relaxed) && StalePalette(gRows[art->second.slot]);
 							}
-							if (stale && LaterOnce(gPaletteRetryQueued, "palette retry", []() { ApplyColors(false); })) {
-								gPaletteRetriesQueued.fetch_add(1, std::memory_order_relaxed);
+							// one apply waits at a time; only a newly sent one is counted (CodeRabbit on #42)
+							if (stale && !gPaletteRetryQueued.exchange(true)) {
+								if (Later("palette retry", []() {
+										gPaletteRetryQueued = false;
+										ApplyColors(false);
+									})) {
+									gPaletteRetriesQueued.fetch_add(1, std::memory_order_relaxed);
+								} else {
+									gPaletteRetryQueued = false;
+								}
 							}
 						}
 					});
