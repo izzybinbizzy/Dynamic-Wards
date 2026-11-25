@@ -811,10 +811,17 @@ namespace Plugin
 		// (white) until the next apply; with this on, a copy made while its row holds such a palette asks for one apply on the main thread
 		std::atomic_bool         gPaletteRetryTest{ false };
 		std::atomic_bool         gPaletteRetryQueued{ false };
-		std::atomic<std::size_t> gPaletteRetries{ 0 };
-		bool                     StalePalette(const Row& a_row)
+		std::atomic<std::size_t> gPaletteRetriesQueued{ 0 };
+		// a palette left behind by the row's live look: its color, its screen correction or its lighting (PaintPalettes' own test)
+		bool StalePalette(const Row& a_row)
 		{
-			return std::ranges::any_of(a_row.palettes, [&](const Palette& a_p) { return a_p.applied != a_row.live.c; });
+			if (a_row.live.c == 0xFFFFFFFF) {
+				return false;
+			}
+			return std::ranges::any_of(a_row.palettes, [&](const Palette& a_p) {
+				const float want = a_p.hand ? 0.0f : a_row.live.kept;
+				return a_p.applied != a_row.live.c || a_p.kept != want || a_p.lighting != a_row.live.lighting;
+			});
 		}
 
 		// Every art object's model is copied through this call, an art effect's and a ward in the hand alike (the game's BGSArtObjectCloneTask): the
@@ -835,7 +842,7 @@ namespace Plugin
 								stale = gPaletteRetryTest.load(std::memory_order_relaxed) && StalePalette(gRows[art->second.slot]);
 							}
 							if (stale && LaterOnce(gPaletteRetryQueued, "palette retry", []() { ApplyColors(false); })) {
-								gPaletteRetries.fetch_add(1, std::memory_order_relaxed);
+								gPaletteRetriesQueued.fetch_add(1, std::memory_order_relaxed);
 							}
 						}
 					});
@@ -980,7 +987,7 @@ namespace Plugin
 		for (const auto& c : gCopies) {
 			shared += c.shared;
 		}
-		return { { "paletteRetryTest", gPaletteRetryTest.load() }, { "paletteRetries", gPaletteRetries.load() }, { "sharedColourTracks", shared },
+		return { { "paletteRetryTest", gPaletteRetryTest.load() }, { "paletteRetriesQueued", gPaletteRetriesQueued.load() }, { "sharedColourTracks", shared },
 			{ "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
 			{ "sharedColourTracksMostOnACopy", gSharedMost }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
