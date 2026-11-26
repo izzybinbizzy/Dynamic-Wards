@@ -9,24 +9,29 @@
 
 #include "AdvancedSettings.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <istream>
 #include <iterator>
 #include <random>
 #include <set>
 #include <sstream>
+#include <stdexcept>
+#include <streambuf>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace AdvancedSettingsChecks
 {
 	using Check = void (*)(bool a_ok, const char* a_what, int a_line);
 
 	// the checks each call makes (raise them when checks are added)
-	inline constexpr int kCount = 29;
+	inline constexpr int kCount = 35;
 	inline constexpr int kTableCount = 5;
 	inline constexpr int kShippedCount = 2;
 
@@ -55,6 +60,19 @@ namespace AdvancedSettingsChecks
 			std::ofstream out(a_path, std::ios::binary | std::ios::trunc);
 			out << a_text;
 		}
+
+		// a stream whose text ends in a read that breaks: the next read after its text throws, which the stream reads as a failure
+		struct BreaksAfter : std::streambuf
+		{
+			explicit BreaksAfter(std::string a_text) :
+				text(std::move(a_text))
+			{
+				setg(text.data(), text.data(), text.data() + text.size());
+			}
+			int_type underflow() override { throw std::runtime_error("the read broke"); }
+
+			std::string text;
+		};
 
 		// whether an environment variable is set: MSVC refuses getenv as unsafe (C4996, an error under /WX), so its own _dupenv_s there
 		[[nodiscard]] inline bool EnvSet(const char* a_name)
@@ -111,7 +129,23 @@ namespace AdvancedSettingsChecks
 		}
 		// a missing value: the rest read, the file written again
 		const auto part = ReadText("[Lights]\nCount=2\nSwing=0\n");
-		ADVANCED_CHECK(!part.complete && part.read == 2 && part.values[2] == 4.0f);
+		ADVANCED_CHECK(!part.complete && part.read == 2 && part.values[2] == 4.0f && !part.failed);
+		// a read that breaks off part way (a stream whose next read throws): failed, so the file is never written over
+		{
+			Detail::BreaksAfter broken("[Lights]\nCount=3\n");
+			std::istream        in(&broken);
+			const auto          r = AdvancedSettings::Read(in, kSample);
+			ADVANCED_CHECK(r.failed && !r.complete && r.values[0] == 3.0f && !r.warnings.empty());
+		}
+		// a line far past any setting's, and a file of nonsense: the first fails, the second names at most kMostWarnings and one more
+		const auto longLine = ReadText("[Lights]\n" + std::string(AdvancedSettings::kMostLineChars + 1, 'x') + "\n");
+		ADVANCED_CHECK(longLine.failed && !longLine.complete && longLine.warnings.size() == 1);
+		std::string nonsense = "[Lights]\n";
+		for (int i = 0; i < 100; ++i) {
+			nonsense += "Nope" + std::to_string(i) + "=1\n";
+		}
+		const auto many = ReadText(nonsense);
+		ADVANCED_CHECK(!many.failed && many.warnings.size() == AdvancedSettings::kMostWarnings + 1);
 		// the written file reads back to the same values, complete, with each note, range and default above its value
 		const std::array<float, 3> values{ 9.0f, 0.25f, 12.5f };
 		const auto                 text = AdvancedSettings::Text("A Mod", kSample, values);
@@ -159,6 +193,24 @@ namespace AdvancedSettingsChecks
 		ADVANCED_CHECK(wrote && mainBack.complete && mainBack.values[0] == 3.0f && mainBack.values[2] == 4.0f);
 		ADVANCED_CHECK(mixed.values[0] == 3.0f && mixed.values[2] == 6.0f && mixed.warnings.size() == 1 &&
 					   Detail::FileText(custom) == "[Fade]\nSeconds=6\n[Lights]\nNope=1\n");
+		// a shipped file that is there but cannot be read (here a folder in its place): left as it is, never replaced by the defaults
+		std::filesystem::remove(main, ec);
+		std::filesystem::create_directory(main, ec);
+		const auto locked = AdvancedSettings::Load(dir, "A Mod", kSample, wrote);
+		ADVANCED_CHECK(!wrote && locked.failed && std::filesystem::is_directory(main) &&
+					   std::ranges::any_of(locked.warnings, [](const std::string& a_w) { return a_w.find("could not be read") != std::string::npos; }));
+		// a shipped file with a line no settings file has: not read whole, so not written over
+		std::filesystem::remove(main, ec);
+		const auto oddText = std::string("[Lights]\nCount=") + std::string(AdvancedSettings::kMostLineChars + 1, '7') + "\n";
+		Detail::Put(main, oddText);
+		const auto huge = AdvancedSettings::Load(dir, "A Mod", kSample, wrote);
+		ADVANCED_CHECK(!wrote && huge.failed && Detail::FileText(main) == oddText);
+		// a Custom file that cannot be read: named, its values stay out, the shipped file's stand
+		Detail::Put(main, AdvancedSettings::Text("A Mod", kSample, values));
+		std::filesystem::remove(custom, ec);
+		std::filesystem::create_directory(custom, ec);
+		const auto mineLocked = AdvancedSettings::Load(dir, "A Mod", kSample, wrote);
+		ADVANCED_CHECK(!wrote && mineLocked.failed && mineLocked.values == std::vector<float>(values.begin(), values.end()) && mineLocked.warnings.size() == 1);
 		std::filesystem::remove_all(dir, ec);
 		ADVANCED_CHECK(!ec);
 	}
