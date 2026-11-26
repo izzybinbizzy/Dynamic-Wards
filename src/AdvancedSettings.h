@@ -54,7 +54,13 @@ namespace AdvancedSettings
 		std::vector<std::string> warnings;           // each value that did not read, was clamped, or is no setting
 		std::size_t              read{ 0 };          // the values taken from the file (or files)
 		bool                     complete{ false };  // every knob stood in the file and nothing else did
+		bool                     failed{ false };    // the file could not be read to its end, or is too big: it is never written over
 	};
+
+	// what a file of these may hold: far past any real one, so a broken or foreign file is refused before it fills the memory
+	inline constexpr std::uintmax_t kMostFileBytes = 1u << 20;
+	inline constexpr std::size_t    kMostLineChars = 4096;
+	inline constexpr std::size_t    kMostWarnings = 64;
 
 	namespace Detail
 	{
@@ -130,7 +136,7 @@ namespace AdvancedSettings
 			if (!best || tie) {
 				return std::format("[{}] {} is no setting; it is left out", a_shownSection, a_key);
 			}
-			return std::format("[{}] {} is no setting; it is left out - did you mean [{}] {}?", a_shownSection, a_key, best->section, best->key);
+			return std::format("[{}] {} is no setting; it is left out - the nearest setting is [{}] {}", a_shownSection, a_key, best->section, best->key);
 		}
 	}
 
@@ -161,7 +167,23 @@ namespace AdvancedSettings
 		std::vector<bool> seen(a_knobs.size(), false);
 		std::string       line, section, shownSection;
 		bool              first = true;
+		std::uintmax_t    bytes = 0;
+		// past kMostWarnings lines one more says the rest are not named, so a file of nonsense cannot grow the list without end
+		const auto warn = [&](std::string a_text) {
+			if (r.warnings.size() < kMostWarnings) {
+				r.warnings.push_back(std::move(a_text));
+			} else if (r.warnings.size() == kMostWarnings) {
+				r.warnings.emplace_back("more lines are not settings; they are not named here");
+			}
+		};
 		while (std::getline(a_in, line)) {
+			bytes += line.size() + 1;
+			if (line.size() > kMostLineChars || bytes > kMostFileBytes) {
+				r.warnings.push_back(std::format("a line past {} characters or a file past {} bytes is no settings file; it is left as it is", kMostLineChars, kMostFileBytes));
+				r.complete = false;
+				r.failed = true;
+				return r;
+			}
 			std::string_view l = line;
 			if (first && l.starts_with("\xEF\xBB\xBF")) {
 				l.remove_prefix(3);
@@ -178,7 +200,7 @@ namespace AdvancedSettings
 			}
 			const auto eq = t.find('=');
 			if (eq == std::string_view::npos) {
-				r.warnings.push_back(std::format("[{}] \"{}\" is no setting (no =)", shownSection, t));
+				warn(std::format("[{}] \"{}\" is no setting (no =)", shownSection, t));
 				r.complete = false;
 				continue;
 			}
@@ -190,35 +212,42 @@ namespace AdvancedSettings
 				i = it->second;
 			} else if (const auto moved = byKey.find(lowKey); moved != byKey.end() && moved->second.size() == 1) {
 				i = moved->second.front();
-				r.warnings.push_back(std::format("[{}] {} is read as [{}] {}", shownSection, key, a_knobs[i].section, a_knobs[i].key));
+				warn(std::format("[{}] {} is read as [{}] {}", shownSection, key, a_knobs[i].section, a_knobs[i].key));
 				r.complete = false;
 			} else {
-				r.warnings.push_back(Detail::NoSetting(shownSection, section, key, a_knobs));
+				warn(Detail::NoSetting(shownSection, section, key, a_knobs));
 				r.complete = false;
 				continue;
 			}
 			const auto& k = a_knobs[i];
 			if (seen[i]) {
-				r.warnings.push_back(std::format("[{}] {} is written twice; the first stays", k.section, k.key));
+				warn(std::format("[{}] {} is written twice; the first stays", k.section, k.key));
 				continue;
 			}
 			seen[i] = true;
 			float v = 0.0f;
 			const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), v);
 			if (value.empty() || ec != std::errc{} || end != value.data() + value.size() || !std::isfinite(v)) {
-				r.warnings.push_back(std::format("[{}] {}={} is not a number; {} stays", k.section, k.key, value, Detail::Shown(r.values[i], k.whole)));
+				warn(std::format("[{}] {}={} is not a number; {} stays", k.section, k.key, value, Detail::Shown(r.values[i], k.whole)));
 				continue;
 			}
 			if (k.whole) {
 				v = std::round(v);
 			}
 			if (v < k.lo || v > k.hi) {
-				r.warnings.push_back(std::format("[{}] {}={} is outside {} to {}; clamped", k.section, k.key, value, Detail::Shown(k.lo, k.whole),
-					Detail::Shown(k.hi, k.whole)));
+				warn(std::format("[{}] {}={} is outside {} to {}; clamped", k.section, k.key, value, Detail::Shown(k.lo, k.whole), Detail::Shown(k.hi, k.whole)));
 				v = std::clamp(v, k.lo, k.hi);
 			}
 			r.values[i] = v;
 			++r.read;
+		}
+		// the loop ends at the file's end, or where a read broke off: then the values past it were never seen, so the file is not whole
+		// and must not be written over with defaults in their place
+		if (!a_in.eof()) {
+			r.warnings.emplace_back("the file could not be read to its end; it is left as it is");
+			r.complete = false;
+			r.failed = true;
+			return r;
 		}
 		r.complete = r.complete && std::ranges::all_of(seen, [](bool a_b) { return a_b; });
 		return r;
@@ -227,6 +256,21 @@ namespace AdvancedSettings
 	[[nodiscard]] inline Result Read(std::istream& a_in, std::span<const Knob> a_knobs)
 	{
 		return Read(a_in, a_knobs, Defaults(a_knobs));
+	}
+
+	// for the log, so a bug report shows a player's own values: each value that differs from its default, or that none does
+	[[nodiscard]] inline std::string Changed(std::span<const Knob> a_knobs, std::span<const float> a_values)
+	{
+		std::string out;
+		for (std::size_t i = 0; i < a_knobs.size() && i < a_values.size(); ++i) {
+			const auto& k = a_knobs[i];
+			if (a_values[i] == k.def) {
+				continue;
+			}
+			out += std::format("{}[{}] {}={} (default {})", out.empty() ? "" : ", ", k.section, k.key, Detail::Shown(a_values[i], k.whole),
+				Detail::Shown(k.def, k.whole));
+		}
+		return out.empty() ? std::string("every value at its default") : "changed from the default: " + out;
 	}
 
 	// the layout's version (AdvancedLayout's title line); the reader needs none: a file that lacks a value is written again whole
@@ -265,13 +309,37 @@ namespace AdvancedSettings
 		const auto main = MainPath(a_folder, a_title);
 		const auto custom = CustomPath(a_folder, a_title);
 		Result     r{ Defaults(a_knobs), {}, 0, false };
-		if (std::ifstream in(main); in) {
-			r = Read(in, a_knobs);
-			for (auto& w : r.warnings) {
-				w = main.filename().string() + ": " + w;
+		// a file that is there but cannot be read whole is never written over and none of its values is used: only a missing file is made
+		const auto readFile = [&](const std::filesystem::path& a_path, Result& a_into) {
+			std::error_code look;
+			if (!std::filesystem::exists(a_path, look) && !look) {
+				return;
 			}
-		}
-		if (!r.complete) {
+			const auto    size = look ? std::uintmax_t{ 0 } : std::filesystem::file_size(a_path, look);
+			std::ifstream in;
+			if (!look && size <= kMostFileBytes) {
+				in.open(a_path, std::ios::binary);
+			}
+			if (look || size > kMostFileBytes || !in) {
+				a_into.warnings.push_back(std::format("{} could not be read; it is left as it is", a_path.filename().string()));
+				a_into.complete = false;
+				a_into.failed = true;
+				return;
+			}
+			auto got = Read(in, a_knobs, a_into.values);
+			for (auto& w : got.warnings) {
+				a_into.warnings.push_back(a_path.filename().string() + ": " + w);
+			}
+			a_into.complete = got.complete;
+			if (got.failed) {
+				a_into.failed = true;
+				return;
+			}
+			a_into.values = std::move(got.values);
+			a_into.read += got.read;
+		};
+		readFile(main, r);
+		if (!r.complete && !r.failed) {
 			std::error_code ec;
 			std::filesystem::create_directories(a_folder, ec);
 			auto tmp = main;
@@ -292,14 +360,12 @@ namespace AdvancedSettings
 				a_wrote = true;
 			}
 		}
-		if (std::ifstream in(custom); in) {
-			auto mine = Read(in, a_knobs, r.values);
-			for (auto& w : mine.warnings) {
-				r.warnings.push_back(custom.filename().string() + ": " + w);
-			}
-			r.values = std::move(mine.values);
-			r.read += mine.read;
-		}
+		// the player's file over it, never written; one that cannot be read whole is named and its values stay out
+		const bool whole = r.complete;
+		const bool failed = r.failed;
+		readFile(custom, r);
+		r.complete = whole;
+		r.failed = failed || r.failed;
 		return r;
 	}
 }

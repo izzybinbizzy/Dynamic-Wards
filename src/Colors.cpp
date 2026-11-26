@@ -807,6 +807,23 @@ namespace Plugin
 			return painted;
 		}
 
+		// a test switch (devbench only, never saved): a palette whose texture was not loaded when the colors were applied stays neutral
+		// (white) until the next apply; with this on, a copy made while its row holds such a palette asks for one apply on the main thread
+		std::atomic_bool         gPaletteRetryTest{ false };
+		std::atomic_bool         gPaletteRetryQueued{ false };
+		std::atomic<std::size_t> gPaletteRetriesQueued{ 0 };
+		// a palette left behind by the row's live look: its color, its screen correction or its lighting (PaintPalettes' own test)
+		bool StalePalette(const Row& a_row)
+		{
+			if (a_row.live.c == 0xFFFFFFFF) {
+				return false;
+			}
+			return std::ranges::any_of(a_row.palettes, [&](const Palette& a_p) {
+				const float want = a_p.hand ? 0.0f : a_row.live.kept;
+				return a_p.applied != a_row.live.c || a_p.kept != want || a_p.lighting != a_row.live.lighting;
+			});
+		}
+
 		// Every art object's model is copied through this call, an art effect's and a ward in the hand alike (the game's BGSArtObjectCloneTask): the
 		// copy of an art of ours is painted once here, before the game shows it. On whichever thread the game makes it; only this thread holds it yet
 		struct CloneHook
@@ -818,8 +835,23 @@ namespace Plugin
 					const FrameCost::Scope cost{ 2, "a model copied (each art object copied)" };
 					Guarded("a new ward copy", [a_self, copy]() {
 						if (const auto art = gArtOf.find(a_self); art != gArtOf.end()) {
-							std::scoped_lock l{ gLock };
-							gNewCopies += PaintStale(copy, art->second) ? 1 : 0;
+							bool stale = false;
+							{
+								std::scoped_lock l{ gLock };
+								gNewCopies += PaintStale(copy, art->second) ? 1 : 0;
+								stale = gPaletteRetryTest.load(std::memory_order_relaxed) && StalePalette(gRows[art->second.slot]);
+							}
+							// one apply waits at a time; only a newly sent one is counted (CodeRabbit on #42)
+							if (stale && !gPaletteRetryQueued.exchange(true)) {
+								if (Later("palette retry", []() {
+										gPaletteRetryQueued = false;
+										ApplyColors(false);
+									})) {
+									gPaletteRetriesQueued.fetch_add(1, std::memory_order_relaxed);
+								} else {
+									gPaletteRetryQueued = false;
+								}
+							}
 						}
 					});
 				}
@@ -929,6 +961,12 @@ namespace Plugin
 		SKSE::log::info("colors: a ward copy is painted as the game makes it (the art object's copy hook is in)");
 	}
 
+	void SetPaletteRetryTest(bool a_on)
+	{
+		gPaletteRetryTest = a_on;
+		SKSE::log::info("colors: the palette retry test switch {}", a_on ? "on" : "off");
+	}
+
 	nlohmann::json ColorsReport()
 	{
 		std::scoped_lock l{ gLock };
@@ -957,7 +995,8 @@ namespace Plugin
 		for (const auto& c : gCopies) {
 			shared += c.shared;
 		}
-		return { { "sharedColourTracks", shared }, { "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
+		return { { "paletteRetryTest", gPaletteRetryTest.load() }, { "paletteRetriesQueued", gPaletteRetriesQueued.load() }, { "sharedColourTracks", shared },
+			{ "copiesNotedSinceLoad", gCopiesNoted }, { "sharedColourTracksSinceLoad", gSharedSeen },
 			{ "sharedColourTracksMostOnACopy", gSharedMost }, { "swaps", gSwaps }, { "swapFails", gSwapFails }, { "glowEdits", gEdits }, { "liveDomes", gLiveDomes }, { "newCopies", gNewCopies },
 			{ "copies", gCopies.size() }, { "missingModels", gMissing }, { "domeKept", DomeKept() },
 			{ "goldVapour", { { "blocks", gGoldVapourBlocks }, { "texture", gGoldVapour != nullptr } } }, { "lastProblem", gLastProblem }, { "rows", std::move(rows) } };

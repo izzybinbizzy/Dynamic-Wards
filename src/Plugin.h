@@ -164,6 +164,7 @@ namespace Plugin
 	void           LiveRecolor();                                                                                            // the menu, while a color is dragged: the wards (and a dome on screen) follow it, throttled
 	nlohmann::json ColorsReport();
 	void           SetDomeKeptTest(int a_percent);  // devbench only, never saved: the domes' screen correction, -1 = the default
+	void           SetPaletteRetryTest(bool a_on);  // devbench only, never saved: a copy made while its row's palette is still neutral asks for an apply
 	void           ReleaseOld();                    // the palettes a recolor replaced and the copies nothing shows any more (each round of the lights)
 
 	// every effect-shader block under a_root that has a material, in scene-graph order - one walk for every reader, so a
