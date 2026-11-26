@@ -64,9 +64,9 @@ namespace Plugin
 			TR_MARK("Forsworn"), TR_MARK("Hagravens and Witches"), TR_MARK("Necromancers"), TR_MARK("Dremora"), TR_MARK("Falmer"),
 			TR_MARK("Draugr"), TR_MARK("Bandits"), TR_MARK("Hostile Mages") };
 		static_assert(std::size(kLookLabel) == kLooks);
-		constexpr const char* kLookTip[] = { TR_MARK("Anyone following you, always - whatever group they belong to."),
-			TR_MARK("Casters fighting you, unless the Factions page picks a look for their group."),
-			TR_MARK("Casters who neither follow nor fight you, unless the Factions page picks a look for their group."),
+		constexpr const char* kLookTip[] = { TR_MARK("Every follower, always - whatever the follower's group."),
+			TR_MARK("Casters in combat with the player, unless the Factions page picks a look for their group."),
+			TR_MARK("Casters who neither follow nor fight the player, unless the Factions page picks a look for their group."),
 			TR_MARK("The College's mages: Colette, Drevis, Arniel, Brelyna and the rest."),
 			TR_MARK("Thalmor Justiciars, the embassy's agents and the Thalmor wizards on the roads."),
 			TR_MARK("The Emperor's agents and their battlemages."), TR_MARK("The Vigilants and their commanders."),
@@ -314,7 +314,7 @@ namespace Plugin
 			static std::optional<Color>                    heldLadder;  // the ladder's picker while it is dragged (EditColor)
 			static std::array<std::optional<Color>, kRows> heldRow;     // each ward's own color picker while it is dragged
 			Header(Icon::kStar, T("Presets"));
-			TextColored(kMuted, "%s", T("Sets the colors only - the stages and Reverse stay as you set them."));
+			TextColored(kMuted, "%s", T("Sets the colors only - the stages and Reverse stay as set."));
 			for (std::size_t s = 0; s < std::size(kSchemes); ++s) {
 				const auto& sc = kSchemes[s];
 				if (s % 4) {
@@ -357,11 +357,11 @@ namespace Plugin
 				const bool strange = StrangeWardsInstalled();
 				Legend({ { T("Ladder:"), T("a rank ward takes its step on the ladder above.") },
 					{ T("Default:"), T("this mod's own color for that ward, like Spellbreaker's gold.") },
-					{ T("Own color:"), T("a color you pick, for that ward alone.") },
+					{ T("Own color:"), T("a picked color, for that ward alone.") },
 					{ T("Vanilla:"), strange ? T("the ward is left alone, as the game or another mod has it (on the rank wards that is Strange Wards).") :
 											   T("the ward is left alone, as the game or another mod has it.") },
 					{ strange ? "Strange Wards:" : nullptr, T("a rank ward wears Strange Wards' own dome and hand art.") },
-					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look you pick in Strange Runes' own menu (reload the save to see it).") } });
+					{ StrangeRunesLoaded() ? "Strange Runes:" : nullptr, T("a rank ward keeps the look picked in Strange Runes' own menu (shown after a save reload).") } });
 				const char* const anyChoice[] = { T("Ladder"), T("Default"), T("Own color"), T("Vanilla"), "Strange Wards", "Strange Runes" };
 				for (std::size_t i = 0; i < kRows; ++i) {
 					PushID(static_cast<int>(i));
@@ -417,7 +417,7 @@ namespace Plugin
 		{
 			PushID(static_cast<int>(a_look));
 			const auto  pick = LookOf(a_look);
-			const char* modes[] = { T("Your look"), T("Own color"), StrangeWardsInstalled() ? T("Vanilla (Strange Wards)") : T("Vanilla"), T("Default") };
+			const char* modes[] = { T("Player's look"), T("Own color"), StrangeWardsInstalled() ? T("Vanilla (Strange Wards)") : T("Vanilla"), T("Default") };
 			int         mode = static_cast<int>(pick.mode);
 			ColorButton("##now", pick.mode == LookMode::kCustom ? Vec(pick.color) : Vec(0x303030), ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(18.0f, 18.0f));
 			SameLine();
@@ -445,11 +445,11 @@ namespace Plugin
 		void DrawOthers()
 		{
 			static std::array<std::optional<Color>, kGroups> held;
-			MenuStyle::Note(T("The ward look casters who are not you wear."));
-			Legend({ { T("Your look:"), T("the same colors as your own wards.") }, { T("Own color:"), T("one color you pick for the whole group.") },
+			MenuStyle::Note(T("The ward look every caster but the player wears."));
+			Legend({ { T("Player's look:"), T("the same colors as the player's own wards.") }, { T("Own color:"), T("one picked color for the whole group.") },
 				{ T("Vanilla:"), StrangeWardsInstalled() ? T("the game's own ward - on the rank wards that is Strange Wards' look while it is installed.") :
 														   T("the game's own ward, untouched.") } });
-			MenuStyle::Note(T("A rank ward you set to Strange Wards or Strange Runes above keeps that look on everyone."));
+			MenuStyle::Note(T("A rank ward set to Strange Wards or Strange Runes above keeps that look on everyone."));
 			for (std::size_t i = 0; i < kGroups; ++i) {
 				LookRow(i, held[i]);
 			}
@@ -534,7 +534,7 @@ namespace Plugin
 			{  // every pick: ENB gets the plugin's lights too (Lighting.cpp), so its switches show
 				SettingToggle(T("Ward casting light"), WardLightOn, SetWardLightOn,
 					T("A light on the hands of anyone raising a ward, in the ward's color."));
-				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around you in its own color."));
+				SettingToggle(T("Colored ward lights"), ColoredLightsOn, SetColoredLightsOn, T("Each ward's dome lights the area around its caster in its own color."));
 			}
 
 			// the ward's strength as Reticle Arcs' bar: shown for a ward she raises, and with this on for an always-on one too
@@ -562,7 +562,7 @@ namespace Plugin
 						Changed();
 					}
 					SetItemTooltip("%s",
-						T("Until then your wards use the normal dome in their own color."));
+						T("Until then the wards use the normal dome in their own color."));
 					if (UnlockRule() == Unlock::kPerk) {
 						static std::vector<std::pair<std::string, std::string>> perks = WardPerks();
 						const auto                                              cur = UnlockPerk();
@@ -585,7 +585,7 @@ namespace Plugin
 							EndCombo();
 						}
 						if (perks.empty()) {
-							TextDisabled("%s", T("No perk in your load order has ward in its name."));
+							TextDisabled("%s", T("No perk in the load order has ward in its name."));
 						}
 					}
 					TextColored(Unlocked360() ? MenuStyle::gTheme.accent : kMuted, "%s", Unlocked360() ? T("Unlocked") : T("Locked"));
@@ -603,12 +603,12 @@ namespace Plugin
 
 			Header(Icon::kEye, T("Look"));
 			SettingSlider(T("Opacity"), Opacity, SetOpacity, kOpacityMin, 100,
-				T("How strong the ward is: its color, glow and light fade together. The ward in your hands follows Hand Brightness instead."));
+				T("How strong the ward is: its color, glow and light fade together. The ward in the hands follows Hand Brightness instead."));
 			// right below Opacity (his order 2026-10-05); greyed out without 360 Ward, whose dome it thins
 			const bool has360 = Has360Ward();
 			BeginDisabled(!has360);  // a disabled slider is never active: nothing set or saved
 			SettingSlider(T("Transparency"), Transparency, SetTransparency, 0, kTransparencyMax,
-				T("How clearly you see through the dome: the cloudy fill facing you thins out, the colored rim stays."));
+				T("How clear the dome is to see through: the cloudy fill facing the camera thins out, the colored rim stays."));
 			EndDisabled();
 			if (!has360) {
 				TextColored(kMuted, "%s", Missing360Meshes() ? T("Needs the 360 dome's files (install Dynamic Wards again).") : T("Needs 360 Ward."));
@@ -616,11 +616,11 @@ namespace Plugin
 
 			// Hand Brightness is the old Casting glow: the ini key stays CastingGlow so saved settings carry over
 			SettingSlider(T("Ward brightness"), Brightness, SetBrightness, kBrightnessMin, kBrightnessMax,
-				T("How bright the wards' glow and light are; the ward in your hands follows Hand Brightness."));
+				T("How bright the wards' glow and light are; the ward in the hands follows Hand Brightness."));
 
 			// the ward in your hands has its own slider, and it alone sets that art and its light (his rule 2026-10-05)
 			SettingSlider(T("Hand Brightness"), CastingGlow, SetCastingGlow, kBrightnessMin, kBrightnessMax,
-				T("How bright the ward in your hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
+				T("How bright the ward in the hands is: its glow and its light together. Opacity and Ward brightness leave it alone."));
 
 			// off unless the player turns it up: in a place with normal color a boosted dome reads too strong
 			SettingSlider(T("Dome color boost"), DomeBoost, SetDomeBoost, 0, 100,

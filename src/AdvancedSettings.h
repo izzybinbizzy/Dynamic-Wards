@@ -130,7 +130,7 @@ namespace AdvancedSettings
 			if (!best || tie) {
 				return std::format("[{}] {} is no setting; it is left out", a_shownSection, a_key);
 			}
-			return std::format("[{}] {} is no setting; it is left out - did you mean [{}] {}?", a_shownSection, a_key, best->section, best->key);
+			return std::format("[{}] {} is no setting; it is left out - the nearest setting is [{}] {}", a_shownSection, a_key, best->section, best->key);
 		}
 	}
 

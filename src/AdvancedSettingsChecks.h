@@ -101,8 +101,8 @@ namespace AdvancedSettingsChecks
 		// a misspelled key: named with the setting it most likely is; one too far off from any: named alone; nothing of theirs read
 		const auto spelt = ReadText("[Lights]\nCuont=5\nswign=0\n[Fade]\nSecs=2\nZebra=1\n");
 		ADVANCED_CHECK(!spelt.complete && spelt.read == 0 && spelt.values == defaults && spelt.warnings.size() == 4);
-		ADVANCED_CHECK(spelt.warnings[0] == "[Lights] Cuont is no setting; it is left out - did you mean [Lights] Count?" &&
-					   spelt.warnings[1] == "[Lights] swign is no setting; it is left out - did you mean [Lights] Swing?" &&
+		ADVANCED_CHECK(spelt.warnings[0] == "[Lights] Cuont is no setting; it is left out - the nearest setting is [Lights] Count" &&
+					   spelt.warnings[1] == "[Lights] swign is no setting; it is left out - the nearest setting is [Lights] Swing" &&
 					   spelt.warnings[2] == "[Fade] Secs is no setting; it is left out" && spelt.warnings[3] == "[Fade] Zebra is no setting; it is left out");
 		// a comma, a unit, nan and inf are not numbers
 		for (const char* text : { "[Fade]\nSeconds=0,5\n", "[Fade]\nSeconds=3s\n", "[Fade]\nSeconds=nan\n", "[Fade]\nSeconds=inf\n" }) {
