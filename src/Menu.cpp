@@ -707,13 +707,14 @@ namespace Plugin
 
 	void RegisterMenu()
 	{
-		if (!SKSEMenuFramework::IsInstalled()) {
-			SKSE::log::warn("SKSE Menu Framework is not installed, so there is no settings page; the settings file still applies");
+		// its file on the drive is not enough: a framework that did not load takes every page and shows none
+		if (!SKSEMenuFramework::IsInstalled() || !GetMenuFrameworkModule()) {
+			SKSE::log::warn("SKSE Menu Framework is not installed or did not load, so there is no settings page; the settings file still applies");
 			return;
 		}
-		SKSEMenuFramework::SetSection(T("Dynamic Wards"));
-		SKSEMenuFramework::AddSectionItem(T("Colors"), []() { Guarded("menu: Colors", DrawColors); });  // first (his ask 2026-10-05)
-		SKSEMenuFramework::AddSectionItem(T("Settings"), []() { Guarded("menu: Settings", DrawSettings); });
+		SKSEMenuFramework::SetSection(Translation::MenuName("Dynamic Wards"));
+		SKSEMenuFramework::AddSectionItem(Translation::MenuName("Colors"), []() { Guarded("menu: Colors", DrawColors); });  // first (his ask 2026-10-05)
+		SKSEMenuFramework::AddSectionItem(Translation::MenuName("Settings"), []() { Guarded("menu: Settings", DrawSettings); });
 		gTestWindow = SKSEMenuFramework::AddWindow(DrawTestWindow, false);
 		SKSE::log::info("settings page added to SKSE Menu Framework {}", SKSEMenuFramework::GetMenuFrameworkVersion());
 	}
